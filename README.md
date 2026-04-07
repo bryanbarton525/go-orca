@@ -31,6 +31,36 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **SSE streaming** — real-time workflow event stream for live UI integration
 - **Structured logging** — JSON or console output via zap
 
+## Self-Improvement
+
+go-orca is designed to improve its own behaviour over time without manual intervention.
+
+**Inline Refiner (every workflow)**
+
+After the Finalizer delivers its output it automatically runs a Refiner retrospective — synchronously, on every completed workflow, with no extra configuration required. The Refiner receives:
+
+- All persona summaries from the run
+- Accumulated blocking issues
+- The full suggestion history
+- All produced artifacts
+
+It returns structured improvement proposals:
+
+| Field | Description |
+|---|---|
+| `component_type` | `agent`, `skill`, `prompt`, `persona`, `workflow`, or `provider` |
+| `component_name` | Exact name of the file or component to change |
+| `problem` | What went wrong or could be better |
+| `proposed_fix` | Concrete suggested change |
+| `example` | Optional illustrative example |
+| `priority` | `high`, `medium`, or `low` |
+
+It also returns an `overall_assessment`, a `health_score` (0–100), and a plain-language `summary`. Suggestions are stored on the workflow state (`all_suggestions`) and emitted as `refiner.suggestion` SSE events. A Refiner failure never breaks a workflow — errors are intentionally swallowed so retrospectives cannot interfere with delivery.
+
+**Standalone async Refiner (cross-workflow)**
+
+A separate `refiner` persona can be run as a background loop over historical workflow journal events. Because it sees many runs at once it can identify recurring patterns — systemic prompt weaknesses, repeatedly failing skills, consistent QA regressions — that single-run retrospectives cannot surface.
+
 ## Quick Start
 
 ### 1. Build
