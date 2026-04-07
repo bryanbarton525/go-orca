@@ -1,0 +1,107 @@
+# examples/production.yaml
+#
+# Production-ready configuration.
+# Uses PostgreSQL, org-level scoping, JSON logging, and a local customizations
+# source. Secrets are injected via environment variables — do not commit API
+# keys or DSN passwords into version control.
+#
+# Required environment variables:
+#   GOORCA_DATABASE_DSN              postgres://go-orca:<password>@<host>:5432/go-orca?sslmode=require
+#   GOORCA_PROVIDERS_OPENAI_API_KEY  sk-...
+#
+# Optional:
+#   GOORCA_PROVIDERS_COPILOT_GITHUB_TOKEN  ghp_...
+#
+# Run:
+#   ./go-orca-api -config examples/production.yaml
+
+# ─── HTTP server ───────────────────────────────────────────────────────────────
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "release"
+  read_timeout: "30s"
+  write_timeout: "60s"
+  shutdown_timeout: "30s"   # generous to let in-flight workflows drain
+  trusted_proxies:
+    - "10.0.0.0/8"          # adjust to your load balancer / ingress CIDR
+    - "172.16.0.0/12"
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+database:
+  driver: "postgres"
+  dsn: ""                   # set GOORCA_DATABASE_DSN — never commit credentials
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: "5m"
+  auto_migrate: true        # set to false and run migrations manually if preferred
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level: "info"             # switch to warn in high-traffic deployments
+  format: "json"            # structured output for log aggregation (Loki, Datadog, etc.)
+
+# ─── Scoping ──────────────────────────────────────────────────────────────────
+scoping:
+  mode: "org"               # global → org hierarchy; enable "team" for three-tier
+  allow_global: true
+  allow_org: true
+  allow_team: false         # set true (and mode: team) for team-level isolation
+  require_team_parent_org: true
+  default_tenant: "default"
+  default_scope: "global"
+
+# ─── Providers ────────────────────────────────────────────────────────────────
+providers:
+  openai:
+    enabled: true
+    api_key: ""             # set GOORCA_PROVIDERS_OPENAI_API_KEY
+    base_url: ""            # leave empty for api.openai.com; set for Azure OpenAI
+    default_model: "gpt-4o"
+    timeout: "120s"
+
+  ollama:
+    enabled: false          # enable if you run a sidecar Ollama instance
+    host: "http://localhost:11434"
+    default_model: "llama3"
+    timeout: "120s"
+
+  copilot:
+    enabled: false          # enable and set GOORCA_PROVIDERS_COPILOT_GITHUB_TOKEN
+    github_token: ""
+    cli_path: ""            # leave empty to use gh from $PATH
+    default_model: "gpt-4o"
+
+# ─── Customizations ───────────────────────────────────────────────────────────
+# Mount skills / prompts from a volume, config map, or cloned repo.
+# Multiple sources are merged in precedence order (lower number = higher priority).
+customizations:
+  sources:
+    - name: "org-skills"
+      type: "filesystem"
+      root: "/etc/go-orca/customizations"   # mount a ConfigMap or volume here
+      precedence: 10
+      enabled_types:
+        - "skill"
+        - "agent"
+        - "prompt"
+      scope_slug: "global"
+      refresh_seconds: 300
+  # Uncomment to pull skills from a Git repository:
+  # - name: "skills-repo"
+  #   type: "repo"
+  #   root: "/var/go-orca/skills-repo"
+  #   precedence: 20
+  #   enabled_types:
+  #     - "skill"
+  #   scope_slug: "global"
+  #   refresh_seconds: 600
+
+# ─── Workflow engine ──────────────────────────────────────────────────────────
+workflow:
+  max_concurrent_workflows: 20
+  max_concurrent_tasks: 100
+  default_persona_timeout_ms: 120000   # 2 min per persona
+  event_retention_days: 90
+  artifact_storage_path: "/var/go-orca/artifacts"   # use a persistent volume
+  handoff_timeout: "5m"

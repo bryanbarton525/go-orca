@@ -1,0 +1,75 @@
+# examples/openai-quickstart.yaml
+#
+# Quickstart with OpenAI — simplest path to a working cloud-backed instance.
+# Uses SQLite so no database setup is required.
+#
+# Prerequisites:
+#   - An OpenAI API key
+#
+# Run:
+#   GOORCA_PROVIDERS_OPENAI_API_KEY=sk-... ./go-orca-api -config examples/openai-quickstart.yaml
+#
+# Or set api_key inline (not recommended for shared environments):
+#   providers.openai.api_key: "sk-..."
+
+# ─── HTTP server ───────────────────────────────────────────────────────────────
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "release"
+  read_timeout: "30s"
+  write_timeout: "60s"
+  shutdown_timeout: "15s"
+  trusted_proxies: []
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+database:
+  driver: "sqlite"
+  dsn: "go-orca.db"
+  max_open_conns: 10
+  max_idle_conns: 3
+  conn_max_lifetime: "5m"
+  auto_migrate: true
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level: "info"
+  format: "console"        # readable output; switch to json for log aggregation
+
+# ─── Scoping ──────────────────────────────────────────────────────────────────
+scoping:
+  mode: "global"
+  allow_global: true
+  allow_org: false
+  allow_team: false
+  require_team_parent_org: true
+  default_tenant: "default"
+  default_scope: "global"
+
+# ─── Providers ────────────────────────────────────────────────────────────────
+providers:
+  openai:
+    enabled: true
+    api_key: ""            # set GOORCA_PROVIDERS_OPENAI_API_KEY
+    base_url: ""           # leave empty for api.openai.com
+    default_model: "gpt-4o"
+    timeout: "120s"
+
+  ollama:
+    enabled: false
+
+  copilot:
+    enabled: false
+
+# ─── Customizations ───────────────────────────────────────────────────────────
+customizations:
+  sources: []
+
+# ─── Workflow engine ──────────────────────────────────────────────────────────
+workflow:
+  max_concurrent_workflows: 5
+  max_concurrent_tasks: 25
+  default_persona_timeout_ms: 120000
+  event_retention_days: 90
+  artifact_storage_path: "./artifacts"
+  handoff_timeout: "5m"

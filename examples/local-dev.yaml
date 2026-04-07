@@ -1,0 +1,82 @@
+# examples/local-dev.yaml
+#
+# Fully local development setup — no API keys required.
+# Uses SQLite for storage and Ollama for LLM inference.
+#
+# Prerequisites:
+#   - Ollama running on localhost:11434 (https://ollama.com)
+#   - Model pulled: ollama pull llama3
+#
+# Run:
+#   ./go-orca-api -config examples/local-dev.yaml
+
+# ─── HTTP server ───────────────────────────────────────────────────────────────
+server:
+  host: "127.0.0.1"        # localhost only; no external exposure
+  port: 8080
+  mode: "debug"            # verbose Gin logging
+  read_timeout: "30s"
+  write_timeout: "120s"    # generous for slow local models
+  shutdown_timeout: "10s"
+  trusted_proxies: []
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+database:
+  driver: "sqlite"
+  dsn: "go-orca-dev.db"    # created in the working directory
+  max_open_conns: 5
+  max_idle_conns: 2
+  conn_max_lifetime: "5m"
+  auto_migrate: true
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level: "debug"           # verbose output during development
+  format: "console"        # human-readable; switch to json for log parsing
+
+# ─── Scoping ──────────────────────────────────────────────────────────────────
+scoping:
+  mode: "global"
+  allow_global: true
+  allow_org: false
+  allow_team: false
+  require_team_parent_org: true
+  default_tenant: "default"
+  default_scope: "global"
+
+# ─── Providers ────────────────────────────────────────────────────────────────
+providers:
+  openai:
+    enabled: false
+
+  ollama:
+    enabled: true
+    host: "http://localhost:11434"
+    default_model: "llama3"
+    timeout: "180s"        # local models can be slow; increase for large models
+
+  copilot:
+    enabled: false
+
+# ─── Customizations ───────────────────────────────────────────────────────────
+customizations:
+  sources: []
+  # Uncomment to load skills from a local directory:
+  # - name: "local-skills"
+  #   type: "filesystem"
+  #   root: "./customizations"
+  #   precedence: 10
+  #   enabled_types:
+  #     - "skill"
+  #     - "prompt"
+  #   scope_slug: "global"
+  #   refresh_seconds: 60
+
+# ─── Workflow engine ──────────────────────────────────────────────────────────
+workflow:
+  max_concurrent_workflows: 2   # low concurrency for a dev laptop
+  max_concurrent_tasks: 10
+  default_persona_timeout_ms: 180000   # 3 min — local models are slower
+  event_retention_days: 30
+  artifact_storage_path: "./artifacts"
+  handoff_timeout: "10m"
