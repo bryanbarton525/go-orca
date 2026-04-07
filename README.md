@@ -5,16 +5,20 @@
 </p>
 
 <p align="center">
-  A self-hosted AI workflow orchestration API server.<br/>
-  Drive multi-phase LLM pipelines from a single HTTP API.
+  A self-hosted AI workflow orchestration API server that improves itself.<br/>
+  Drive multi-phase LLM pipelines from a single HTTP API — and get structured improvement proposals after every run.
 </p>
 
 ---
 
 go-orca is a backend service that orchestrates multi-agent AI workflows through a structured persona pipeline. You submit a natural-language request; go-orca drives it through Director → Project Manager → Architect → Implementer → QA → Finalizer, producing structured artifacts that can be delivered as a GitHub PR, a markdown export, a webhook payload, or an artifact bundle.
 
+After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration. The Refiner receives the full workflow history and produces structured improvement proposals (component, problem, proposed fix, priority, health score) that tell you exactly what to tune and where. A standalone async Refiner persona can also analyse patterns across many historical workflows at once.
+
 ## Features
 
+- **Automatic self-improvement** — after every workflow the Finalizer runs an inline Refiner retrospective that produces structured improvement proposals: component name, problem, proposed fix, priority, and an overall health score (0–100)
+- **Cross-workflow pattern detection** — a standalone async Refiner persona analyses historical workflow events across many runs to identify recurring issues that single-run retrospectives cannot see
 - **Structured persona pipeline** — six specialist roles, each with a distinct purpose and typed output
 - **QA retry loop** — blocking issues automatically re-invoke the Implementer before re-running QA
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
