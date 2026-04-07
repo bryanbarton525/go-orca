@@ -1,0 +1,1581 @@
+openapi: "3.0.3"
+
+info:
+  title: go-orca API
+  description: |
+    go-orca is a self-hosted AI workflow orchestration server. It drives
+    multi-phase LLM pipelines (Director → Project Manager → Architect →
+    Implementer → QA → Finalizer) and delivers structured artifacts via
+    GitHub PR, markdown export, webhook, or artifact bundle.
+
+    ## Authentication
+    go-orca does not include built-in authentication. Secure the API with a
+    reverse proxy (nginx, Caddy, etc.) or network-level controls.
+
+    ## Multi-tenancy
+    All workflow and scope operations are scoped to a tenant. Pass
+    `X-Tenant-ID` and `X-Scope-ID` headers to select a specific tenant and
+    scope. When omitted, the server default tenant and scope are used.
+
+    ## SSE Streaming
+    `GET /workflows/{id}/stream` returns a `text/event-stream` response.
+    Set `proxy_buffering off` in your reverse proxy to receive events in
+    real time.
+  version: "0.1.0"
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: workflows
+    description: Create and manage workflow runs
+  - name: providers
+    description: LLM provider management
+  - name: scopes
+    description: Scope effective configuration
+  - name: tenants
+    description: Tenant and scope management
+  - name: customizations
+    description: Customization resolution
+
+# ─── Common parameters ────────────────────────────────────────────────────────
+components:
+  parameters:
+    TenantID:
+      name: X-Tenant-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Tenant context for the request. Falls back to the server default
+        tenant when omitted.
+
+    ScopeID:
+      name: X-Scope-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Scope context for the request. Falls back to the server default
+        scope when omitted.
+
+    WorkflowID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Workflow UUID
+
+    TenantPathID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant UUID
+
+    ScopePathID:
+      name: scopeId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Scope UUID
+
+  # ─── Schemas ────────────────────────────────────────────────────────────────
+  schemas:
+
+    # ── Enums ──────────────────────────────────────────────────────────────────
+
+    WorkflowStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - paused
+        - completed
+        - failed
+        - cancelled
+      description: |
+        Lifecycle state of a workflow run.
+        - `pending`   — created, not yet picked up by the scheduler
+        - `running`   — actively executing in the engine
+        - `paused`    — suspended mid-pipeline; resume with POST /workflows/{id}/resume
+        - `completed` — all phases finished successfully
+        - `failed`    — an unrecoverable error occurred
+        - `cancelled` — cancelled via POST /workflows/{id}/cancel
+
+    WorkflowMode:
+      type: string
+      enum:
+        - software
+        - content
+        - docs
+        - research
+        - ops
+        - mixed
+      description: |
+        Classifies the type of work being performed. The Director selects
+        this automatically from the request when not specified explicitly.
+
+    TaskStatus:
+      type: string
+      enum:
+        - pending
+        - ready
+        - running
+        - completed
+        - failed
+        - skipped
+        - blocked
+
+    PersonaKind:
+      type: string
+      enum:
+        - director
+        - project_manager
+        - architect
+        - implementer
+        - qa
+        - finalizer
+        - refiner
+
+    ArtifactKind:
+      type: string
+      enum:
+        - code
+        - document
+        - diagram
+        - markdown
+        - config
+        - report
+        - blog_post
+        - bundle_ref
+      description: |
+        Classifies the kind of artifact produced by a persona.
+        - `code`       — source code
+        - `document`   — general document
+        - `diagram`    — architecture or flow diagram
+        - `markdown`   — markdown content
+        - `config`     — configuration file (YAML, JSON, TOML, etc.)
+        - `report`     — analysis or research report
+        - `blog_post`  — publication-ready blog post
+        - `bundle_ref` — reference to an exported artifact bundle
+
+    ScopeKind:
+      type: string
+      enum:
+        - global
+        - org
+        - team
+
+    # ── Domain models ──────────────────────────────────────────────────────────
+
+    Constitution:
+      type: object
+      description: The Project Manager's foundational document for a workflow.
+      properties:
+        vision:
+          type: string
+          description: High-level vision statement for the workflow outcome.
+        goals:
+          type: array
+          items:
+            type: string
+          description: Ordered list of goals to achieve.
+        constraints:
+          type: array
+          items:
+            type: string
+          description: Hard constraints the solution must respect.
+        audience:
+          type: string
+          description: Intended audience or consumer of the output.
+        output_medium:
+          type: string
+          description: How the output will be delivered or consumed.
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+          description: Criteria that must be met for the workflow to be considered successful.
+        out_of_scope:
+          type: array
+          items:
+            type: string
+          description: Explicitly excluded topics or deliverables.
+
+    Requirement:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for this requirement.
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum:
+            - must
+            - should
+            - could
+            - wont
+          description: MoSCoW priority level.
+        source:
+          type: string
+          description: Which part of the request or constitution this requirement derives from.
+
+    Requirements:
+      type: object
+      description: Structured requirements produced by the Project Manager.
+      properties:
+        functional:
+          type: array
+          items:
+            $ref: '#/components/schemas/Requirement'
+        non_functional:
+          type: array
+          items:
+            $ref: '#/components/schemas/Requirement'
+        dependencies:
+          type: array
+          items:
+            type: string
+          description: External dependencies identified during requirements analysis.
+
+    DesignComponent:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        inputs:
+          type: array
+          items:
+            type: string
+        outputs:
+          type: array
+          items:
+            type: string
+
+    DesignDecision:
+      type: object
+      properties:
+        decision:
+          type: string
+        rationale:
+          type: string
+        tradeoffs:
+          type: string
+
+    Design:
+      type: object
+      description: The Architect's design artifact.
+      properties:
+        overview:
+          type: string
+          description: High-level description of the solution design.
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesignComponent'
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesignDecision'
+          description: Architectural decisions with rationale.
+        diagrams:
+          type: array
+          items:
+            type: string
+          description: Optional diagram content or references.
+        tech_stack:
+          type: array
+          items:
+            type: string
+          description: Technologies, languages, and frameworks selected.
+        delivery_target:
+          type: string
+          description: Intended delivery mechanism or deployment target.
+
+    Task:
+      type: object
+      description: A unit of work in the Architect's task graph.
+      properties:
+        id:
+          type: string
+          format: uuid
+        workflow_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        depends_on:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: IDs of tasks this task depends on.
+        assigned_to:
+          $ref: '#/components/schemas/PersonaKind'
+        output:
+          type: string
+          description: The text output produced when this task was executed.
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Artifact:
+      type: object
+      description: A produced output from any persona phase.
+      properties:
+        id:
+          type: string
+          format: uuid
+        workflow_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The task that produced this artifact, if applicable.
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        name:
+          type: string
+          description: File name or short identifier.
+        description:
+          type: string
+        path:
+          type: string
+          description: On-disk path if the artifact was persisted to storage.
+        content:
+          type: string
+          description: Inline content for small artifacts.
+        created_by:
+          $ref: '#/components/schemas/PersonaKind'
+        created_at:
+          type: string
+          format: date-time
+
+    FinalizationResult:
+      type: object
+      description: The Finalizer persona's output.
+      properties:
+        action:
+          type: string
+          description: >
+            The delivery action that was executed.
+            One of: github-pr, repo-commit-only, artifact-bundle,
+            markdown-export, blog-draft, webhook-dispatch.
+        summary:
+          type: string
+          description: Human-readable summary of what was delivered.
+        links:
+          type: array
+          items:
+            type: string
+          description: URLs produced by the delivery action (e.g. PR URL).
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Action-specific key/value pairs (e.g. pr_url, head_branch).
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: Improvement suggestions from the Refiner retrospective pass.
+        completed_at:
+          type: string
+          format: date-time
+
+    WorkflowState:
+      type: object
+      description: The canonical, persisted state of a single workflow run.
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        scope_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        mode:
+          $ref: '#/components/schemas/WorkflowMode'
+        title:
+          type: string
+          description: Human-readable title set by the Director.
+        request:
+          type: string
+          description: The original natural-language request submitted by the user.
+        constitution:
+          $ref: '#/components/schemas/Constitution'
+          nullable: true
+        requirements:
+          $ref: '#/components/schemas/Requirements'
+          nullable: true
+        design:
+          $ref: '#/components/schemas/Design'
+          nullable: true
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Artifact'
+        finalization:
+          $ref: '#/components/schemas/FinalizationResult'
+          nullable: true
+        summaries:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Per-persona compressed summaries keyed by PersonaKind.
+            Used to give later phases context without re-reading all prior output.
+        provider_name:
+          type: string
+          description: LLM provider selected by the Director.
+        model_name:
+          type: string
+          description: Model selected by the Director.
+        blocking_issues:
+          type: array
+          items:
+            type: string
+          description: Blocking issues raised by QA that caused an Implementer re-run.
+        all_suggestions:
+          type: array
+          items:
+            type: string
+          description: Non-blocking suggestions accumulated across all phases.
+        error_message:
+          type: string
+          description: Error detail when status is `failed`.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          description: URL-safe identifier. Must be unique across all tenants.
+          example: acme-corp
+        name:
+          type: string
+          description: Display name.
+          example: Acme Corporation
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Scope:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ScopeKind'
+        name:
+          type: string
+        slug:
+          type: string
+          description: URL-safe identifier. Must be unique within the tenant.
+        parent_scope_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            ID of the parent scope. Required for `team` scopes when
+            `require_team_parent_org` is enabled. Optional for `org` scopes.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Events ──────────────────────────────────────────────────────────────────
+
+    EventType:
+      type: string
+      enum:
+        - state_transition
+        - persona_started
+        - persona_completed
+        - persona_failed
+        - task_started
+        - task_completed
+
+    Event:
+      type: object
+      description: An immutable journal entry for a workflow.
+      properties:
+        id:
+          type: string
+          format: uuid
+        workflow_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        scope_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/EventType'
+        persona:
+          type: string
+          description: >
+            The persona associated with this event.
+            Empty for `state_transition` events.
+        payload:
+          type: object
+          description: >
+            Typed payload for the event. Shape varies by event type:
+
+            **state_transition**: `{ "from": WorkflowStatus, "to": WorkflowStatus }`
+
+            **persona_started**: `{ "persona": PersonaKind, "provider_name": string, "model_name": string }`
+
+            **persona_completed**: `{ "persona": PersonaKind, "duration_ms": integer, "summary": string, "blocking_issues": string[] }`
+
+            **persona_failed**: `{ "persona": PersonaKind, "error": string }`
+
+            **task_started** / **task_completed**: `{ "task_id": uuid, "title": string }`
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Provider ────────────────────────────────────────────────────────────────
+
+    ProviderInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          enum:
+            - openai
+            - ollama
+            - copilot
+        default_model:
+          type: string
+          example: gpt-4o
+        enabled:
+          type: boolean
+
+    ProviderTestResult:
+      type: object
+      properties:
+        name:
+          type: string
+        ok:
+          type: boolean
+        latency_ms:
+          type: integer
+          description: Round-trip latency in milliseconds. Present only when `ok` is true.
+        error:
+          type: string
+          description: Error detail. Present only when `ok` is false.
+
+    # ── Customization resolution ────────────────────────────────────────────────
+
+    CustomizationItem:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Derived item name (e.g. `skill`, `senior-dev`, `go-style`).
+        source:
+          type: string
+          description: Name of the source that provided this item.
+        precedence:
+          type: integer
+          description: Precedence value of the source. Lower = higher priority.
+        path:
+          type: string
+          description: Filesystem path of the file, if applicable.
+
+    CustomizationsResolveResponse:
+      type: object
+      properties:
+        scope_id:
+          type: string
+          format: uuid
+        skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomizationItem'
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomizationItem'
+        prompts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomizationItem'
+
+    # ── Effective config ────────────────────────────────────────────────────────
+
+    EffectiveConfigResponse:
+      type: object
+      properties:
+        scope_id:
+          type: string
+          format: uuid
+        scope_kind:
+          $ref: '#/components/schemas/ScopeKind'
+        resolved_chain:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: >
+            Ordered list of scope IDs from most-global to most-specific,
+            representing the resolution chain used to build the effective config.
+        effective:
+          type: object
+          additionalProperties: true
+          description: Merged effective configuration for this scope.
+
+    # ── Request bodies ──────────────────────────────────────────────────────────
+
+    CreateWorkflowRequest:
+      type: object
+      required:
+        - request
+      properties:
+        request:
+          type: string
+          description: Natural-language task description.
+          example: Build a REST API for a todo list in Go
+        title:
+          type: string
+          description: >
+            Human-readable title. The Director will generate one if omitted.
+          example: Todo API
+        mode:
+          $ref: '#/components/schemas/WorkflowMode'
+          description: >
+            Workflow mode. The Director selects one from the request if omitted.
+        provider:
+          type: string
+          description: >
+            Override the LLM provider for this workflow run.
+            Must be a registered, enabled provider name.
+          example: openai
+        model:
+          type: string
+          description: Override the model for this workflow run.
+          example: gpt-4o
+
+    CreateTenantRequest:
+      type: object
+      required:
+        - slug
+        - name
+      properties:
+        slug:
+          type: string
+          description: URL-safe identifier. Must be unique.
+          example: acme-corp
+        name:
+          type: string
+          description: Display name.
+          example: Acme Corporation
+
+    UpdateTenantRequest:
+      type: object
+      description: All fields are optional; only provided fields are updated.
+      properties:
+        slug:
+          type: string
+          example: acme-corp-updated
+        name:
+          type: string
+          example: Acme Corp (Updated)
+
+    CreateScopeRequest:
+      type: object
+      required:
+        - kind
+        - name
+        - slug
+      properties:
+        kind:
+          $ref: '#/components/schemas/ScopeKind'
+        name:
+          type: string
+          example: Engineering
+        slug:
+          type: string
+          example: engineering
+        parent_scope_id:
+          type: string
+          format: uuid
+          description: >
+            Parent scope UUID. Required for `team` scopes when
+            `require_team_parent_org` is enabled.
+          nullable: true
+
+    UpdateScopeRequest:
+      type: object
+      description: All fields are optional; only provided fields are updated.
+      properties:
+        name:
+          type: string
+          example: Platform Engineering
+        slug:
+          type: string
+          example: platform
+
+    # ── Error ───────────────────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+      required:
+        - error
+
+  # ─── Reusable responses ──────────────────────────────────────────────────────
+  responses:
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "workflow not found"
+
+    Conflict:
+      description: >
+        Conflict — e.g. the workflow is already in a terminal state,
+        or a slug is already in use.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "workflow is already completed"
+
+    BadRequest:
+      description: Invalid request body or missing required field.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "request field is required"
+
+    InternalError:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Health ──────────────────────────────────────────────────────────────────
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: >
+        Returns 200 immediately without touching the database.
+        Use as a Kubernetes `livenessProbe`.
+      operationId: healthz
+      tags:
+        - health
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+              example:
+                status: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: >
+        Returns 200 only if the database is reachable.
+        Use as a Kubernetes `readinessProbe`.
+      operationId: readyz
+      tags:
+        - health
+      responses:
+        "200":
+          description: Service is ready to accept traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+              example:
+                status: ready
+        "503":
+          description: Database is unreachable; service is not ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unavailable
+                  error:
+                    type: string
+              example:
+                status: unavailable
+                error: "dial tcp: connection refused"
+
+  # ── Workflows ───────────────────────────────────────────────────────────────
+
+  /workflows:
+    get:
+      summary: List workflows
+      description: >
+        Returns workflows for the current tenant, ordered newest first.
+        Supports pagination via `limit` and `offset`.
+      operationId: listWorkflows
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 200
+          description: Maximum number of results to return.
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          description: Number of results to skip (for pagination).
+      responses:
+        "200":
+          description: List of workflow states.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkflowState'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create a workflow
+      description: >
+        Creates a new workflow and immediately enqueues it for execution.
+        Returns `202 Accepted` with the initial `WorkflowState`
+        (status will be `pending`).
+      operationId: createWorkflow
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRequest'
+            examples:
+              software:
+                summary: Software workflow
+                value:
+                  request: Build a REST API for a todo list in Go
+                  mode: software
+                  provider: openai
+                  model: gpt-4o
+              content:
+                summary: Content workflow
+                value:
+                  request: Write a technical blog post about Go generics
+                  mode: content
+      responses:
+        "202":
+          description: Workflow created and enqueued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowState'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /workflows/{id}:
+    get:
+      summary: Get a workflow
+      description: >
+        Returns the full persisted `WorkflowState` including all structured
+        outputs (constitution, requirements, design, tasks, artifacts,
+        finalization) and execution metadata.
+      operationId: getWorkflow
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - $ref: '#/components/parameters/WorkflowID'
+      responses:
+        "200":
+          description: Workflow state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowState'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /workflows/{id}/events:
+    get:
+      summary: Get workflow events
+      description: >
+        Returns the complete event journal for a workflow in chronological
+        order. Events are immutable once written.
+      operationId: getWorkflowEvents
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - $ref: '#/components/parameters/WorkflowID'
+      responses:
+        "200":
+          description: Ordered list of workflow events.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+              example:
+                - id: "uuid"
+                  workflow_id: "uuid"
+                  type: state_transition
+                  persona: ""
+                  payload:
+                    from: pending
+                    to: running
+                  created_at: "2024-01-01T00:00:01Z"
+                - id: "uuid"
+                  workflow_id: "uuid"
+                  type: persona_started
+                  persona: director
+                  payload:
+                    persona: director
+                    provider_name: openai
+                    model_name: gpt-4o
+                  created_at: "2024-01-01T00:00:02Z"
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /workflows/{id}/stream:
+    get:
+      summary: Stream workflow events (SSE)
+      description: |
+        Opens a Server-Sent Events stream that delivers workflow events in
+        real time. The stream:
+
+        - Polls the event journal every second
+        - Sends new events as `data: <json>` lines
+        - Sends `: keepalive` comments periodically to prevent proxy timeouts
+        - Closes automatically when the workflow reaches a terminal state
+          (`completed`, `failed`, `cancelled`) or the timeout elapses
+
+        **Reverse proxy configuration:** Set `proxy_buffering off` (nginx) or
+        equivalent to receive events without buffering delay.
+      operationId: streamWorkflowEvents
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - $ref: '#/components/parameters/WorkflowID'
+        - name: timeout
+          in: query
+          schema:
+            type: integer
+            default: 300
+            minimum: 1
+          description: Maximum stream duration in seconds.
+      responses:
+        "200":
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"type":"state_transition","payload":{"from":"pending","to":"running"}}
+
+                data: {"type":"persona_started","persona":"director","payload":{"provider_name":"openai","model_name":"gpt-4o"}}
+
+                : keepalive
+
+                data: {"type":"persona_completed","persona":"director","payload":{"duration_ms":3200,"summary":"..."}}
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /workflows/{id}/cancel:
+    post:
+      summary: Cancel a workflow
+      description: >
+        Transitions the workflow to `cancelled` status. Only workflows in
+        `pending` or `running` state can be cancelled. Terminal workflows
+        (`completed`, `failed`, `cancelled`) return `409 Conflict`.
+      operationId: cancelWorkflow
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - $ref: '#/components/parameters/WorkflowID'
+      responses:
+        "200":
+          description: Workflow cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: cancelled
+              example:
+                status: cancelled
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /workflows/{id}/resume:
+    post:
+      summary: Resume a paused workflow
+      description: >
+        Re-enqueues a `paused` workflow. The engine reloads the saved
+        `WorkflowState` and continues from the last completed phase.
+        Only workflows in `paused` status can be resumed.
+      operationId: resumeWorkflow
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - $ref: '#/components/parameters/WorkflowID'
+      responses:
+        "200":
+          description: Workflow re-enqueued and transitioning to `running`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: running
+              example:
+                status: running
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Workflow is not in `paused` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "workflow is not paused"
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ── Providers ───────────────────────────────────────────────────────────────
+
+  /providers:
+    get:
+      summary: List providers
+      description: >
+        Returns all registered LLM providers and their current status.
+      operationId: listProviders
+      tags:
+        - providers
+      responses:
+        "200":
+          description: List of registered providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderInfo'
+              example:
+                - name: openai
+                  default_model: gpt-4o
+                  enabled: true
+                - name: ollama
+                  default_model: llama3
+                  enabled: false
+
+  /providers/{name}/test:
+    post:
+      summary: Test a provider
+      description: >
+        Sends a minimal prompt to the named provider and reports whether
+        it responded successfully. Returns `502` if the provider is
+        unreachable or returned an error.
+      operationId: testProvider
+      tags:
+        - providers
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - openai
+              - ollama
+              - copilot
+          description: Provider name to test.
+      responses:
+        "200":
+          description: Provider reachable and responding correctly.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderTestResult'
+              example:
+                name: openai
+                ok: true
+                latency_ms: 412
+        "502":
+          description: Provider unreachable or returned an error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderTestResult'
+              example:
+                name: openai
+                ok: false
+                error: "connection refused"
+
+  # ── Scopes ──────────────────────────────────────────────────────────────────
+
+  /scopes/{id}/effective-config:
+    get:
+      summary: Get effective scope config
+      description: >
+        Walks the scope resolution chain (global → org → team) and returns
+        the merged effective configuration for the given scope.
+      operationId: getEffectiveConfig
+      tags:
+        - scopes
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Scope UUID to resolve.
+      responses:
+        "200":
+          description: Effective configuration for the scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EffectiveConfigResponse'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ── Tenants ─────────────────────────────────────────────────────────────────
+
+  /tenants:
+    get:
+      summary: List tenants
+      description: Returns all tenants.
+      operationId: listTenants
+      tags:
+        - tenants
+      responses:
+        "200":
+          description: List of tenants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tenant'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create a tenant
+      description: Creates a new tenant. The slug must be unique across all tenants.
+      operationId: createTenant
+      tags:
+        - tenants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+            example:
+              slug: acme-corp
+              name: Acme Corporation
+      responses:
+        "201":
+          description: Tenant created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "409":
+          description: A tenant with this slug already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "tenant slug already in use"
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/{id}:
+    get:
+      summary: Get a tenant
+      description: Retrieves a single tenant by ID.
+      operationId: getTenant
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+      responses:
+        "200":
+          description: Tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      summary: Update a tenant
+      description: Updates mutable fields (name, slug) on an existing tenant.
+      operationId: updateTenant
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        "200":
+          description: Updated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: The new slug is already in use by another tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete a tenant
+      description: >
+        Deletes the tenant and all its scopes. This operation is irreversible.
+      operationId: deleteTenant
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+      responses:
+        "204":
+          description: Tenant deleted.
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/{id}/scopes:
+    get:
+      summary: List scopes for a tenant
+      description: Returns all scopes belonging to the given tenant.
+      operationId: listScopesForTenant
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+      responses:
+        "200":
+          description: List of scopes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Scope'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create a scope
+      description: >
+        Creates a new scope within a tenant. The scope kind must be enabled
+        by the server's `scoping` configuration.
+
+        - `global` scopes have no parent.
+        - `org` scopes may optionally reference a `global` parent.
+        - `team` scopes require an `org` parent when `require_team_parent_org` is true.
+      operationId: createScope
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScopeRequest'
+            examples:
+              org:
+                summary: Create an org scope
+                value:
+                  kind: org
+                  name: Engineering
+                  slug: engineering
+                  parent_scope_id: "550e8400-e29b-41d4-a716-446655440000"
+              team:
+                summary: Create a team scope
+                value:
+                  kind: team
+                  name: Platform
+                  slug: platform
+                  parent_scope_id: "engineering-scope-uuid"
+      responses:
+        "201":
+          description: Scope created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scope'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: A scope with this slug already exists in the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/{id}/scopes/{scopeId}:
+    patch:
+      summary: Update a scope
+      description: Updates mutable fields (name, slug) on an existing scope.
+      operationId: updateScope
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+        - $ref: '#/components/parameters/ScopePathID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateScopeRequest'
+      responses:
+        "200":
+          description: Updated scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scope'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: The new slug is already in use within this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete a scope
+      description: Deletes a scope by ID. This operation is irreversible.
+      operationId: deleteScope
+      tags:
+        - tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantPathID'
+        - $ref: '#/components/parameters/ScopePathID'
+      responses:
+        "204":
+          description: Scope deleted.
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ── Customizations ───────────────────────────────────────────────────────────
+
+  /customizations/resolve:
+    get:
+      summary: Resolve customizations
+      description: >
+        Returns the resolved customization snapshot for the current scope:
+        all active skills, agent personas, and prompt overlays, with their
+        source and precedence.
+      operationId: resolveCustomizations
+      tags:
+        - customizations
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+      responses:
+        "200":
+          description: Resolved customization snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomizationsResolveResponse'
+              example:
+                scope_id: "550e8400-e29b-41d4-a716-446655440000"
+                skills:
+                  - name: skill
+                    source: global
+                    precedence: 30
+                    path: ./customizations/global/SKILL.md
+                agents:
+                  - name: senior-dev
+                    source: team-engineering
+                    precedence: 10
+                    path: ./customizations/team-engineering/senior-dev.agent.md
+                prompts:
+                  - name: safety
+                    source: global
+                    precedence: 30
+                    path: ./customizations/global/safety.prompt.md
+        "500":
+          $ref: '#/components/responses/InternalError'
