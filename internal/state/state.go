@@ -234,7 +234,7 @@ type Task struct {
 	Attempt int `json:"attempt,omitempty"`
 	// RemediationSource is "qa_remediation" when the task was created by the
 	// Architect during a post-QA remediation pass.
-	RemediationSource string `json:"remediation_source,omitempty"`
+	RemediationSource string     `json:"remediation_source,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }
