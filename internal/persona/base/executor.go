@@ -42,9 +42,18 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, userProm
 	resp, err := provider.Chat(ctx, common.ChatRequest{
 		Model:    packet.ModelName,
 		Messages: msgs,
+		JSONMode: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("executor: chat error: %w", err)
+	}
+
+	if resp.Truncated {
+		return resp.Message.Content, fmt.Errorf(
+			"executor: model %q truncated its response after %d output tokens (hit token limit) — "+
+				"try a model with a larger context window or simplify the request",
+			resp.Model, resp.OutputTokens,
+		)
 	}
 
 	return resp.Message.Content, nil
@@ -129,12 +138,96 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 
 // ParseJSON attempts to unmarshal the model's response into the target struct.
 // It handles responses that wrap JSON in markdown code fences.
+// When the model truncated its output (hit token limit), it attempts to close
+// open JSON structures and retry — and always reports truncation clearly.
 func ParseJSON(raw string, target interface{}) error {
 	cleaned := extractJSON(raw)
+
 	if err := json.Unmarshal([]byte(cleaned), target); err != nil {
-		return fmt.Errorf("base: JSON parse error: %w\nRaw content:\n%s", err, raw)
+		// Detect truncation: json.Unmarshal reports "unexpected end of JSON input"
+		// when the JSON stream was cut off. Try to recover by closing open brackets.
+		if strings.Contains(err.Error(), "unexpected end of JSON") {
+			if recovered := repairTruncatedJSON(cleaned); recovered != cleaned {
+				if err2 := json.Unmarshal([]byte(recovered), target); err2 == nil {
+					// Parsed after repair — warn but don't fail.
+					return fmt.Errorf("base: model output was truncated (hit token limit) — JSON was partially repaired; some fields may be missing")
+				}
+			}
+			return fmt.Errorf(
+				"base: model output was truncated (hit token limit) — response ended mid-JSON and could not be repaired\n"+
+					"Hint: use a model with a larger context window, or reduce the complexity of the request\n"+
+					"Output length: %d chars\nRaw tail: ...%s",
+				len(raw), tail(raw, 120),
+			)
+		}
+		return fmt.Errorf("base: could not parse model response as JSON: %w\nRaw content:\n%s", err, raw)
 	}
 	return nil
+}
+
+// repairTruncatedJSON attempts to close any unclosed JSON objects and arrays
+// so that a partially-generated response can still be unmarshalled.
+func repairTruncatedJSON(s string) string {
+	var stack []rune
+	inString := false
+	escaped := false
+
+	for _, ch := range s {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch ch {
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+
+	if len(stack) == 0 {
+		return s // nothing to close
+	}
+
+	// Trim trailing garbage (partial key/value) and close.
+	// Find the last complete value boundary: the last } ] " digit.
+	b := []byte(s)
+	for i := len(b) - 1; i >= 0; i-- {
+		c := b[i]
+		if c == '}' || c == ']' || c == '"' || (c >= '0' && c <= '9') || c == 'e' || c == 'l' || c == 's' {
+			b = b[:i+1]
+			break
+		}
+	}
+
+	// Close open structures in reverse order.
+	for i := len(stack) - 1; i >= 0; i-- {
+		b = append(b, byte(stack[i]))
+	}
+	return string(b)
+}
+
+// tail returns the last n characters of s.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // extractJSON strips markdown code fences from a model response.

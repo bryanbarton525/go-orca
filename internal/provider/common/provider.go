@@ -68,6 +68,9 @@ type ChatRequest struct {
 	Temperature float64           `json:"temperature,omitempty"`
 	Stream      bool              `json:"stream"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// JSONMode asks the provider to constrain output to valid JSON.
+	// Supported by Ollama (format=json) and OpenAI (response_format=json_object).
+	JSONMode bool `json:"json_mode,omitempty"`
 }
 
 // ChatResponse is the canonical response from any provider.
@@ -79,6 +82,9 @@ type ChatResponse struct {
 	InputTokens  int           `json:"input_tokens"`
 	OutputTokens int           `json:"output_tokens"`
 	Latency      time.Duration `json:"latency"`
+	// Truncated is true when the model stopped because it hit the token limit
+	// rather than producing a complete response.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // StreamChunk is a single delta yielded during a streaming response.

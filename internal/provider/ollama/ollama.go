@@ -5,6 +5,7 @@ package ollama
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -80,6 +81,13 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		Model:    model,
 		Messages: msgs,
 		Stream:   &stream,
+		// num_predict: -1 means unlimited output tokens.
+		// Without this, Ollama uses the model's Modelfile default (often 2048 or
+		// less), causing done_reason=length on long persona responses.
+		Options: map[string]any{"num_predict": -1},
+	}
+	if req.JSONMode {
+		ollamaReq.Format = json.RawMessage(`"json"`)
 	}
 
 	var finalResp *ollamaapi.ChatResponse
@@ -94,6 +102,8 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		return nil, fmt.Errorf("ollama: no response received")
 	}
 
+	truncated := finalResp.DoneReason == "length"
+
 	return &common.ChatResponse{
 		ID:           fmt.Sprintf("ollama-%d", finalResp.CreatedAt.UnixMilli()),
 		Model:        finalResp.Model,
@@ -102,6 +112,7 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		InputTokens:  finalResp.PromptEvalCount,
 		OutputTokens: finalResp.EvalCount,
 		Latency:      time.Since(start),
+		Truncated:    truncated,
 	}, nil
 }
 
