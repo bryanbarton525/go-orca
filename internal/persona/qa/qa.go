@@ -80,7 +80,7 @@ var outputSchema = map[string]any{
 			},
 		},
 		"warnings": map[string]any{
-			"type": "array",
+			"type":  "array",
 			"items": map[string]any{"type": "object"},
 		},
 		"suggestions":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},

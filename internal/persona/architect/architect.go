@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/go-orca/go-orca/internal/persona/base"
 	"github.com/go-orca/go-orca/internal/state"
+	"github.com/google/uuid"
 )
 
 const systemPrompt = `You are the Architect persona in the gorca workflow orchestration system.
