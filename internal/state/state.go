@@ -3,6 +3,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,6 +141,18 @@ type WorkflowState struct {
 	// The Finalizer honors this value in code after parsing its LLM response
 	// so the action cannot drift from the Director's intent.
 	FinalizerAction string `json:"finalizer_action,omitempty"`
+
+	// DeliveryAction is the action key selected at workflow creation time
+	// (from the POST /workflows request body delivery.action field).
+	// When set it overrides FinalizerAction, giving callers full control over
+	// how the Finalizer delivers its output.
+	DeliveryAction string `json:"delivery_action,omitempty"`
+
+	// DeliveryConfig is the action-specific non-secret configuration submitted
+	// with the workflow (e.g. target repo, base branch, webhook URL).
+	// Secrets (tokens, passwords) must come from environment variables — never
+	// persisted here.  Stored as raw JSON so each action can define its own shape.
+	DeliveryConfig json.RawMessage `json:"delivery_config,omitempty"`
 
 	// Execution holds live progress metadata for in-flight workflows.
 	// Updated by the engine at every persona/task boundary.
@@ -320,6 +333,16 @@ type HandoffPacket struct {
 	// to the Finalizer so it can be enforced in code rather than inferred by
 	// the LLM.  Empty means no Director preference was set.
 	FinalizerAction string `json:"finalizer_action,omitempty"`
+
+	// DeliveryAction is the caller-supplied delivery action (from the
+	// POST /workflows request body), forwarded to the Finalizer so it can be
+	// executed with the caller's config.  Overrides FinalizerAction when set.
+	DeliveryAction string `json:"delivery_action,omitempty"`
+
+	// DeliveryConfig is the caller-supplied action configuration (non-secret
+	// fields only; tokens come from env vars).  The Finalizer passes this to
+	// actions.Global.Execute so the action has full context at runtime.
+	DeliveryConfig json.RawMessage `json:"delivery_config,omitempty"`
 
 	// Accumulated issues and suggestions from prior phases (populated by engine).
 	BlockingIssues []string `json:"blocking_issues,omitempty"`

@@ -76,6 +76,14 @@ func (s *Store) Migrate() error {
 			}
 		}
 	}
+	// Idempotently add columns introduced in schema v006.
+	for _, stmt := range sqliteAlterV006 {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("sqlite migrate v006: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -102,13 +110,15 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		   provider_name, model_name, constitution, requirements, design,
 		   tasks, artifacts, finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   delivery_action, delivery_config,
 		   created_at, updated_at, execution)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		p.constitution, p.requirements, p.design,
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
 		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
+		ws.DeliveryAction, p.deliveryConfig,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(), p.execution,
 	)
 	return err
@@ -131,8 +141,9 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   constitution, requirements, design, tasks, artifacts,
 		   finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   delivery_action, delivery_config,
 		   created_at, updated_at, started_at, completed_at, execution)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  status=excluded.status, mode=excluded.mode, title=excluded.title,
 		  provider_name=excluded.provider_name, model_name=excluded.model_name,
@@ -145,6 +156,8 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  persona_prompt_snapshot=excluded.persona_prompt_snapshot,
 		  required_personas=excluded.required_personas,
 		  finalizer_action=excluded.finalizer_action,
+		  delivery_action=excluded.delivery_action,
+		  delivery_config=excluded.delivery_config,
 		  execution=excluded.execution,
 		  updated_at=excluded.updated_at,
 		  started_at=excluded.started_at, completed_at=excluded.completed_at`,
@@ -153,6 +166,7 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		p.constitution, p.requirements, p.design,
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
 		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
+		ws.DeliveryAction, p.deliveryConfig,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(),
 		nullableUnix(ws.StartedAt), nullableUnix(ws.CompletedAt), p.execution,
 	)
@@ -364,6 +378,12 @@ var sqliteAlterV005 = []string{
 	`ALTER TABLE workflows ADD COLUMN execution TEXT NOT NULL DEFAULT '{}'`,
 }
 
+// sqliteAlterV006 adds the delivery action/config columns to existing databases.
+var sqliteAlterV006 = []string{
+	`ALTER TABLE workflows ADD COLUMN delivery_action TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE workflows ADD COLUMN delivery_config TEXT NOT NULL DEFAULT 'null'`,
+}
+
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
 const selectWorkflowSQL = `
@@ -372,6 +392,7 @@ const selectWorkflowSQL = `
 	       constitution, requirements, design, tasks, artifacts,
 	       finalization, summaries, blocking_issues,
 	       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+	       delivery_action, delivery_config,
 	       created_at, updated_at, started_at, completed_at, execution
 	FROM workflows`
 
@@ -425,6 +446,8 @@ CREATE TABLE IF NOT EXISTS workflows (
     persona_prompt_snapshot TEXT  NOT NULL DEFAULT '{}',
     required_personas     TEXT    NOT NULL DEFAULT '[]',
     finalizer_action      TEXT    NOT NULL DEFAULT '',
+    delivery_action       TEXT    NOT NULL DEFAULT '',
+    delivery_config       TEXT    NOT NULL DEFAULT 'null',
     execution             TEXT    NOT NULL DEFAULT '{}',
     created_at            INTEGER NOT NULL,
     updated_at            INTEGER NOT NULL,
@@ -523,6 +546,8 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		requiredPersonas                   sql.NullString
 		execution                          sql.NullString
 		finalizerAction                    sql.NullString
+		deliveryAction                     sql.NullString
+		deliveryConfig                     sql.NullString
 		providerName, modelName            sql.NullString
 		errorMessage                       sql.NullString
 		createdAt, updatedAt               int64
@@ -535,6 +560,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&constitution, &requirements, &design, &tasks, &artifacts,
 		&finalization, &summaries, &blockingIssues,
 		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &finalizerAction,
+		&deliveryAction, &deliveryConfig,
 		&createdAt, &updatedAt, &startedAt, &completedAt, &execution,
 	)
 	if err != nil {
@@ -545,6 +571,10 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	ws.ModelName = modelName.String
 	ws.ErrorMessage = errorMessage.String
 	ws.FinalizerAction = finalizerAction.String
+	ws.DeliveryAction = deliveryAction.String
+	if deliveryConfig.Valid && deliveryConfig.String != "" && deliveryConfig.String != "null" {
+		ws.DeliveryConfig = json.RawMessage(deliveryConfig.String)
+	}
 
 	ws.CreatedAt = time.Unix(createdAt, 0).UTC()
 	ws.UpdatedAt = time.Unix(updatedAt, 0).UTC()
@@ -638,6 +668,7 @@ type workflowPayload struct {
 	allSuggestions                     []byte
 	personaPromptSnapshot              []byte
 	requiredPersonas                   []byte
+	deliveryConfig                     []byte
 	execution                          []byte
 }
 
@@ -682,6 +713,11 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 	}
 	if p.requiredPersonas, err = json.Marshal(ws.RequiredPersonas); err != nil {
 		return p, err
+	}
+	if len(ws.DeliveryConfig) > 0 {
+		p.deliveryConfig = ws.DeliveryConfig
+	} else {
+		p.deliveryConfig = []byte("null")
 	}
 	if p.execution, err = json.Marshal(ws.Execution); err != nil {
 		return p, err

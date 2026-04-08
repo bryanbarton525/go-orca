@@ -94,6 +94,7 @@ When `auto_migrate: true`, the SQLite store runs `s.Migrate()` at startup. This 
 | v003 | `task_edges` on `workflows` |
 | v004 | `all_suggestions`, `persona_prompt_snapshot`, `required_personas`, `finalizer_action` columns |
 | v005 | `execution` column (`TEXT NOT NULL DEFAULT '{}'`) — stores in-flight progress |
+| v006 | `delivery_action` (TEXT) and `delivery_config` (JSONB) on `workflows` — persists the caller-supplied delivery action key and non-secret config submitted at workflow creation |
 
 ---
 

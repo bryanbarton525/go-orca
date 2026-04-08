@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  A self-hosted AI workflow orchestration API server that improves itself.<br/>
-  Drive multi-phase LLM pipelines from a single HTTP API — and get structured improvement proposals after every run.
+  <strong>Multi-tenant AI orchestration engine</strong><br/>
+  Drive structured multi-phase LLM pipelines from a single HTTP API — with built-in QA remediation, scoped customization, and automatic self-improvement after every run.
 </p>
 
 <p align="center">
@@ -15,27 +15,27 @@
 
 ---
 
-go-orca is a backend service that orchestrates multi-agent AI workflows through a structured persona pipeline. You submit a natural-language request; go-orca drives it through Director → Project Manager → Architect → Implementer → QA → Finalizer, producing structured artifacts that can be delivered as a GitHub PR, a markdown export, a webhook payload, or an artifact bundle.
+go-orca is a self-hosted backend service that runs structured AI workflows across isolated tenants and scope hierarchies. Submit a natural-language request; go-orca routes it through a six-persona pipeline — Director → Project Manager → Architect → Implementer → QA → Finalizer — producing typed artifacts that can be delivered as a GitHub PR, a markdown export, a webhook payload, or an artifact bundle.
 
-After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration. The Refiner receives the full workflow history and produces structured improvement proposals (component, problem, proposed fix, priority, health score) that tell you exactly what to tune and where. A standalone async Refiner persona can also analyse patterns across many historical workflows at once.
+Every workflow is isolated by tenant and scope. Per-scope customizations (skills, prompt overlays, agent personas) let different teams within the same deployment drive different behaviour without touching shared configuration. The scope hierarchy (global → org → team) means tenant-level defaults cascade to narrower scopes automatically.
 
-Each persona operates within a strict role contract enforced by the engine: only the Architect may produce tasks, only the Implementer may produce artifacts, and QA is validation-only. Violations are discarded and recorded as suggestions rather than silently corrupting state.
+After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration — and emits `refiner.suggestion` SSE events with structured improvement proposals. The engine enforces strict role contracts: only the Architect may produce tasks, only the Implementer may produce artifacts, QA is validation-only. Violations are discarded and recorded rather than silently corrupting state.
 
 ## Features
 
-- **Automatic self-improvement** — after every workflow the Finalizer runs an inline Refiner retrospective that produces structured improvement proposals: component name, problem, proposed fix, priority, and an overall health score (0–100)
-- **Cross-workflow pattern detection** — a standalone async Refiner persona analyses historical workflow events across many runs to identify recurring issues that single-run retrospectives cannot see
-- **Structured persona pipeline** — six specialist roles, each with a distinct purpose and typed output; role contracts enforced at the engine layer
-- **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; the Implementer executes them; QA re-validates; the loop repeats up to `MaxQARetries` times
+- **Multi-tenant isolation** — every workflow, event, and artifact is scoped to a tenant + scope; read endpoints enforce ownership so tenants cannot access each other's data
+- **Scope hierarchy** — global → org → team customization chain; narrower scopes inherit and override broader ones
+- **Automatic self-improvement** — inline Refiner retrospective runs after every workflow, producing structured proposals with component name, problem, proposed fix, priority, and health score (0–100)
+- **Cross-workflow pattern detection** — standalone async Refiner persona analyses historical journal events across many runs to surface recurring issues single-run retrospectives cannot see
+- **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; Implementer executes them; QA re-validates; repeats up to `MaxQARetries` times
+- **Role contract enforcement** — engine discards and warns on any output that violates persona ownership rules (Artifacts from non-Implementer, Tasks from non-Architect, etc.)
+- **Six delivery actions** — GitHub PR, direct repo commit, artifact bundle, markdown export, blog draft, webhook dispatch; caller-provided `delivery.action` overrides LLM choice
 - **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE
+- **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.)
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
-- **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), and GitHub Copilot
-- **Multi-tenancy and scoping** — tenant + scope hierarchy (global → org → team) with per-scope customizations
-- **Customization system** — inject skills, agent personas, and prompt overlays from the filesystem or a repo
-- **Six delivery actions** — GitHub PR, direct commit, artifact bundle, markdown export, blog draft, webhook
+- **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), GitHub Copilot
 - **Built-in tools + MCP** — `http_get`, `read_file`, `write_file`, plus remote tools via Model Context Protocol
 - **SQLite or PostgreSQL** — swap backends with a single config line; auto-migration included
-- **SSE streaming** — real-time workflow event stream for live UI integration
 - **Structured logging** — JSON or console output via zap
 
 ## Self-Improvement
@@ -44,14 +44,7 @@ go-orca is designed to improve its own behaviour over time without manual interv
 
 **Inline Refiner (every workflow)**
 
-After the Finalizer delivers its output it automatically runs a Refiner retrospective — synchronously, on every completed workflow, with no extra configuration required. The Refiner receives:
-
-- All persona summaries from the run
-- Accumulated blocking issues
-- The full suggestion history
-- All produced artifacts
-
-It returns structured improvement proposals:
+After the Finalizer delivers its output it automatically runs a Refiner retrospective — synchronously, on every completed workflow. The Refiner returns structured improvement proposals:
 
 | Field | Description |
 |---|---|
@@ -59,10 +52,10 @@ It returns structured improvement proposals:
 | `component_name` | Exact name of the file or component to change |
 | `problem` | What went wrong or could be better |
 | `proposed_fix` | Concrete suggested change |
-| `example` | Optional illustrative example |
 | `priority` | `high`, `medium`, or `low` |
+| `health_score` | 0–100 overall run quality score |
 
-It also returns an `overall_assessment`, a `health_score` (0–100), and a plain-language `summary`. Suggestions are stored on the workflow state (`all_suggestions`) and emitted as `refiner.suggestion` SSE events. A Refiner failure never breaks a workflow — errors are intentionally swallowed so retrospectives cannot interfere with delivery.
+Suggestions are stored on the workflow state (`all_suggestions`) and emitted as `refiner.suggestion` SSE events. A Refiner failure never breaks a workflow — errors are intentionally swallowed.
 
 **Standalone async Refiner (cross-workflow)**
 
@@ -105,30 +98,34 @@ The server starts on `http://0.0.0.0:8080` by default.
 ```bash
 curl -s -X POST http://localhost:8080/workflows \
   -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: acme' \
+  -H 'X-Scope-ID: eng-team' \
   -d '{"request": "Build a REST API for a todo list in Go"}' | jq .
 ```
 
 ### 5. Stream events
 
 ```bash
-curl -N http://localhost:8080/workflows/<id>/stream
+curl -N http://localhost:8080/workflows/<id>/stream \
+  -H 'X-Tenant-ID: acme'
 ```
 
 ## Documentation
 
 | Document | Description |
 |---|---|
-| [Architecture](docs/architecture.md) | System overview, component map, data flow |
+| [Architecture](docs/architecture.md) | System overview, component map, trust boundaries, data flow |
 | [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, QA remediation loop, role enforcement, execution progress, pause/resume |
-| [API Reference](docs/api.md) | All HTTP endpoints, request/response schemas, headers |
+| [API Reference](docs/api.md) | All HTTP endpoints, request/response schemas, headers, event types |
 | [Configuration](docs/configuration.md) | Every config key, default, env var override |
-| [Providers](docs/providers.md) | OpenAI, Ollama, GitHub Copilot — setup and config |
-| [Customization](docs/customization.md) | Skills, agent personas, prompt overlays, source types |
+| [Providers](docs/providers.md) | OpenAI, Anthropic, Ollama, GitHub Copilot — setup and config |
+| [Customization](docs/customization.md) | Skills, agent personas, prompt overlays, scope resolution chain |
 | [Finalizer Actions](docs/finalizer-actions.md) | Delivery actions: GitHub PR, commit, bundle, export, webhook |
 | [Tools](docs/tools.md) | Built-in tools and the MCP remote tool protocol |
 | [Storage](docs/storage.md) | SQLite vs PostgreSQL, Store interface, migrations |
-| [Deployment](docs/deployment.md) | Binary setup, Docker, reverse proxy, graceful shutdown |
+| [Deployment](docs/deployment.md) | Binary setup, Docker, reverse proxy, shutdown behaviour |
 
 ## License
 
 MIT
+

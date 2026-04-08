@@ -71,15 +71,16 @@ The Director selects a mode automatically from the request when not specified.
 
 | Value | Payload shape |
 |---|---|
-| `state_transition` | `{ "from": WorkflowStatus, "to": WorkflowStatus }` |
-| `persona_started` | `{ "persona": PersonaKind, "provider_name": string, "model_name": string }` |
-| `persona_completed` | `{ "persona": PersonaKind, "duration_ms": integer, "summary": string, "blocking_issues": string[] }` |
-| `persona_failed` | `{ "persona": PersonaKind, "error": string }` |
-| `task_started` | `{ "task_id": uuid, "title": string }` |
-| `task_completed` | `{ "task_id": uuid, "title": string }` |
-| `task_failed` | `{ "task_id": uuid, "title": string, "error": string }` |
-| `task_created` | `{ "task_id": uuid, "title": string, "qa_cycle": integer }` |
-| `artifact_produced` | `{ "task_id": uuid, "artifact_name": string, "kind": ArtifactKind }` |
+| `state.transition` | `{ "from": WorkflowStatus, "to": WorkflowStatus }` |
+| `persona.started` | `{ "persona": PersonaKind, "provider_name": string, "model_name": string }` |
+| `persona.completed` | `{ "persona": PersonaKind, "duration_ms": integer, "summary": string, "blocking_issues": string[] }` |
+| `persona.failed` | `{ "persona": PersonaKind, "error": string }` |
+| `task.started` | `{ "task_id": uuid, "title": string }` |
+| `task.completed` | `{ "task_id": uuid, "title": string }` |
+| `task.failed` | `{ "task_id": uuid, "title": string, "error": string }` |
+| `task.created` | `{ "task_id": uuid, "title": string, "qa_cycle": integer }` |
+| `artifact.produced` | `{ "task_id": uuid, "artifact_name": string, "kind": ArtifactKind }` |
+| `refiner.suggestion` | `{ "component": string, "name": string, "suggestion": string, "applied_path": string }` |
 
 ---
 
@@ -306,7 +307,7 @@ Return all journal events for a workflow in insertion order. Events are immutabl
     "workflow_id": "uuid",
     "tenant_id": "uuid",
     "scope_id": "uuid",
-    "type": "state_transition",
+    "type": "state.transition",
     "persona": "",
     "payload": { "from": "pending", "to": "running" },
     "created_at": "2024-01-01T00:00:01Z"
@@ -314,7 +315,7 @@ Return all journal events for a workflow in insertion order. Events are immutabl
   {
     "id": "uuid",
     "workflow_id": "uuid",
-    "type": "persona_started",
+    "type": "persona.started",
     "persona": "director",
     "payload": { "persona": "director", "provider_name": "openai", "model_name": "gpt-4o" },
     "created_at": "2024-01-01T00:00:02Z"
@@ -343,13 +344,13 @@ The stream closes automatically when the workflow reaches a terminal state (`com
 **Response** — `text/event-stream`
 
 ```
-data: {"type":"state_transition","payload":{"from":"pending","to":"running"}}
+data: {"type":"state.transition","payload":{"from":"pending","to":"running"}}
 
-data: {"type":"persona_started","persona":"director","payload":{"provider_name":"openai","model_name":"gpt-4o"}}
+data: {"type":"persona.started","persona":"director","payload":{"provider_name":"openai","model_name":"gpt-4o"}}
 
 : keepalive
 
-data: {"type":"persona_completed","persona":"director","payload":{"duration_ms":3200,"summary":"..."}}
+data: {"type":"persona.completed","persona":"director","payload":{"duration_ms":3200,"summary":"..."}}
 ```
 
 **Response 404** — workflow not found

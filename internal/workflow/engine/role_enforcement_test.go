@@ -18,6 +18,7 @@ import (
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 )
@@ -49,6 +50,16 @@ func registerPersonas(t *testing.T, ps ...persona.Persona) func() {
 	}
 }
 
+// stubPromptSnapshot returns a persona prompt snapshot with stub content for
+// every required key so the engine's prompt-load step is bypassed in tests.
+func stubPromptSnapshot() map[string]string {
+	snap := make(map[string]string, len(prompts.Keys()))
+	for _, k := range prompts.Keys() {
+		snap[k] = "stub prompt for " + k
+	}
+	return snap
+}
+
 // baseWorkflow builds a WorkflowState past the Director phase.
 func baseWorkflow(required ...state.PersonaKind) *state.WorkflowState {
 	ws := state.NewWorkflowState("tenant-1", "scope-1", "test request")
@@ -58,6 +69,7 @@ func baseWorkflow(required ...state.PersonaKind) *state.WorkflowState {
 	ws.Summaries = map[state.PersonaKind]string{
 		state.PersonaDirector: "director done",
 	}
+	ws.PersonaPromptSnapshot = stubPromptSnapshot()
 	return ws
 }
 
@@ -291,6 +303,7 @@ func TestExecution_CurrentPersonaSetAfterRun(t *testing.T) {
 	ws := state.NewWorkflowState("t1", "s1", "test exec progress")
 	ws.ProviderName = "mock"
 	ws.ModelName = "mock"
+	ws.PersonaPromptSnapshot = stubPromptSnapshot()
 
 	cleanup := registerPersonas(t,
 		&fixedPersona{kind: state.PersonaDirector, out: &state.PersonaOutput{

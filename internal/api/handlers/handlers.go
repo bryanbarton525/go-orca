@@ -42,6 +42,27 @@ func respondError(c *gin.Context, status int, msg string) {
 	c.JSON(status, gin.H{"error": msg})
 }
 
+// checkWorkflowOwnership returns (ws, true) when the workflow belongs to the
+// requesting tenant.  On mismatch or lookup failure it writes the appropriate
+// HTTP response and returns (nil, false) so the caller can return immediately.
+//
+// Scope ownership is intentionally not enforced here: a tenant may access any
+// workflow that belongs to them regardless of the scope it was created in.
+func checkWorkflowOwnership(c *gin.Context, store storage.Store) (*state.WorkflowState, bool) {
+	id := c.Param("id")
+	ws, err := store.GetWorkflow(c.Request.Context(), id)
+	if err != nil {
+		respondError(c, http.StatusNotFound, fmt.Sprintf("workflow not found: %s", id))
+		return nil, false
+	}
+	tid := tenantID(c)
+	if tid != "" && ws.TenantID != tid {
+		respondError(c, http.StatusForbidden, "workflow does not belong to this tenant")
+		return nil, false
+	}
+	return ws, true
+}
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 // Healthz returns 200 OK unconditionally (liveness probe).
@@ -74,13 +95,20 @@ func Readyz(store storage.Store) gin.HandlerFunc {
 
 // ─── Workflow handlers ────────────────────────────────────────────────────────
 
+// DeliveryRequest holds the optional delivery configuration for a workflow.
+type DeliveryRequest struct {
+	Action string          `json:"action"` // github-pr | webhook-dispatch | etc.
+	Config json.RawMessage `json:"config"` // action-specific non-secret config
+}
+
 // CreateWorkflowRequest is the request body for POST /workflows.
 type CreateWorkflowRequest struct {
-	Request  string `json:"request" binding:"required"`
-	Title    string `json:"title"`
-	Mode     string `json:"mode"`     // optional; Director will classify if omitted
-	Provider string `json:"provider"` // optional override
-	Model    string `json:"model"`    // optional override
+	Request  string          `json:"request" binding:"required"`
+	Title    string          `json:"title"`
+	Mode     string          `json:"mode"`     // optional; Director will classify if omitted
+	Provider string          `json:"provider"` // optional override
+	Model    string          `json:"model"`    // optional override
+	Delivery DeliveryRequest `json:"delivery"` // optional delivery action + config
 }
 
 // CreateWorkflow handles POST /workflows.
@@ -106,6 +134,12 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		}
 		ws.ProviderName = req.Provider
 		ws.ModelName = req.Model
+		if req.Delivery.Action != "" {
+			ws.DeliveryAction = req.Delivery.Action
+		}
+		if len(req.Delivery.Config) > 0 {
+			ws.DeliveryConfig = req.Delivery.Config
+		}
 
 		if err := store.CreateWorkflow(c.Request.Context(), ws); err != nil {
 			log.Error("create workflow", zap.Error(err))
@@ -127,9 +161,8 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 // GetWorkflow handles GET /workflows/:id.
 func GetWorkflow(store storage.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ws, err := store.GetWorkflow(c.Request.Context(), c.Param("id"))
-		if err != nil {
-			respondError(c, http.StatusNotFound, fmt.Sprintf("workflow not found: %s", c.Param("id")))
+		ws, ok := checkWorkflowOwnership(c, store)
+		if !ok {
 			return
 		}
 		c.JSON(http.StatusOK, ws)
@@ -162,6 +195,9 @@ func ListWorkflows(store storage.Store) gin.HandlerFunc {
 // GetWorkflowEvents handles GET /workflows/:id/events.
 func GetWorkflowEvents(store storage.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if _, ok := checkWorkflowOwnership(c, store); !ok {
+			return
+		}
 		evts, err := store.ListEvents(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			respondError(c, http.StatusNotFound, fmt.Sprintf("events not found for workflow: %s", c.Param("id")))
@@ -175,9 +211,8 @@ func GetWorkflowEvents(store storage.Store) gin.HandlerFunc {
 func CancelWorkflow(store storage.Store, log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		ws, err := store.GetWorkflow(c.Request.Context(), id)
-		if err != nil {
-			respondError(c, http.StatusNotFound, "workflow not found")
+		ws, ok := checkWorkflowOwnership(c, store)
+		if !ok {
 			return
 		}
 		if ws.Status == state.WorkflowStatusCompleted ||
@@ -200,9 +235,8 @@ func CancelWorkflow(store storage.Store, log *zap.Logger) gin.HandlerFunc {
 func ResumeWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		ws, err := store.GetWorkflow(c.Request.Context(), id)
-		if err != nil {
-			respondError(c, http.StatusNotFound, "workflow not found")
+		ws, ok := checkWorkflowOwnership(c, store)
+		if !ok {
 			return
 		}
 		if ws.Status != state.WorkflowStatusPaused && ws.Status != state.WorkflowStatusFailed {
@@ -450,7 +484,10 @@ type CreateScopeRequest struct {
 }
 
 // CreateScope handles POST /tenants/:id/scopes.
+// Hierarchy constraints (team must have org parent, org must have global
+// parent, global must have no parent) are enforced by scope.Service.Create.
 func CreateScope(store storage.Store, log *zap.Logger) gin.HandlerFunc {
+	svc := scope.New(store)
 	return func(c *gin.Context) {
 		tenantID := c.Param("id")
 		var req CreateScopeRequest
@@ -458,20 +495,18 @@ func CreateScope(store storage.Store, log *zap.Logger) gin.HandlerFunc {
 			respondError(c, http.StatusBadRequest, err.Error())
 			return
 		}
-		now := time.Now().UTC()
-		sc := &state.Scope{
-			ID:            uuid.New().String(),
-			TenantID:      tenantID,
-			Kind:          state.ScopeKind(req.Kind),
-			Name:          req.Name,
-			Slug:          req.Slug,
-			ParentScopeID: req.ParentScopeID,
-			CreatedAt:     now,
-			UpdatedAt:     now,
-		}
-		if err := store.CreateScope(c.Request.Context(), sc); err != nil {
+		sc, err := svc.Create(c.Request.Context(), tenantID,
+			state.ScopeKind(req.Kind), req.Name, req.Slug, req.ParentScopeID)
+		if err != nil {
 			log.Error("create scope", zap.Error(err))
-			respondError(c, http.StatusInternalServerError, "failed to create scope")
+			// Hierarchy violations surface as 400 Bad Request.
+			status := http.StatusInternalServerError
+			msg := "failed to create scope"
+			if isHierarchyError(err) {
+				status = http.StatusBadRequest
+				msg = err.Error()
+			}
+			respondError(c, status, msg)
 			return
 		}
 		c.JSON(http.StatusCreated, sc)
@@ -553,6 +588,17 @@ func NewWorkflowID() string {
 // NewTimestamp returns current UTC time.
 func NewTimestamp() time.Time { return time.Now().UTC() }
 
+// isHierarchyError returns true when the error came from scope hierarchy
+// validation (parent kind mismatch, missing parent, etc.).  These are
+// surfaced as 400 Bad Request rather than 500 Internal Server Error.
+func isHierarchyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return len(msg) > 6 && msg[:6] == "scope:"
+}
+
 // ─── SSE streaming ────────────────────────────────────────────────────────────
 
 // StreamWorkflowEvents handles GET /workflows/:id/stream.
@@ -578,10 +624,9 @@ func StreamWorkflowEvents(store storage.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 
-		// Verify the workflow exists before opening the stream.
-		ws, err := store.GetWorkflow(c.Request.Context(), id)
-		if err != nil {
-			respondError(c, http.StatusNotFound, fmt.Sprintf("workflow not found: %s", id))
+		// Verify the workflow exists and belongs to this tenant before opening the stream.
+		ws, ok := checkWorkflowOwnership(c, store)
+		if !ok {
 			return
 		}
 

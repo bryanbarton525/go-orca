@@ -28,6 +28,7 @@ type finalizerOutput struct {
 type refinerOutput struct {
 	Improvements      []state.RefinerImprovement `json:"improvements"`
 	OverallAssessment string                     `json:"overall_assessment"`
+	HealthScore       float64                    `json:"health_score"`
 	Summary           string                     `json:"summary"`
 }
 
@@ -64,9 +65,10 @@ var refinerSchema = map[string]any{
 			},
 		},
 		"overall_assessment": map[string]any{"type": "string"},
+		"health_score":       map[string]any{"type": "number", "minimum": 0, "maximum": 100},
 		"summary":            map[string]any{"type": "string"},
 	},
-	"required": []string{"improvements", "overall_assessment", "summary"},
+	"required": []string{"improvements", "overall_assessment", "health_score", "summary"},
 }
 
 // Finalizer implements persona.Persona.

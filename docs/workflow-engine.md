@@ -297,12 +297,13 @@ Internal queue capacity = `Concurrency × 4`. `Enqueue` returns an error immedia
 
 | Event Type | Trigger |
 |---|---|
-| `state_transition` | Any workflow status change |
-| `persona_started` | Before `persona.Execute` is called |
-| `persona_completed` | After `persona.Execute` returns successfully |
-| `persona_failed` | After `persona.Execute` returns an error |
-| `task_started` | Before Implementer executes a single task |
-| `task_completed` | After Implementer finishes a single task |
-| `task_failed` | After Implementer returns an error for a single task |
-| `task_created` | When Architect appends a new remediation task during QA |
-| `artifact_produced` | After each artifact is committed from Implementer output |
+| `state.transition` | Any workflow status change |
+| `persona.started` | Before `persona.Execute` is called |
+| `persona.completed` | After `persona.Execute` returns successfully |
+| `persona.failed` | After `persona.Execute` returns an error |
+| `task.started` | Before Implementer executes a single task |
+| `task.completed` | After Implementer finishes a single task |
+| `task.failed` | After Implementer returns an error for a single task |
+| `task.created` | When Architect appends a new remediation task during QA |
+| `artifact.produced` | After each artifact is committed from Implementer output |
+| `refiner.suggestion` | After the inline Refiner produces an improvement recommendation |

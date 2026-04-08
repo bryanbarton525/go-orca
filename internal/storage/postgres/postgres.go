@@ -85,14 +85,16 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		   provider_name, model_name, constitution, requirements, design,
 		   tasks, artifacts, finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   delivery_action, delivery_config,
 		   created_at, updated_at, execution)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		payload.constitution, payload.requirements, payload.design,
 		payload.tasks, payload.artifacts, payload.finalization,
 		payload.summaries, payload.blockingIssues,
 		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
+		ws.DeliveryAction, payload.deliveryConfig,
 		ws.CreatedAt, ws.UpdatedAt, payload.execution,
 	)
 	return err
@@ -105,6 +107,7 @@ func (s *Store) GetWorkflow(ctx context.Context, id string) (*state.WorkflowStat
 		       constitution, requirements, design, tasks, artifacts,
 		       finalization, summaries, blocking_issues,
 		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		       delivery_action, delivery_config,
 		       created_at, updated_at, started_at, completed_at, execution
 		FROM workflows WHERE id = $1`, id)
 
@@ -123,8 +126,9 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   constitution, requirements, design, tasks, artifacts,
 		   finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   delivery_action, delivery_config,
 		   created_at, updated_at, started_at, completed_at, execution)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
 		ON CONFLICT (id) DO UPDATE SET
 		  status=$4, mode=$5, title=$6,
 		  provider_name=$8, model_name=$9, error_message=$10,
@@ -133,13 +137,15 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  summaries=$17, blocking_issues=$18,
 		  all_suggestions=$19, persona_prompt_snapshot=$20,
 		  required_personas=$21, finalizer_action=$22,
-		  updated_at=$24, started_at=$25, completed_at=$26, execution=$27`,
+		  delivery_action=$23, delivery_config=$24,
+		  updated_at=$26, started_at=$27, completed_at=$28, execution=$29`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName, ws.ErrorMessage,
 		payload.constitution, payload.requirements, payload.design,
 		payload.tasks, payload.artifacts, payload.finalization,
 		payload.summaries, payload.blockingIssues,
 		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
+		ws.DeliveryAction, payload.deliveryConfig,
 		ws.CreatedAt, ws.UpdatedAt, ws.StartedAt, ws.CompletedAt, payload.execution,
 	)
 	return err
@@ -152,6 +158,7 @@ func (s *Store) ListWorkflows(ctx context.Context, tenantID string, limit, offse
 		       constitution, requirements, design, tasks, artifacts,
 		       finalization, summaries, blocking_issues,
 		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		       delivery_action, delivery_config,
 		       created_at, updated_at, started_at, completed_at, execution
 		FROM workflows
 		WHERE tenant_id = $1
@@ -366,6 +373,7 @@ type workflowPayload struct {
 	allSuggestions        []byte
 	personaPromptSnapshot []byte
 	requiredPersonas      []byte
+	deliveryConfig        []byte
 	execution             []byte
 }
 
@@ -413,6 +421,11 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 	if p.requiredPersonas, err = json.Marshal(ws.RequiredPersonas); err != nil {
 		return p, err
 	}
+	if len(ws.DeliveryConfig) > 0 {
+		p.deliveryConfig = ws.DeliveryConfig
+	} else {
+		p.deliveryConfig = []byte("null")
+	}
 	if p.execution, err = json.Marshal(ws.Execution); err != nil {
 		return p, err
 	}
@@ -438,6 +451,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		allSuggestions        []byte
 		personaPromptSnapshot []byte
 		requiredPersonas      []byte
+		deliveryConfig        []byte
 		execution             []byte
 	)
 
@@ -447,6 +461,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&constitution, &requirements, &design, &tasks, &artifacts,
 		&finalization, &summaries, &blockingIssues,
 		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &ws.FinalizerAction,
+		&ws.DeliveryAction, &deliveryConfig,
 		&ws.CreatedAt, &ws.UpdatedAt, &ws.StartedAt, &ws.CompletedAt, &execution,
 	)
 	if err != nil {
@@ -471,6 +486,9 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	_ = unmarshal(allSuggestions, &ws.AllSuggestions)
 	_ = unmarshal(personaPromptSnapshot, &ws.PersonaPromptSnapshot)
 	_ = unmarshal(requiredPersonas, &ws.RequiredPersonas)
+	if len(deliveryConfig) > 0 && string(deliveryConfig) != "null" {
+		ws.DeliveryConfig = json.RawMessage(deliveryConfig)
+	}
 	_ = unmarshal(execution, &ws.Execution)
 
 	return ws, nil

@@ -187,11 +187,44 @@ POSTs workflow metadata and all artifacts as a JSON payload to a configured URL.
 
 ---
 
-## Action Selection
+## Action Selection and Execution
 
-The Finalizer persona decides which action to run based on the workflow mode, the request content, and any explicit instructions in the customization context. The decision is stored in `FinalizationResult.Action`.
+### How an Action is Selected
 
-You can influence this by including delivery instructions in your request:
+The engine determines the delivery action in this order:
+
+1. **Caller override** — if the `POST /workflows` request includes a `delivery.action` field, that value is used unconditionally and the Finalizer's own LLM-based selection is skipped.
+2. **Finalizer LLM selection** — if no caller override is present, the Finalizer persona reads the workflow content and selects an action itself. The decision is stored in `FinalizationResult.Action`.
+
+```json
+POST /workflows
+{
+  "title": "Generate REST API",
+  "description": "...",
+  "delivery": {
+    "action": "github-pr",
+    "config": {
+      "repo": "acme/backend",
+      "head_branch": "feature/generated-api",
+      "base_branch": "main"
+    }
+  }
+}
+```
+
+The `delivery.config` object is passed as-is to `Action.Execute` as `Input.Config`. Only non-secret values should be placed here — tokens and passwords must come from environment variables and are **never stored in the database**.
+
+### Action Execution
+
+After the Finalizer persona completes its LLM phase, the engine calls `actions.Global.Execute(ctx, kind, input)`. The resolved action runs synchronously inside the finalizer phase.
+
+**If the action fails, the workflow fails.** A non-nil error from `Execute`, or `Output.Success == false`, transitions the workflow to `failed` status with the action error in `Output.Error`. The workflow may be resumed via `POST /workflows/:id/resume` once the underlying cause is fixed (e.g. bad token, missing repo).
+
+On success, `Output.Links` and `Output.Metadata` are merged into `WorkflowState.Finalization` and are available via `GET /workflows/:id` and the final `workflow.completed` SSE event.
+
+### Influencing LLM Action Selection (no caller override)
+
+When no `delivery.action` is provided you can still influence the Finalizer by wording your request:
 
 ```
 "Build a Go REST API and open a GitHub PR to the acme/backend repo"

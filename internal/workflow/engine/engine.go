@@ -21,12 +21,23 @@ import (
 
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
+	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
+
+// ScopeResolver resolves a scope ID to its ancestor slug chain.
+// The engine uses this to pass scope slugs (not UUIDs) to the
+// customization registry, which filters sources by slug.
+type ScopeResolver interface {
+	// ScopeSlugsForID returns the ordered slug chain for a scope (scope itself
+	// first, then ancestors up to global).  Returns nil on error — callers
+	// treat a nil chain as "all scopes match".
+	ScopeSlugsForID(ctx context.Context, scopeID string) []string
+}
 
 // Store is the persistence interface required by the Engine.
 // A concrete implementation (Postgres or SQLite) satisfies this.
@@ -62,6 +73,11 @@ type Options struct {
 	// CustomizationRegistry, when set, is snapshotted at workflow start to
 	// populate skills/agent/prompts context in every HandoffPacket.
 	CustomizationRegistry *customization.Registry
+
+	// ScopeResolver, when set alongside CustomizationRegistry, resolves
+	// workflow scope IDs to slug chains for correct customization filtering.
+	// If nil, scope filtering is skipped (all sources match every workflow).
+	ScopeResolver ScopeResolver
 
 	// PauseFunc, when non-nil, is called between persona phases.  If it
 	// returns true the engine transitions the workflow to WorkflowStatusPaused
@@ -170,10 +186,22 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 	// Snapshot customizations once at workflow start so live changes don't
 	// affect a running workflow.
+	//
+	// The customization registry filters sources by scope slug, not UUID.
+	// Resolve the scope chain to get the slug of the workflow's scope before
+	// calling Snapshot.  When the scope ID cannot be resolved (e.g. no
+	// ScopeResolver is configured), we pass "" so all sources are included.
 	var snap *customization.Snapshot
 	if e.opts.CustomizationRegistry != nil {
+		scopeSlug := ""
+		if e.opts.ScopeResolver != nil && ws.ScopeID != "" {
+			slugs := e.opts.ScopeResolver.ScopeSlugsForID(ctx, ws.ScopeID)
+			if len(slugs) > 0 {
+				scopeSlug = slugs[0] // highest-precedence slug (the scope itself)
+			}
+		}
 		var err error
-		snap, err = e.opts.CustomizationRegistry.Snapshot(ws.ScopeID)
+		snap, err = e.opts.CustomizationRegistry.Snapshot(scopeSlug)
 		if err != nil {
 			// Non-fatal: log and continue without customizations.
 			snap = nil
@@ -368,6 +396,57 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		})
 	_ = e.store.AppendEvents(ctx, doneEvt)
 
+	// ── Finalizer post-processing ─────────────────────────────────────────────
+	if kind == state.PersonaFinalizer {
+		// 1. Emit refiner.suggestion events for every improvement produced by
+		//    the inline Refiner retrospective so SSE subscribers can act on them.
+		if ws.Finalization != nil {
+			for _, imp := range ws.Finalization.RefinerImprovements {
+				suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventRefinerSuggestion, state.PersonaRefiner,
+					events.RefinerSuggestionPayload{
+						Component:  imp.ComponentType,
+						Name:       imp.ComponentName,
+						Suggestion: fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+					})
+				_ = e.store.AppendEvents(ctx, suggEvt)
+			}
+		}
+
+		// 2. Resolve the delivery action: caller-provided wins over LLM choice.
+		actionKey := ""
+		if ws.DeliveryAction != "" {
+			actionKey = ws.DeliveryAction
+		} else if ws.Finalization != nil && ws.Finalization.Action != "" {
+			actionKey = ws.Finalization.Action
+		}
+
+		if actionKey != "" {
+			actionIn := actions.Input{
+				Workflow:  ws,
+				Artifacts: ws.Artifacts,
+				Config:    ws.DeliveryConfig,
+			}
+			actionOut, actionErr := actions.Global.Execute(ctx, actions.ActionKind(actionKey), actionIn)
+			if actionErr != nil {
+				return fmt.Errorf("delivery action %q failed: %w", actionKey, actionErr)
+			}
+			if !actionOut.Success {
+				return fmt.Errorf("delivery action %q reported failure: %s", actionKey, actionOut.Error)
+			}
+			// Merge action links/metadata back into the finalization result.
+			if ws.Finalization != nil {
+				ws.Finalization.Links = append(ws.Finalization.Links, actionOut.Links...)
+				if ws.Finalization.Metadata == nil {
+					ws.Finalization.Metadata = make(map[string]string)
+				}
+				for k, v := range actionOut.Metadata {
+					ws.Finalization.Metadata[k] = v
+				}
+			}
+		}
+	}
+
 	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 		return fmt.Errorf("save after persona %s: %w", kind, err)
 	}
@@ -449,7 +528,11 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			ws.Summaries = make(map[state.PersonaKind]string)
 		}
 		// Append per-task summary rather than overwrite.
-		ws.Summaries[state.PersonaImplementer] += fmt.Sprintf("[%s] %s\n", t.ID[:8], out.Summary)
+		shortID := t.ID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		ws.Summaries[state.PersonaImplementer] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
 
 		doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventTaskCompleted, state.PersonaImplementer,
@@ -673,6 +756,8 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		ImprovementsPath:      e.opts.ImprovementsRoot,
 		PersonaPromptSnapshot: ws.PersonaPromptSnapshot,
 		FinalizerAction:       ws.FinalizerAction,
+		DeliveryAction:        ws.DeliveryAction,
+		DeliveryConfig:        ws.DeliveryConfig,
 		QACycle:               ws.Execution.QACycle,
 		RemediationAttempt:    ws.Execution.RemediationAttempt,
 	}

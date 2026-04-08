@@ -219,11 +219,11 @@ server:
 go-orca handles `SIGINT` and `SIGTERM`. On signal receipt:
 
 1. `http.Server.Shutdown(ctx)` — stops accepting new connections, drains in-flight HTTP requests
-2. `Scheduler.Shutdown(ctx)` — cancels the worker context, waits for in-flight workflows to finish
+2. `Scheduler.Shutdown(ctx)` — cancels the worker context, then waits (up to `shutdown_timeout`) for worker goroutines to exit
 
-Both steps share the same `shutdown_timeout` deadline (default: 15s). Workflows that are still running when the timeout expires are not killed — they will be re-run from `pending` state on the next startup (assuming the status was not already updated to `running`).
+**Important:** `Scheduler.Shutdown` cancels the context immediately. In-flight workflow runs receive a context-cancellation signal and stop at the next LLM call boundary. Depending on timing, a workflow may be left in `running` or `failed` state rather than completing cleanly. Workflows in `failed` state can be resumed via `POST /workflows/:id/resume`.
 
-Increase `shutdown_timeout` if your workflows are long-running:
+Increase `shutdown_timeout` to give in-flight LLM calls time to complete before the process exits:
 
 ```yaml
 server:

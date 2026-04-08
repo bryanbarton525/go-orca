@@ -101,12 +101,41 @@ You define the actual numbers — use this convention to keep it predictable.
 
 ## Scope Filtering
 
-At workflow start, `Registry.Snapshot(scopeSlug)` is called with the workflow's scope ID slug. A source is included in the snapshot if:
+### Scope ID vs. Scope Slug
+
+go-orca uses two distinct identifiers for scopes:
+
+| Identifier | Format | Used for |
+|---|---|---|
+| **Scope ID** | UUID (`X-Scope-ID` header) | API routing, ownership checks, storage lookups |
+| **Scope Slug** | Short human-readable string (`"engineering"`) | Customization source filtering, scope resolution chain |
+
+The `X-Scope-ID` header carries the **UUID**. At workflow start the engine resolves this UUID to its slug via `ScopeResolver` before calling `Registry.Snapshot`. Source config uses the slug (`scope_slug` field), never the UUID. This means:
+
+- You configure customization sources with slugs: `scope_slug: "engineering"`
+- The API accepts UUIDs: `X-Scope-ID: 3fa85f64-5717-4562-b3fc-2c963f66afa6`
+- The engine bridges them: UUID → slug → snapshot
+
+### Resolution Chain
+
+When a workflow runs, the engine resolves the full parent chain of the scope and builds a snapshot that includes customizations visible at every level:
+
+```
+global scope     (slug: "global")   — applies to all scopes
+  └── org scope  (slug: "acme")     — applies to acme and its children
+       └── team  (slug: "eng")      — applies only to "eng"
+```
+
+A source with `scope_slug: "acme"` is included in snapshots for `"acme"` **and** all scopes whose parent chain includes `"acme"`.
+
+### Snapshot Inclusion Rules
+
+A source is included in the snapshot if:
 
 - The source has no `scope_slug` (applies to all scopes), **or**
-- The source's `scope_slug` matches the workflow's scope slug.
+- The source's `scope_slug` matches the workflow's scope slug **or any ancestor slug** in the scope hierarchy.
 
-This lets you maintain separate customization trees for different teams or environments.
+This lets you maintain separate customization trees for different teams or environments without duplicating global content.
 
 ---
 
@@ -166,11 +195,11 @@ customizations:
 
 ## Inspecting Active Customizations
 
-Use the API to see what's resolved for the current scope:
+Use the API to see what's resolved for the current scope. Pass the scope **UUID** in `X-Scope-ID`; the engine resolves it to a slug internally before filtering:
 
 ```bash
 curl -s \
-  -H 'X-Scope-ID: <scope-uuid>' \
+  -H 'X-Scope-ID: 3fa85f64-5717-4562-b3fc-2c963f66afa6' \
   http://localhost:8080/customizations/resolve | jq .
 ```
 
@@ -178,7 +207,8 @@ Response:
 
 ```json
 {
-  "scope_id": "uuid",
+  "scope_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "scope_slug": "engineering",
   "skills": [
     { "name": "skill", "source": "global", "precedence": 30, "path": "./customizations/global/SKILL.md" }
   ],
@@ -191,6 +221,8 @@ Response:
   ]
 }
 ```
+
+The `scope_slug` field in the response confirms which slug was used for filtering. If `scope_id` is absent or maps to an unknown UUID, the engine falls back to the `"global"` slug.
 
 ---
 

@@ -1,6 +1,6 @@
 # Architecture
 
-go-orca is a single Go binary that exposes an HTTP API, runs a workflow engine, and talks to one or more LLM providers. This document describes how those components fit together.
+go-orca is a **multi-tenant AI orchestration engine** — a single Go binary that exposes an HTTP API, drives structured multi-phase LLM pipelines in complete tenant isolation, and produces structured improvement proposals after every run. This document describes how those components fit together.
 
 ## System Overview
 
@@ -100,18 +100,21 @@ POST /workflows
 
 Every state change and persona transition appends an immutable event to the journal via `Store.AppendEvents`. Events have a `type`, a `persona` field (for persona-scoped events), a typed JSON payload, and a timestamp. Event types include:
 
-- `state_transition` — workflow status change (e.g. `pending → running`)
-- `persona_started` — a persona began executing
-- `persona_completed` — a persona finished; includes duration and summary
-- `persona_failed` — a persona returned an error
-- `task_started` / `task_completed` — Implementer per-task events
-- `task_failed` — an individual Implementer task returned an error
-- `task_created` — Architect appended a remediation task during the QA loop
-- `artifact_produced` — an artifact was committed from Implementer output
+- `state.transition` — workflow status change (e.g. `pending → running`)
+- `persona.started` — a persona began executing
+- `persona.completed` — a persona finished; includes duration and summary
+- `persona.failed` — a persona returned an error
+- `task.started` / `task.completed` — Implementer per-task events
+- `task.failed` — an individual Implementer task returned an error
+- `task.created` — Architect appended a remediation task during the QA loop
+- `artifact.produced` — an artifact was committed from Implementer output
+- `refiner.suggestion` — the inline Refiner produced an improvement recommendation
 
 Clients can retrieve the full event list via `GET /workflows/:id/events`, or subscribe to the live SSE feed via `GET /workflows/:id/stream`.
 
 ## Multi-Tenancy and Scope Hierarchy
+
+go-orca is designed from the ground up for multi-tenant deployments. Every workflow, event, artifact, and journal entry is stamped with a `tenant_id` and `scope_id`. Read endpoints (`GET /workflows/:id`, events, stream, cancel, resume) enforce tenant ownership — a tenant cannot access another tenant's data even if they know the workflow ID.
 
 ```
 Tenant (e.g. "acme-corp")
@@ -120,7 +123,9 @@ Tenant (e.g. "acme-corp")
               └── Scope: team  (parent = org)
 ```
 
-Every API request carries `X-Tenant-ID` and `X-Scope-ID` headers. Missing headers fall back to the server-configured default tenant and default scope. Customization sources are filtered by `scope_slug` so different scopes receive different skill/prompt overlays.
+Every API request carries `X-Tenant-ID` and `X-Scope-ID` headers. Missing headers fall back to the server-configured default tenant and default scope. The scope resolution chain (`scope.Service.ResolveChain`) walks ancestors with cycle detection, enabling per-scope customizations to cascade from narrower to broader scopes automatically.
+
+Customization sources are filtered by `scope_slug` so different scopes receive different skill/prompt overlays without touching shared configuration.
 
 The active `ScopingMode` (global / org / team / hosted) controls which scope kinds are permitted at runtime.
 
