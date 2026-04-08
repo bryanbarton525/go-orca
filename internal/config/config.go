@@ -107,10 +107,11 @@ type OpenAIConfig struct {
 
 // OllamaConfig holds Ollama settings.
 type OllamaConfig struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	Host         string        `mapstructure:"host"`
-	DefaultModel string        `mapstructure:"default_model"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	Enabled       bool          `mapstructure:"enabled"`
+	Host          string        `mapstructure:"host"`
+	DefaultModel  string        `mapstructure:"default_model"`
+	Timeout       time.Duration `mapstructure:"timeout"`
+	TLSSkipVerify bool          `mapstructure:"tls_skip_verify"`
 }
 
 // CopilotConfig holds GitHub Copilot SDK settings.

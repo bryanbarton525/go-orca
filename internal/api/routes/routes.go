@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/go-orca/go-orca/docs"
 	"github.com/go-orca/go-orca/internal/api/handlers"
 	"github.com/go-orca/go-orca/internal/api/middleware"
 	"github.com/go-orca/go-orca/internal/customization"
@@ -86,5 +87,37 @@ func New(cfg Config) *gin.Engine {
 	// ── Customizations ───────────────────────────────────────────────────────
 	r.GET("/customizations/resolve", handlers.ResolveCustomizations(cfg.CustomizationRegistry))
 
+	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────
+	r.GET("/docs/openapi.yaml", func(c *gin.Context) {
+		c.Data(200, "application/yaml; charset=utf-8", docs.OpenAPISpec)
+	})
+	r.GET("/docs", func(c *gin.Context) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, swaggerHTML)
+	})
+
 	return r
 }
+
+// swaggerHTML is a minimal Swagger UI page that loads the spec from the API.
+const swaggerHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>go-orca API Docs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  SwaggerUIBundle({
+    url: "/docs/openapi.yaml",
+    dom_id: "#swagger-ui",
+    presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+    layout: "BaseLayout",
+    deepLinking: true,
+  });
+</script>
+</body>
+</html>`

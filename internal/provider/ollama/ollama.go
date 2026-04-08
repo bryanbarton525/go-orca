@@ -4,6 +4,7 @@ package ollama
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -32,7 +33,13 @@ func New(cfg config.OllamaConfig) (*Provider, error) {
 		return nil, fmt.Errorf("ollama: invalid host %q: %w", cfg.Host, err)
 	}
 
-	httpClient := &http.Client{Timeout: cfg.Timeout}
+	transport := http.DefaultTransport
+	if cfg.TLSSkipVerify {
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+	}
+	httpClient := &http.Client{Timeout: cfg.Timeout, Transport: transport}
 	client := ollamaapi.NewClient(base, httpClient)
 
 	return &Provider{

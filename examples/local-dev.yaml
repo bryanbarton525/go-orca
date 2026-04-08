@@ -51,9 +51,10 @@ providers:
 
   ollama:
     enabled: true
-    host: "https://ollama.barton.local:11434"
-    default_model: "gemma4:e4b"
+    host: "https://ollama.barton.local"
+    default_model: "phi3:mini"
     timeout: "180s"        # local models can be slow; increase for large models
+    tls_skip_verify: true  # homelab CA not trusted on this machine
 
   copilot:
     enabled: false
