@@ -1,0 +1,985 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "go-orca API",
+    "description": "Complete API collection for go-orca — a self-hosted AI workflow orchestration server.\n\n## Setup\n\n1. Set the `baseUrl` collection variable to your server address (default: `http://localhost:8080`).\n2. Run **Health → GET /readyz** to confirm the server is up.\n3. Run **Tenants → List Tenants** — this auto-captures `tenantId` and `scopeId` from the default tenant.\n4. Run **Workflows → Create Workflow (Software)** to kick off your first workflow. `workflowId` is captured automatically.\n\n## Variables\n\n| Variable | Set by |\n|---|---|\n| `baseUrl` | You — set once at collection level |\n| `tenantId` | Auto-set by List Tenants or Create Tenant |\n| `scopeId` | Auto-set by List Tenants or Create Scope |\n| `workflowId` | Auto-set by Create Workflow requests |\n| `createdTenantId` | Auto-set by Create Tenant |\n| `createdScopeId` | Auto-set by Create Scope |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string",
+      "description": "Base URL of the go-orca API server"
+    },
+    {
+      "key": "tenantId",
+      "value": "",
+      "type": "string",
+      "description": "Active tenant UUID — auto-set by List Tenants or Create Tenant"
+    },
+    {
+      "key": "scopeId",
+      "value": "",
+      "type": "string",
+      "description": "Active scope UUID — auto-set by List Tenants or Create Scope"
+    },
+    {
+      "key": "workflowId",
+      "value": "",
+      "type": "string",
+      "description": "Active workflow UUID — auto-set by Create Workflow requests"
+    },
+    {
+      "key": "createdTenantId",
+      "value": "",
+      "type": "string",
+      "description": "UUID of the most recently created tenant"
+    },
+    {
+      "key": "createdScopeId",
+      "value": "",
+      "type": "string",
+      "description": "UUID of the most recently created scope"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes. Use these to verify the server is up and connected to its dependencies.",
+      "item": [
+        {
+          "name": "Liveness — GET /healthz",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Returns 200 immediately without touching the database. Use as a Kubernetes livenessProbe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body has status ok', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness — GET /readyz",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": ["{{baseUrl}}"],
+              "path": ["readyz"]
+            },
+            "description": "Returns 200 if the database and all registered providers are reachable. Returns 503 if any dependency is unavailable. Use as a Kubernetes readinessProbe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 503', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('body has status ready', () => {",
+                  "        pm.expect(pm.response.json().status).to.eql('ready');",
+                  "    });",
+                  "} else {",
+                  "    pm.test('body has error detail', () => {",
+                  "        pm.expect(pm.response.json()).to.have.property('error');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Workflows",
+      "description": "Create and manage AI workflow runs. A workflow drives a natural-language request through the Director → PM → Architect → Implementer → QA → Finalizer pipeline.",
+      "item": [
+        {
+          "name": "List Workflows",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "Max results (max 200)" },
+                { "key": "offset", "value": "0", "description": "Pagination offset" }
+              ]
+            },
+            "description": "Returns workflows for the current tenant/scope, ordered newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('response is an array', () => {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});",
+                  "// Auto-capture the most recent workflow ID if present",
+                  "const workflows = pm.response.json();",
+                  "if (workflows.length > 0) {",
+                  "    pm.collectionVariables.set('workflowId', workflows[0].id);",
+                  "    console.log('workflowId set to', workflows[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Software",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Build a REST API for a todo list in Go with CRUD endpoints and SQLite storage\",\n  \"title\": \"Todo API\",\n  \"mode\": \"software\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a software workflow. The Director will classify the request and select a provider/model if not specified. Returns 202 with status `pending`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or 202', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('has workflow id', () => pm.expect(body).to.have.property('id'));",
+                  "pm.test('status is pending', () => pm.expect(body.status).to.eql('pending'));",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Content",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Write a technical blog post about Go generics — cover the basics, real-world use cases, and performance implications\",\n  \"mode\": \"content\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a content workflow. The Finalizer will deliver a blog draft."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or 202', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Docs",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Write API documentation for a user authentication service with JWT tokens — include endpoint reference, auth flow diagrams, and integration examples\",\n  \"mode\": \"docs\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a documentation workflow."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or 202', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Research",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Compare PostgreSQL, MySQL, and SQLite for a high-read, low-write SaaS application — cover performance, operational complexity, cost, and migration path\",\n  \"mode\": \"research\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a research/analysis workflow."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or 202', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Workflow",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows", "{{workflowId}}"]
+            },
+            "description": "Retrieve the full WorkflowState for a single workflow, including all structured outputs (constitution, requirements, design, tasks, artifacts, finalization) and Refiner suggestions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has id', () => pm.expect(body).to.have.property('id'));",
+                  "pm.test('has status', () => pm.expect(body).to.have.property('status'));",
+                  "console.log('workflow status:', body.status);",
+                  "if (body.all_suggestions && body.all_suggestions.length > 0) {",
+                  "    console.log('Refiner suggestions:', body.all_suggestions.length);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Workflow Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows", "{{workflowId}}", "events"]
+            },
+            "description": "Return the full event journal for a workflow in chronological order. Events include state_transition, persona_started, persona_completed, persona_failed, task_started, task_completed, and refiner.suggestion."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('response is an array', () => {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});",
+                  "const events = pm.response.json();",
+                  "console.log('total events:', events.length);",
+                  "const byType = {};",
+                  "events.forEach(e => { byType[e.type] = (byType[e.type] || 0) + 1; });",
+                  "console.log('event breakdown:', JSON.stringify(byType));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stream Workflow Events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/stream?timeout=300",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows", "{{workflowId}}", "stream"],
+              "query": [
+                { "key": "timeout", "value": "300", "description": "Max stream duration in seconds" }
+              ]
+            },
+            "description": "Opens a Server-Sent Events stream of workflow events in real time. The stream closes automatically when the workflow reaches a terminal state.\n\n**Note:** Postman does not natively render SSE streams. Use the curl command below for live streaming:\n\n```\ncurl -N http://localhost:8080/workflows/{{workflowId}}/stream\n```\n\nFor nginx reverse proxy, set `proxy_buffering off` to avoid event buffering."
+          }
+        },
+        {
+          "name": "Cancel Workflow",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows", "{{workflowId}}", "cancel"]
+            },
+            "description": "Cancel a pending or running workflow. Returns 409 if the workflow is already in a terminal state (completed, failed, cancelled)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resume Workflow",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/workflows/{{workflowId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows", "{{workflowId}}", "resume"]
+            },
+            "description": "Resume a paused workflow. Returns 409 if the workflow is not in `paused` status."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Providers",
+      "description": "List registered LLM providers and test connectivity.",
+      "item": [
+        {
+          "name": "List Providers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/providers",
+              "host": ["{{baseUrl}}"],
+              "path": ["providers"]
+            },
+            "description": "Returns all registered providers with their enabled status and default model."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('response is an array', () => {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});",
+                  "const providers = pm.response.json();",
+                  "const enabled = providers.filter(p => p.enabled).map(p => p.name);",
+                  "console.log('enabled providers:', enabled.join(', ') || 'none');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test Provider — Ollama",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/providers/ollama/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["providers", "ollama", "test"]
+            },
+            "description": "Test Ollama connectivity. Calls HealthCheck (Heartbeat) against the configured Ollama host. Returns 200 with `ok: true` on success, 200 with `ok: false` on failure (check the `error` field), or 404 if Ollama is not registered."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    console.log('ollama healthy:', body.ok);",
+                  "    if (!body.ok) console.log('error:', body.error);",
+                  "    else console.log('latency_ms:', body.latency_ms);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test Provider — OpenAI",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/providers/openai/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["providers", "openai", "test"]
+            },
+            "description": "Test OpenAI connectivity and API key validity. Returns 404 if OpenAI is not registered."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    console.log('openai healthy:', body.ok);",
+                  "    if (!body.ok) console.log('error:', body.error);",
+                  "    else console.log('latency_ms:', body.latency_ms);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test Provider — Copilot",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/providers/copilot/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["providers", "copilot", "test"]
+            },
+            "description": "Test GitHub Copilot connectivity. Returns 404 if Copilot is not registered."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    console.log('copilot healthy:', body.ok);",
+                  "    if (!body.ok) console.log('error:', body.error);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Tenants",
+      "description": "Create and manage tenants. Each tenant has its own scope hierarchy and workflow namespace.",
+      "item": [
+        {
+          "name": "List Tenants",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tenants",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants"]
+            },
+            "description": "Returns all tenants. Auto-captures `tenantId` and `scopeId` from the first result (typically the default tenant)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('response is an array', () => {",
+                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "});",
+                  "const tenants = pm.response.json();",
+                  "if (tenants.length > 0) {",
+                  "    pm.collectionVariables.set('tenantId', tenants[0].id);",
+                  "    console.log('tenantId set to', tenants[0].id, '(' + tenants[0].slug + ')');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Tenant",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"acme-corp\",\n  \"name\": \"Acme Corporation\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tenants",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants"]
+            },
+            "description": "Create a new tenant. The slug must be unique across all tenants. Returns 409 if the slug is already in use."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('createdTenantId', body.id);",
+                  "    pm.collectionVariables.set('tenantId', body.id);",
+                  "    console.log('createdTenantId set to', body.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Tenant",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}"]
+            },
+            "description": "Get a single tenant by ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Tenant",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp (Updated)\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}"]
+            },
+            "description": "Update tenant name or slug. All fields are optional — only provided fields are updated. Returns 409 if the new slug is already in use."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200, 404, or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Tenant",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{createdTenantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{createdTenantId}}"]
+            },
+            "description": "Delete a tenant and all its scopes. Uses `createdTenantId` (set by Create Tenant) to avoid accidentally deleting the default tenant. This operation is irreversible."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 204 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Scopes",
+      "description": "Manage scopes within a tenant. Scopes form a hierarchy: global → org → team. Each scope can have its own customizations.",
+      "item": [
+        {
+          "name": "List Scopes for Tenant",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}/scopes",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}", "scopes"]
+            },
+            "description": "Returns all scopes for the given tenant. Auto-captures `scopeId` from the first (global) scope."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const scopes = pm.response.json();",
+                  "    if (scopes.length > 0) {",
+                  "        pm.collectionVariables.set('scopeId', scopes[0].id);",
+                  "        console.log('scopeId set to', scopes[0].id, '(' + scopes[0].slug + ')');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Scope — Org",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"org\",\n  \"name\": \"Engineering\",\n  \"slug\": \"engineering\",\n  \"parent_scope_id\": \"{{scopeId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}/scopes",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}", "scopes"]
+            },
+            "description": "Create an org-level scope. Requires `allow_org: true` in the server scoping config. The `parent_scope_id` should be the global scope ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201, 400, 404, or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 404, 409]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('createdScopeId', body.id);",
+                  "    console.log('createdScopeId set to', body.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Scope — Team",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"team\",\n  \"name\": \"Platform\",\n  \"slug\": \"platform\",\n  \"parent_scope_id\": \"{{createdScopeId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}/scopes",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}", "scopes"]
+            },
+            "description": "Create a team-level scope under an org. Requires `allow_team: true` in the server scoping config. Uses `createdScopeId` (set by Create Scope — Org) as the parent."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201, 400, 404, or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Scope",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Platform Engineering\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}/scopes/{{createdScopeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}", "scopes", "{{createdScopeId}}"]
+            },
+            "description": "Update a scope's name or slug. All fields are optional."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200, 404, or 409', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Scope",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/tenants/{{tenantId}}/scopes/{{createdScopeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "{{tenantId}}", "scopes", "{{createdScopeId}}"]
+            },
+            "description": "Delete a scope by ID. Uses `createdScopeId` to avoid accidentally deleting the default global scope. This operation is irreversible."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 204 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Effective Config for Scope",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scopes/{{scopeId}}/effective-config",
+              "host": ["{{baseUrl}}"],
+              "path": ["scopes", "{{scopeId}}", "effective-config"]
+            },
+            "description": "Returns the merged effective configuration for a scope. Walks the resolution chain from global → org → team and merges each level."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    console.log('scope_kind:', body.scope_kind);",
+                  "    console.log('resolved_chain length:', (body.resolved_chain || []).length);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Customizations",
+      "description": "Resolve active customizations (skills, agent personas, prompt overlays) for the current scope.",
+      "item": [
+        {
+          "name": "Resolve Customizations",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Omit to use server default" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Omit to use server default" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customizations/resolve",
+              "host": ["{{baseUrl}}"],
+              "path": ["customizations", "resolve"]
+            },
+            "description": "Returns the resolved customization snapshot for the current scope. Shows all active skills, agent personas, and prompt overlays with their source and precedence (lower value = higher priority)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('skills:', (body.skills || []).length);",
+                  "console.log('agents:', (body.agents || []).length);",
+                  "console.log('prompts:', (body.prompts || []).length);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

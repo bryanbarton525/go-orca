@@ -12,12 +12,14 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
+	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
 
@@ -66,12 +68,6 @@ type Options struct {
 func (o *Options) applyDefaults() {
 	if o.MaxQARetries <= 0 {
 		o.MaxQARetries = 2
-	}
-	if o.DefaultProvider == "" {
-		o.DefaultProvider = "openai"
-	}
-	if o.DefaultModel == "" {
-		o.DefaultModel = "gpt-4o"
 	}
 	if o.HandoffTimeout <= 0 {
 		o.HandoffTimeout = 5 * time.Minute
@@ -363,10 +359,19 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 			ModelName:    ws.ModelName,
 		})
 		if dirOut.Provider != "" {
-			ws.ProviderName = dirOut.Provider
-		}
-		if dirOut.Model != "" {
-			ws.ModelName = dirOut.Model
+			// Normalize to lowercase and validate the provider is registered.
+			// If the LLM chose an unregistered provider, fall back to the
+			// engine default and reset the model too so they stay consistent.
+			normalized := strings.ToLower(dirOut.Provider)
+			if _, ok := common.Get(normalized); ok {
+				ws.ProviderName = normalized
+				if dirOut.Model != "" {
+					ws.ModelName = dirOut.Model
+				}
+			} else {
+				ws.ProviderName = e.opts.DefaultProvider
+				ws.ModelName = e.opts.DefaultModel
+			}
 		}
 		if dirOut.Mode != "" {
 			ws.Mode = dirOut.Mode

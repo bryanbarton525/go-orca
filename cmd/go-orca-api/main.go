@@ -256,29 +256,29 @@ func checkProviderReachability(p common.Provider, log *zap.Logger) {
 }
 
 func resolveDefaultProvider(cfg *config.Config) string {
-	if cfg.Providers.OpenAI.Enabled {
-		return "openai"
-	}
 	if cfg.Providers.Ollama.Enabled {
 		return "ollama"
+	}
+	if cfg.Providers.OpenAI.Enabled {
+		return "openai"
 	}
 	if cfg.Providers.Copilot.Enabled {
 		return "copilot"
 	}
-	return "openai"
+	return ""
 }
 
 func resolveDefaultModel(cfg *config.Config) string {
-	if cfg.Providers.OpenAI.Enabled && cfg.Providers.OpenAI.DefaultModel != "" {
-		return cfg.Providers.OpenAI.DefaultModel
-	}
 	if cfg.Providers.Ollama.Enabled && cfg.Providers.Ollama.DefaultModel != "" {
 		return cfg.Providers.Ollama.DefaultModel
+	}
+	if cfg.Providers.OpenAI.Enabled && cfg.Providers.OpenAI.DefaultModel != "" {
+		return cfg.Providers.OpenAI.DefaultModel
 	}
 	if cfg.Providers.Copilot.Enabled && cfg.Providers.Copilot.DefaultModel != "" {
 		return cfg.Providers.Copilot.DefaultModel
 	}
-	return "gpt-4o"
+	return ""
 }
 
 // buildCustomizationRegistry converts config-defined sources into a live Registry.

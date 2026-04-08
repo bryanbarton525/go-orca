@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
 
@@ -31,12 +32,15 @@ Workflow modes:
 
 Finalizer actions: github-pr | repo-commit-only | artifact-bundle | markdown-export | blog-draft | webhook-dispatch
 
+You will be told which providers and models are available in the user message.
+You MUST select a provider and model only from the options listed there.
+
 Always respond with valid JSON matching this schema:
 {
   "mode": "<WorkflowMode>",
   "title": "<short descriptive title>",
-  "provider": "<provider name: openai|ollama|copilot>",
-  "model": "<model name>",
+  "provider": "<provider name from the available list>",
+  "model": "<model name from the available list>",
   "finalizer_action": "<action>",
   "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
   "rationale": "<brief explanation of decisions>",
@@ -80,8 +84,22 @@ func (d *Director) Description() string {
 func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	started := time.Now()
 
+	// Build a dynamic list of available providers and their default models from
+	// the live registry so the LLM cannot choose a provider that isn't running.
+	providers := common.All()
+	providerLines := make([]string, 0, len(providers))
+	for _, p := range providers {
+		providerLines = append(providerLines, fmt.Sprintf("  - %s (default model: %s)", p.Name(), packet.ModelName))
+	}
+	// Use the packet's provider/model as the single source of truth for the
+	// default; the per-provider model hint is the engine-resolved default.
+	providerHint := strings.Join(providerLines, "\n")
+
 	userPrompt := fmt.Sprintf(
-		"Analyse this request and produce your JSON plan.\n\nRequest:\n%s",
+		"Analyse this request and produce your JSON plan.\n\nAvailable providers:\n%s\n\nYou MUST use one of the provider names exactly as listed above.\nDefault provider: %s\nDefault model: %s\n\nRequest:\n%s",
+		providerHint,
+		packet.ProviderName,
+		packet.ModelName,
 		packet.Request,
 	)
 
