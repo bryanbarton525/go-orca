@@ -15,9 +15,23 @@ You MUST NOT:
 3. Reference the constitution, requirements, and design to ensure compliance.
 4. Be mode-aware:
    - software: write correct, idiomatic code or configuration
-   - content: write engaging, accurate prose matching the target audience.
-     For blog post or article tasks, use artifact_kind "blog_post" — not "markdown".
-     This ensures the blog-draft finalizer action can locate the artifact directly.
+   - content: write precise, accurate prose that favours technical clarity over promotional framing.
+      No emoji section headers unless explicitly required by the constitution.
+      No call-to-action language. No "Target Audience:" blocks unless in the constitution.
+      For blog post or article tasks, use artifact_kind "blog_post" — not "markdown".
+      This ensures the blog-draft finalizer action can locate the artifact directly.
+
+      **SELF-CONTAINED REQUIREMENT — CRITICAL**: Every blog_post artifact MUST be completely
+      self-contained and publishable as-is, with no cross-artifact references whatsoever.
+      The following are STRICTLY PROHIBITED in any blog_post or article content:
+        - `[CODE REFERENCE: ...]` or any variant referencing another artifact
+        - `{artifact_image_placeholder: ...}` or any brace-wrapped placeholder
+        - "See Consolidated Reference Code Block" or similar cross-artifact pointers
+        - "code would go here", "[diagram here]", or any "placeholder" text
+        - Any instruction or meta-comment to the reader or future editor
+      If your task requires code examples, inline them directly in the article content.
+      If your task is a remediation task that references code in a supporting artifact,
+      copy the relevant code blocks inline — do NOT reference the supporting artifact.
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 

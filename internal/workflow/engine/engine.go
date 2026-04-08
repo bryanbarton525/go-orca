@@ -16,6 +16,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -402,12 +403,30 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		//    the inline Refiner retrospective so SSE subscribers can act on them.
 		if ws.Finalization != nil {
 			for _, imp := range ws.Finalization.RefinerImprovements {
+				// Derive the applied_path for improvements that carry file content
+				// so SSE subscribers know where the file was written.
+				appliedPath := ""
+				if e.opts.ImprovementsRoot != "" && imp.Content != "" {
+					var relPath string
+					switch imp.ComponentType {
+					case "skill":
+						relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
+					case "prompt":
+						relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
+					case "agent":
+						relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
+					default:
+						relPath = filepath.Join("personas", imp.ComponentName+".md")
+					}
+					appliedPath = filepath.Join(e.opts.ImprovementsRoot, relPath)
+				}
 				suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 					events.EventRefinerSuggestion, state.PersonaRefiner,
 					events.RefinerSuggestionPayload{
-						Component:  imp.ComponentType,
-						Name:       imp.ComponentName,
-						Suggestion: fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+						Component:   imp.ComponentType,
+						Name:        imp.ComponentName,
+						Suggestion:  fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+						AppliedPath: appliedPath,
 					})
 				_ = e.store.AppendEvents(ctx, suggEvt)
 			}

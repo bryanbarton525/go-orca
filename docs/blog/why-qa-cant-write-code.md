@@ -10,7 +10,7 @@ It would be more efficient in a narrow sense. It would also undermine the only s
 
 ## Roles are enforced at the data layer, not the prompt layer
 
-Every task in a go-orca workflow has an assigned persona kind: `Director`, `Planner`, `Researcher`, `Implementer`, or `QA`. The assignment is made by the Planner persona during task planning and stored in `WorkflowState.Tasks`.
+Every task in a go-orca workflow has an assigned persona kind: `Director`, `Project Manager`, `Architect`, `Implementer`, or `QA`. The assignment is made by the Architect persona during task planning and stored in `WorkflowState.Tasks`.
 
 When a persona completes its run, the engine merges its output back into the workflow state. But the merge is filtered. In `engine.go`, `applyOutput` checks every outgoing artifact and every proposed task mutation against the persona's assigned role. If QA returns an artifact with a source file path that was not assigned to QA, it is silently discarded. If QA attempts to add a new task, it is discarded.
 

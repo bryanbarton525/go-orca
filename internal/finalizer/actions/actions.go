@@ -153,15 +153,26 @@ func (a *ArtifactBundleAction) Execute(_ context.Context, in Input) (*Output, er
 	}, nil
 }
 
-// BlogDraftAction extracts the first blog_post artifact as the draft.
+// BlogDraftAction extracts the latest final-content artifact as the draft.
+//
+// Selection rule (newest-to-oldest):
+//  1. Latest artifact with kind blog_post — preferred; produced when the
+//     Implementer is mode-aware and may have been updated via remediation.
+//  2. Latest artifact with kind markdown — fallback for workflows where the
+//     Implementer produced a generic markdown artifact instead of blog_post.
+//
+// Scanning newest-to-oldest ensures that a later remediation or synthesis
+// task wins over an earlier draft of the same kind.
 type BlogDraftAction struct{}
 
 func (a *BlogDraftAction) Kind() ActionKind    { return ActionBlogDraft }
 func (a *BlogDraftAction) Description() string { return "Produce a publication-ready blog post draft." }
 
 func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) {
-	// Prefer an explicit blog_post artifact.
-	for _, art := range in.Artifacts {
+	// Scan newest-to-oldest (reverse append order) so a later remediation or
+	// final-synthesis task wins over an earlier intermediate draft.
+	for i := len(in.Artifacts) - 1; i >= 0; i-- {
+		art := in.Artifacts[i]
 		if art.Kind == state.ArtifactKindBlogPost {
 			return &Output{
 				Action:  ActionBlogDraft,
@@ -173,10 +184,11 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 			}, nil
 		}
 	}
-	// Fall back to the first markdown artifact when no blog_post is present.
+	// Fall back to the latest markdown artifact when no blog_post is present.
 	// This handles content-mode workflows where the Implementer produced a
 	// markdown artifact instead of explicitly tagging it as blog_post.
-	for _, art := range in.Artifacts {
+	for i := len(in.Artifacts) - 1; i >= 0; i-- {
+		art := in.Artifacts[i]
 		if art.Kind == state.ArtifactKindMarkdown {
 			return &Output{
 				Action:  ActionBlogDraft,

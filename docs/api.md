@@ -311,7 +311,7 @@ Return all journal events for a workflow in insertion order. Events are immutabl
       "type": "state.transition",
       "persona": "",
       "payload": { "from": "pending", "to": "running" },
-      "created_at": "2024-01-01T00:00:01Z"
+      "occurred_at": "2024-01-01T00:00:01Z"
     },
     {
       "id": "uuid",
@@ -319,7 +319,7 @@ Return all journal events for a workflow in insertion order. Events are immutabl
       "type": "persona.started",
       "persona": "director",
       "payload": { "persona": "director", "provider_name": "openai", "model_name": "gpt-4o" },
-      "created_at": "2024-01-01T00:00:02Z"
+      "occurred_at": "2024-01-01T00:00:02Z"
     }
   ],
   "count": 2

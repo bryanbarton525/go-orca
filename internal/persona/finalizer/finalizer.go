@@ -55,13 +55,14 @@ var refinerSchema = map[string]any{
 			"items": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"component_type": map[string]any{"type": "string"},
-					"component_name": map[string]any{"type": "string"},
-					"problem":        map[string]any{"type": "string"},
-					"proposed_fix":   map[string]any{"type": "string"},
+					"component_type": map[string]any{"type": "string", "minLength": 1},
+					"component_name": map[string]any{"type": "string", "minLength": 1},
+					"problem":        map[string]any{"type": "string", "minLength": 1},
+					"proposed_fix":   map[string]any{"type": "string", "minLength": 1},
 					"content":        map[string]any{"type": "string"},
-					"priority":       map[string]any{"type": "string"},
+					"priority":       map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
 				},
+				"required": []string{"component_type", "component_name", "problem", "proposed_fix", "priority"},
 			},
 		},
 		"overall_assessment": map[string]any{"type": "string"},
@@ -209,6 +210,7 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 	if err := base.ParseJSON(raw, &out); err != nil {
 		return nil, nil, ""
 	}
+	out.Improvements = normalizeImprovements(out.Improvements)
 
 	suggestions := make([]string, 0, len(out.Improvements))
 	for _, imp := range out.Improvements {
@@ -286,4 +288,36 @@ func deliveryTargetHint(design *state.Design) string {
 		return "unspecified"
 	}
 	return design.DeliveryTarget
+}
+
+// normalizeImprovements trims whitespace from all string fields and drops
+// improvements that have any blank required field (component_type,
+// component_name, problem, proposed_fix, priority) or a priority value that is
+// not one of "high", "medium", or "low".
+//
+// This prevents partially-filled LLM improvement objects from being persisted
+// or emitted as events.  Priority is also normalised to lowercase so that
+// "HIGH" and "High" both survive the filter.
+func normalizeImprovements(imps []state.RefinerImprovement) []state.RefinerImprovement {
+	valid := make([]state.RefinerImprovement, 0, len(imps))
+	for _, imp := range imps {
+		imp.ComponentType = strings.TrimSpace(imp.ComponentType)
+		imp.ComponentName = strings.TrimSpace(imp.ComponentName)
+		imp.Problem = strings.TrimSpace(imp.Problem)
+		imp.ProposedFix = strings.TrimSpace(imp.ProposedFix)
+		imp.Priority = strings.TrimSpace(strings.ToLower(imp.Priority))
+		imp.Content = strings.TrimSpace(imp.Content)
+		if imp.ComponentType == "" || imp.ComponentName == "" ||
+			imp.Problem == "" || imp.ProposedFix == "" || imp.Priority == "" {
+			continue
+		}
+		switch imp.Priority {
+		case "high", "medium", "low":
+			// valid
+		default:
+			continue
+		}
+		valid = append(valid, imp)
+	}
+	return valid
 }

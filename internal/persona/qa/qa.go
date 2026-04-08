@@ -5,6 +5,7 @@ package qa
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -41,10 +42,13 @@ var outputSchema = map[string]any{
 			"items": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"severity":       map[string]any{"type": "string"},
-					"component":      map[string]any{"type": "string"},
-					"description":    map[string]any{"type": "string"},
-					"recommendation": map[string]any{"type": "string"},
+					"severity": map[string]any{
+						"type": "string",
+						"enum": []any{"blocking", "warning", "info"},
+					},
+					"component":      map[string]any{"type": "string", "minLength": 1},
+					"description":    map[string]any{"type": "string", "minLength": 1},
+					"recommendation": map[string]any{"type": "string", "minLength": 1},
 				},
 				"required": []string{"severity", "component", "description", "recommendation"},
 			},
@@ -99,7 +103,15 @@ func (q *QA) Execute(ctx context.Context, packet state.HandoffPacket) (*state.Pe
 
 	handoffCtx := base.BuildHandoffContext(packet)
 
-	artifactSummary := buildArtifactSummary(packet.Artifacts)
+	// For content-mode workflows build the artifact section focused on the
+	// delivery candidate (latest blog_post, else latest markdown).  All other
+	// artifacts are supplied as supporting context only, not as acceptance targets.
+	var artifactSummary string
+	if packet.Mode == state.WorkflowModeContent {
+		artifactSummary = buildContentArtifactSummary(packet.Artifacts)
+	} else {
+		artifactSummary = buildArtifactSummary(packet.Artifacts)
+	}
 
 	userPrompt := fmt.Sprintf(
 		`%s
@@ -107,7 +119,7 @@ func (q *QA) Execute(ctx context.Context, packet state.HandoffPacket) (*state.Pe
 ## Artifacts to Validate
 %s
 
-Review every artifact above against the constitution, requirements, and design.
+Review the artifact(s) above against the constitution, requirements, and design.
 Identify all blocking issues, warnings, and suggestions.
 Respond with your JSON output.`,
 		handoffCtx,
@@ -124,26 +136,22 @@ Respond with your JSON output.`,
 		return nil, fmt.Errorf("qa: parse error: %w", err)
 	}
 
-	// Collect blocking issue descriptions for the WorkflowState.
-	// Filter out empty objects that the LLM may emit when the schema's
-	// "required" enforcement is not honoured — an empty blocker would
-	// otherwise produce a "[]: " string that trips the engine's
-	// len(BlockingIssues) > 0 guard and causes a spurious remediation pass.
-	blocking := make([]string, 0, len(out.BlockingIssues))
-	for _, iss := range out.BlockingIssues {
-		if iss.Component == "" && iss.Description == "" {
-			continue // discard phantom empty blocker
-		}
-		blocking = append(blocking, fmt.Sprintf("[%s] %s: %s", iss.Component, iss.Description, iss.Recommendation))
-	}
+	// Normalise: separate truly blocking issues from advisory ones.
+	// A "blocking" issue must have severity == "blocking" AND a concrete,
+	// actionable recommendation (not "None", "N/A", or blank).
+	// Everything else is downgraded to a warning/suggestion.
+	blocking, downgraded := classifyIssues(out.BlockingIssues)
 
-	// Merge warnings into suggestions list (also skip empty items).
-	allSuggestions := make([]string, 0, len(out.Suggestions)+len(out.Warnings))
+	// Merge warnings: declared warnings + downgraded + skip empty items.
+	allSuggestions := make([]string, 0, len(out.Suggestions)+len(out.Warnings)+len(downgraded))
 	for _, w := range out.Warnings {
 		if w.Component == "" && w.Description == "" {
 			continue
 		}
 		allSuggestions = append(allSuggestions, fmt.Sprintf("[warning][%s] %s: %s", w.Component, w.Description, w.Recommendation))
+	}
+	for _, d := range downgraded {
+		allSuggestions = append(allSuggestions, fmt.Sprintf("[downgraded][%s] %s: %s", d.Component, d.Description, d.Recommendation))
 	}
 	allSuggestions = append(allSuggestions, out.Suggestions...)
 
@@ -158,13 +166,141 @@ Respond with your JSON output.`,
 	}, nil
 }
 
+// classifyIssues separates a slice of qaIssues into:
+//   - truly blocking: severity == "blocking" AND recommendation is concrete
+//   - downgraded: everything else (wrong severity, phantom empty, non-actionable)
+//
+// The returned blocking slice contains formatted strings ready for the engine's
+// len(BlockingIssues) > 0 guard.  Downgraded items are returned as-is for
+// conversion to suggestions by the caller.
+func classifyIssues(issues []qaIssue) (blocking []string, downgraded []qaIssue) {
+	for _, iss := range issues {
+		// Drop phantom empty objects the LLM emits when schema enforcement fails.
+		if iss.Component == "" && iss.Description == "" {
+			continue
+		}
+
+		sev := strings.ToLower(strings.TrimSpace(iss.Severity))
+
+		// Non-blocking severity values go straight to downgraded.
+		if sev != "blocking" {
+			downgraded = append(downgraded, iss)
+			continue
+		}
+
+		// Blocking severity but non-actionable recommendation — downgrade.
+		rec := strings.TrimSpace(iss.Recommendation)
+		recLower := strings.ToLower(rec)
+		if rec == "" || recLower == "none" || recLower == "n/a" || recLower == "no recommendation" {
+			downgraded = append(downgraded, iss)
+			continue
+		}
+
+		// Purely editorial notes that should never halt delivery.
+		// Heuristic: if description mentions only title wording, tone of title,
+		// or "next step" / "concluding challenge" with no structural defect,
+		// downgrade rather than block.
+		if isEditorialOnly(iss) {
+			downgraded = append(downgraded, iss)
+			continue
+		}
+
+		blocking = append(blocking, fmt.Sprintf("[%s] %s: %s", iss.Component, iss.Description, iss.Recommendation))
+	}
+	return blocking, downgraded
+}
+
+// isEditorialOnly returns true for issues that are stylistic or polish
+// suggestions that should never block publication of a technical article.
+// These map to the exact failure patterns observed in workflow a2ffa163.
+func isEditorialOnly(iss qaIssue) bool {
+	desc := strings.ToLower(iss.Description)
+	rec := strings.ToLower(iss.Recommendation)
+
+	editorialPatterns := []string{
+		"title",
+		"slightly promotional",
+		"more academic",
+		"more neutral title",
+		"tone of the title",
+		"next step",
+		"concluding challenge",
+		"concluding paragraph",
+		"suggest an advanced topic",
+		"overall quality",
+		"technically excellent",
+		"passes the technical bar",
+		"content depth",
+	}
+	for _, p := range editorialPatterns {
+		if strings.Contains(desc, p) || strings.Contains(rec, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildContentArtifactSummary builds the QA prompt section for content-mode
+// workflows. The delivery candidate (latest blog_post, else latest markdown)
+// is presented as the primary acceptance target. All other artifacts are
+// listed as supporting context that is NOT under evaluation.
+func buildContentArtifactSummary(artifacts []state.Artifact) string {
+	if len(artifacts) == 0 {
+		return "(no artifacts produced)"
+	}
+
+	// Find delivery candidate: latest blog_post, else latest markdown.
+	candidateIdx := -1
+	for i := len(artifacts) - 1; i >= 0; i-- {
+		if artifacts[i].Kind == state.ArtifactKindBlogPost {
+			candidateIdx = i
+			break
+		}
+	}
+	if candidateIdx == -1 {
+		for i := len(artifacts) - 1; i >= 0; i-- {
+			if artifacts[i].Kind == state.ArtifactKindMarkdown {
+				candidateIdx = i
+				break
+			}
+		}
+	}
+
+	if candidateIdx == -1 {
+		// No recognisable content artifact — fall back to full list.
+		return buildArtifactSummary(artifacts)
+	}
+
+	candidate := artifacts[candidateIdx]
+	out := fmt.Sprintf(
+		"### DELIVERY CANDIDATE (this is the artifact under evaluation)\n"+
+			"### Artifact: %s\nKind: %s\nDescription: %s\n\n```\n%s\n```\n\n",
+		candidate.Name, candidate.Kind, candidate.Description, candidate.Content,
+	)
+
+	// Append supporting artifacts as read-only context.
+	var supporting []string
+	for i, a := range artifacts {
+		if i == candidateIdx {
+			continue
+		}
+		supporting = append(supporting, fmt.Sprintf("- [%d] [%s] %s — %s", i+1, a.Kind, a.Name, a.Description))
+	}
+	if len(supporting) > 0 {
+		out += "### Supporting artifacts (context only — NOT under evaluation)\n"
+		for _, s := range supporting {
+			out += s + "\n"
+		}
+		out += "\n"
+	}
+	return out
+}
+
 // buildArtifactSummary formats artifacts for inclusion in the QA prompt.
 func buildArtifactSummary(artifacts []state.Artifact) string {
 	if len(artifacts) == 0 {
 		return "(no artifacts produced)"
 	}
-	var sb fmt.Stringer
-	_ = sb
 	out := ""
 	for i, a := range artifacts {
 		out += fmt.Sprintf("### Artifact %d: %s\nKind: %s\nDescription: %s\n\n```\n%s\n```\n\n",

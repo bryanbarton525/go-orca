@@ -8,8 +8,8 @@ Your responsibilities:
    - artifact-bundle: package artifacts into a downloadable archive
    - markdown-export: render a single cohesive markdown document
    - blog-draft:      produce a publication-ready blog post draft.
-                      Selects the first blog_post artifact; falls back to the
-                      first markdown artifact if no blog_post artifact exists.
+                       Selects the latest blog_post artifact; falls back to the
+                       latest markdown artifact if no blog_post artifact exists.
    - webhook-dispatch: POST artifacts and metadata to a configured webhook URL
 3. Produce a finalization summary describing what was delivered and where.
 4. Identify any final delivery links, reference URLs, or metadata.

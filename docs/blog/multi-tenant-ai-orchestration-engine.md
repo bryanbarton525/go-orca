@@ -18,9 +18,9 @@ This is what multi-tenancy means: data belonging to one tenant cannot be accesse
 
 ## Orchestration is sequencing with policy, not chaining with strings
 
-Go-orca runs a fixed sequence of AI personas: Director → Planner → Researcher → Implementer → QA → Finalizer. Each persona operates on a `HandoffPacket` — a snapshot of the workflow state passed forward, never backward.
+Go-orca runs a fixed sequence of AI personas: Director → Project Manager → Architect → Implementer → QA → Finalizer. Each persona operates on a `HandoffPacket` — a snapshot of the workflow state passed forward, never backward.
 
-This is not "chaining prompts." The Director produces a task graph. The Planner enriches it. The Implementer executes against it. The QA persona validates output and can produce findings that are visible to the Finalizer, but QA cannot retroactively modify the Implementer's artifacts — the hand has already been played. Orchestration means the engine controls sequencing and policy; no individual persona can subvert the flow.
+This is not "chaining prompts." The Director scopes the request. The Project Manager defines requirements. The Architect produces a task graph. The Implementer executes against it. The QA persona validates output and can produce findings that are visible to the Finalizer, but QA cannot retroactively modify the Implementer's artifacts — the hand has already been played. Orchestration means the engine controls sequencing and policy; no individual persona can subvert the flow.
 
 Role enforcement is implemented in the engine, not in prompts. If a QA persona output attempts to inject new tasks into `ws.Tasks`, the engine discards them. If it attempts to modify an artifact not assigned to QA, the engine discards that too. The rules are in Go, not in the system prompt.
 

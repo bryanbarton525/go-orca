@@ -149,8 +149,8 @@ Creates a manifest of all artifact names and kinds. Does not write files — ful
 Extracts a blog post draft from the workflow artifacts and returns it as publication-ready content.
 
 **Artifact selection (in order):**
-1. First artifact with kind `blog_post` — preferred; produced when the Implementer is mode-aware.
-2. First artifact with kind `markdown` — fallback for content workflows where the Implementer produced a generic markdown artifact. `Output.Metadata["fallback"]` is set to `"true"` in this case.
+1. Latest artifact with kind `blog_post` — preferred; produced when the Implementer is mode-aware. Scanning newest-to-oldest ensures a later remediation or synthesis artifact wins over an earlier intermediate draft.
+2. Latest artifact with kind `markdown` — fallback for content workflows where the Implementer produced a generic markdown artifact. `Output.Metadata["fallback"]` is set to `"true"` in this case.
 
 If neither kind is present, returns `success: false`.
 
