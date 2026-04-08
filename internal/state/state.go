@@ -212,6 +212,18 @@ type Artifact struct {
 	CreatedAt   time.Time    `json:"created_at"`
 }
 
+// RefinerImprovement is a single structured improvement proposed by the Refiner.
+type RefinerImprovement struct {
+	ComponentType string `json:"component_type"` // agent | skill | prompt | persona
+	ComponentName string `json:"component_name"`
+	Problem       string `json:"problem"`
+	ProposedFix   string `json:"proposed_fix"`
+	// Content is the verbatim file content to persist (e.g. a SKILL.md or
+	// .prompt.md body). Empty means the improvement is advisory only.
+	Content  string `json:"content,omitempty"`
+	Priority string `json:"priority"` // high | medium | low
+}
+
 // FinalizationResult holds the Finalizer's output.
 type FinalizationResult struct {
 	Action      string            `json:"action"` // github-pr | markdown-export | etc.
@@ -219,7 +231,11 @@ type FinalizationResult struct {
 	Links       []string          `json:"links,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	Suggestions []string          `json:"suggestions,omitempty"` // from Refiner pass
-	CompletedAt time.Time         `json:"completed_at"`
+	// RefinerImprovements holds the structured set of improvements from the
+	// inline Refiner retrospective.  The engine persists these as files under
+	// ImprovementsRoot so future workflow runs can incorporate them.
+	RefinerImprovements []RefinerImprovement `json:"refiner_improvements,omitempty"`
+	CompletedAt         time.Time            `json:"completed_at"`
 }
 
 // ─── HandoffPacket ────────────────────────────────────────────────────────────
@@ -257,6 +273,10 @@ type HandoffPacket struct {
 	// Accumulated issues and suggestions from prior phases (populated by engine).
 	BlockingIssues []string `json:"blocking_issues,omitempty"`
 	AllSuggestions []string `json:"all_suggestions,omitempty"`
+
+	// ImprovementsPath is the directory where the Refiner may write improvement
+	// files (SKILL.md, .prompt.md, .agent.md).  Set by the engine from Options.
+	ImprovementsPath string `json:"improvements_path,omitempty"`
 }
 
 // ─── Persona output ───────────────────────────────────────────────────────────

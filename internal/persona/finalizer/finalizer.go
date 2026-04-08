@@ -5,6 +5,8 @@ package finalizer
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -44,6 +46,9 @@ Your responsibilities:
 2. Identify concrete improvements for agents, skills, prompts, or persona behavior.
 3. Be specific: reference the persona or component by name, describe the exact problem, and propose a concrete fix.
 4. Focus on systemic improvements, not one-off corrections.
+5. When the component_type is "skill", "prompt", or "agent", populate the "content" field with the
+   complete verbatim file content that should be written to disk so this improvement takes effect
+   in future workflow runs.  For "persona" improvements (behavior changes), leave "content" empty.
 
 Always respond with valid JSON matching this schema:
 {
@@ -53,6 +58,7 @@ Always respond with valid JSON matching this schema:
       "component_name": "...",
       "problem": "...",
       "proposed_fix": "...",
+      "content": "...",
       "priority": "high|medium|low"
     }
   ],
@@ -70,21 +76,11 @@ type finalizerOutput struct {
 	DeliveryNotes  string            `json:"delivery_notes"`
 }
 
-// improvement is a single Refiner improvement proposal.
-type improvement struct {
-	ComponentType string `json:"component_type"`
-	ComponentName string `json:"component_name"`
-	Problem       string `json:"problem"`
-	ProposedFix   string `json:"proposed_fix"`
-	Priority      string `json:"priority"`
-}
-
 // refinerOutput is the expected JSON shape from the Refiner retrospective.
 type refinerOutput struct {
-	Improvements []improvement `json:"improvements"`
-
-	OverallAssessment string `json:"overall_assessment"`
-	Summary           string `json:"summary"`
+	Improvements      []state.RefinerImprovement `json:"improvements"`
+	OverallAssessment string                     `json:"overall_assessment"`
+	Summary           string                     `json:"summary"`
 }
 
 // finalizerSchema defines the structured output shape for the Finalizer.
@@ -114,6 +110,7 @@ var refinerSchema = map[string]any{
 					"component_name": map[string]any{"type": "string"},
 					"problem":        map[string]any{"type": "string"},
 					"proposed_fix":   map[string]any{"type": "string"},
+					"content":        map[string]any{"type": "string"},
 					"priority":       map[string]any{"type": "string"},
 				},
 			},
@@ -182,7 +179,7 @@ select the most appropriate delivery action and produce your finalization JSON o
 	}
 
 	// ── Phase 2: Refiner retrospective ───────────────────────────────────────
-	refinerSuggestions, refinerSummary := f.runRefiner(ctx, packet, handoffCtx)
+	refinerImprovements, refinerSuggestions, refinerSummary := f.runRefiner(ctx, packet, handoffCtx)
 
 	// Merge suggestions.
 	allSuggestions := make([]string, 0, len(finalOut.Suggestions)+len(refinerSuggestions))
@@ -191,12 +188,13 @@ select the most appropriate delivery action and produce your finalization JSON o
 
 	now := base.Timestamp()
 	result := &state.FinalizationResult{
-		Action:      finalOut.DeliveryAction,
-		Summary:     finalOut.Summary,
-		Links:       finalOut.Links,
-		Metadata:    finalOut.Metadata,
-		Suggestions: allSuggestions,
-		CompletedAt: now,
+		Action:              finalOut.DeliveryAction,
+		Summary:             finalOut.Summary,
+		Links:               finalOut.Links,
+		Metadata:            finalOut.Metadata,
+		Suggestions:         allSuggestions,
+		RefinerImprovements: refinerImprovements,
+		CompletedAt:         now,
 	}
 
 	combinedSummary := finalOut.Summary
@@ -215,9 +213,9 @@ select the most appropriate delivery action and produce your finalization JSON o
 }
 
 // runRefiner executes the inline Refiner retrospective pass and returns
-// (suggestions, summary). Errors are swallowed — a Refiner failure must not
-// prevent workflow completion.
-func (f *Finalizer) runRefiner(ctx context.Context, packet state.HandoffPacket, handoffCtx string) ([]string, string) {
+// (improvements, suggestions, summary). Errors are swallowed — a Refiner
+// failure must not prevent workflow completion.
+func (f *Finalizer) runRefiner(ctx context.Context, packet state.HandoffPacket, handoffCtx string) ([]state.RefinerImprovement, []string, string) {
 	refinerPacket := packet
 	refinerPacket.CurrentPersona = state.PersonaRefiner
 
@@ -238,12 +236,12 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 
 	raw, err := f.refinerExec.Run(ctx, refinerPacket, refinerPrompt)
 	if err != nil {
-		return nil, ""
+		return nil, nil, ""
 	}
 
 	var out refinerOutput
 	if err := base.ParseJSON(raw, &out); err != nil {
-		return nil, ""
+		return nil, nil, ""
 	}
 
 	suggestions := make([]string, 0, len(out.Improvements))
@@ -255,7 +253,50 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 		))
 	}
 
-	return suggestions, out.Summary
+	// Persist improvements that carry file content to the ImprovementsPath.
+	if packet.ImprovementsPath != "" {
+		_ = writeImprovements(packet.ImprovementsPath, out.Improvements)
+	}
+
+	return out.Improvements, suggestions, out.Summary
+}
+
+// writeImprovements persists Refiner improvements that have content to disk.
+// Each improvement is written to a file whose path is determined by its
+// component_type and component_name:
+//
+//	skill  → {root}/skills/{name}/SKILL.md
+//	prompt → {root}/prompts/{name}.prompt.md
+//	agent  → {root}/agents/{name}.agent.md
+//	persona (advisory) → {root}/personas/{name}.md
+//
+// Errors are logged but never surfaced — the Refiner must not break delivery.
+func writeImprovements(root string, improvements []state.RefinerImprovement) error {
+	for _, imp := range improvements {
+		if imp.Content == "" {
+			continue
+		}
+
+		var relPath string
+		switch imp.ComponentType {
+		case "skill":
+			relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
+		case "prompt":
+			relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
+		case "agent":
+			relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
+		default:
+			// persona or unknown — write an advisory markdown under personas/
+			relPath = filepath.Join("personas", imp.ComponentName+".md")
+		}
+
+		fullPath := filepath.Join(root, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			continue
+		}
+		_ = os.WriteFile(fullPath, []byte(imp.Content), 0o644)
+	}
+	return nil
 }
 
 // buildArtifactInventory formats a short listing of artifacts for the prompt.

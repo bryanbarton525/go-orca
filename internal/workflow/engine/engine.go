@@ -63,6 +63,12 @@ type Options struct {
 	// and returns ErrPaused.  The workflow can be re-enqueued via the
 	// POST /workflows/:id/resume endpoint.
 	PauseFunc func() bool
+
+	// ImprovementsRoot is the directory where the Refiner writes improvement
+	// files (SKILL.md, .prompt.md, .agent.md) after each completed workflow.
+	// When empty, improvements are stored as suggestion strings only.
+	// Defaults to empty (disabled).
+	ImprovementsRoot string
 }
 
 func (o *Options) applyDefaults() {
@@ -354,7 +360,13 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	if ws.Summaries == nil {
 		ws.Summaries = make(map[state.PersonaKind]string)
 	}
-	ws.Summaries[out.Persona] = out.Summary
+	// Use a sentinel when the LLM returns an empty summary so phaseComplete()
+	// correctly identifies this persona as having already run.
+	summary := out.Summary
+	if summary == "" {
+		summary = "(completed)"
+	}
+	ws.Summaries[out.Persona] = summary
 
 	if out.Constitution != nil {
 		ws.Constitution = out.Constitution
@@ -427,22 +439,23 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	}
 
 	packet := state.HandoffPacket{
-		WorkflowID:     ws.ID,
-		TenantID:       ws.TenantID,
-		ScopeID:        ws.ScopeID,
-		Mode:           ws.Mode,
-		Request:        ws.Request,
-		Constitution:   ws.Constitution,
-		Requirements:   ws.Requirements,
-		Design:         ws.Design,
-		Tasks:          ws.Tasks,
-		Artifacts:      ws.Artifacts,
-		Summaries:      ws.Summaries,
-		CurrentPersona: kind,
-		ProviderName:   provider,
-		ModelName:      model,
-		BlockingIssues: ws.BlockingIssues,
-		AllSuggestions: ws.AllSuggestions,
+		WorkflowID:       ws.ID,
+		TenantID:         ws.TenantID,
+		ScopeID:          ws.ScopeID,
+		Mode:             ws.Mode,
+		Request:          ws.Request,
+		Constitution:     ws.Constitution,
+		Requirements:     ws.Requirements,
+		Design:           ws.Design,
+		Tasks:            ws.Tasks,
+		Artifacts:        ws.Artifacts,
+		Summaries:        ws.Summaries,
+		CurrentPersona:   kind,
+		ProviderName:     provider,
+		ModelName:        model,
+		BlockingIssues:   ws.BlockingIssues,
+		AllSuggestions:   ws.AllSuggestions,
+		ImprovementsPath: e.opts.ImprovementsRoot,
 	}
 
 	// Populate customization context from the workflow-start snapshot.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -112,12 +113,24 @@ func main() {
 	customReg := buildCustomizationRegistry(cfg, log)
 
 	// ── Build workflow engine + scheduler ─────────────────────────────────────
+	improvementsRoot := filepath.Join(cfg.Workflow.ArtifactStoragePath, "improvements")
+	// Register the improvements directory as a low-precedence customization
+	// source so subsequent workflow runs automatically pick up Refiner outputs.
+	customReg.AddSource(customization.Source{
+		Name:       "refiner-improvements",
+		Type:       "filesystem",
+		Root:       improvementsRoot,
+		Precedence: 100, // lowest priority; explicit sources override
+		ScopeSlug:  "",  // applies to all scopes
+	})
+
 	eng := engine.New(store, engine.Options{
 		MaxQARetries:          2,
 		DefaultProvider:       resolveDefaultProvider(cfg),
 		DefaultModel:          resolveDefaultModel(cfg),
 		CustomizationRegistry: customReg,
 		HandoffTimeout:        cfg.Workflow.HandoffTimeout,
+		ImprovementsRoot:      improvementsRoot,
 	})
 
 	sched := scheduler.New(eng, scheduler.Options{
