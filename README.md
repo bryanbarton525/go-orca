@@ -9,6 +9,10 @@
   Drive multi-phase LLM pipelines from a single HTTP API — and get structured improvement proposals after every run.
 </p>
 
+<p align="center">
+  <a href="https://bryanbarton525.github.io/go-orca/"><img src="https://img.shields.io/badge/API%20Docs-Swagger%20UI-85EA2D?logo=swagger" alt="API Docs"></a>
+</p>
+
 ---
 
 go-orca is a backend service that orchestrates multi-agent AI workflows through a structured persona pipeline. You submit a natural-language request; go-orca drives it through Director → Project Manager → Architect → Implementer → QA → Finalizer, producing structured artifacts that can be delivered as a GitHub PR, a markdown export, a webhook payload, or an artifact bundle.
