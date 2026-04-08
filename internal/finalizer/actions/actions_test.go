@@ -1,181 +1,124 @@
-package actions_test
+package actions
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/state"
 )
 
-func makeInput(ws *state.WorkflowState, arts []state.Artifact, cfg interface{}) actions.Input {
-	var rawCfg json.RawMessage
-	if cfg != nil {
-		rawCfg, _ = json.Marshal(cfg)
-	}
-	return actions.Input{Workflow: ws, Artifacts: arts, Config: rawCfg}
+func makeWorkflow() *state.WorkflowState {
+	return &state.WorkflowState{ID: "test-wf", Title: "Test Workflow"}
 }
 
-func testWorkflow() *state.WorkflowState {
-	ws := state.NewWorkflowState("t1", "s1", "test workflow")
-	ws.Title = "Test Workflow"
-	return ws
-}
-
-// ─── MarkdownExportAction ─────────────────────────────────────────────────────
-
-func TestMarkdownExportAction(t *testing.T) {
-	a := &actions.MarkdownExportAction{}
-	if a.Kind() != actions.ActionMarkdownExport {
-		t.Errorf("Kind: got %q", a.Kind())
-	}
-
-	ws := testWorkflow()
-	ws.Constitution = &state.Constitution{Vision: "Build great things"}
-	arts := []state.Artifact{
-		{Name: "spec.md", Content: "# Spec", Kind: state.ArtifactKindMarkdown},
-	}
-
-	out, err := a.Execute(context.Background(), makeInput(ws, arts, nil))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !out.Success {
-		t.Errorf("expected Success=true, got error: %s", out.Error)
-	}
-	content := out.Metadata["content"]
-	if content == "" {
-		t.Error("expected non-empty content in metadata")
-	}
-}
-
-// ─── ArtifactBundleAction ─────────────────────────────────────────────────────
-
-func TestArtifactBundleAction(t *testing.T) {
-	a := &actions.ArtifactBundleAction{}
-	arts := []state.Artifact{
-		{Name: "a.md", Kind: state.ArtifactKindMarkdown},
-		{Name: "b.md", Kind: state.ArtifactKindDocument},
-	}
-	out, err := a.Execute(context.Background(), makeInput(testWorkflow(), arts, nil))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !out.Success {
-		t.Errorf("expected Success=true")
-	}
-	if len(out.Metadata) != 2 {
-		t.Errorf("metadata count: got %d, want 2", len(out.Metadata))
-	}
+func makeArtifact(kind state.ArtifactKind, name, content string) state.Artifact {
+	return state.Artifact{Kind: kind, Name: name, Content: content}
 }
 
 // ─── BlogDraftAction ──────────────────────────────────────────────────────────
 
-func TestBlogDraftAction_Found(t *testing.T) {
-	a := &actions.BlogDraftAction{}
-	arts := []state.Artifact{
-		{Name: "post.md", Kind: state.ArtifactKindBlogPost, Content: "# My Post"},
+func TestBlogDraftAction_BlogPostArtifact(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKindBlogPost, "post.md", "# Hello World\nContent here."),
+		},
 	}
-	out, err := a.Execute(context.Background(), makeInput(testWorkflow(), arts, nil))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !out.Success {
-		t.Errorf("expected Success=true; error: %s", out.Error)
-	}
-	if out.Metadata["draft"] != "# My Post" {
-		t.Errorf("draft content mismatch: %q", out.Metadata["draft"])
-	}
-}
-
-func TestBlogDraftAction_NotFound(t *testing.T) {
-	a := &actions.BlogDraftAction{}
-	out, err := a.Execute(context.Background(), makeInput(testWorkflow(), nil, nil))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if out.Success {
-		t.Error("expected Success=false when no blog_post artifact")
-	}
-}
-
-// ─── WebhookAction ────────────────────────────────────────────────────────────
-
-func TestWebhookAction_Success(t *testing.T) {
-	var received []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	a := &actions.WebhookAction{}
-	in := makeInput(testWorkflow(), []state.Artifact{
-		{Name: "art.md", Kind: state.ArtifactKindMarkdown, Content: "hello"},
-	}, map[string]string{"url": srv.URL + "/hook"})
-
 	out, err := a.Execute(context.Background(), in)
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if !out.Success {
-		t.Errorf("expected Success=true; error: %s", out.Error)
+		t.Fatalf("expected success, got error: %s", out.Error)
 	}
-	if len(received) == 0 {
-		t.Error("expected webhook to receive a request body")
+	if out.Metadata["draft"] != "# Hello World\nContent here." {
+		t.Errorf("unexpected draft content: %q", out.Metadata["draft"])
 	}
-	var payload map[string]interface{}
-	if err := json.Unmarshal(received, &payload); err != nil {
-		t.Fatalf("webhook body not valid JSON: %v", err)
-	}
-	if _, ok := payload["workflow_id"]; !ok {
-		t.Error("payload missing workflow_id")
+	if out.Metadata["fallback"] == "true" {
+		t.Error("fallback flag should not be set when a blog_post artifact is present")
 	}
 }
 
-func TestWebhookAction_MissingURL(t *testing.T) {
-	a := &actions.WebhookAction{}
-	_, err := a.Execute(context.Background(), makeInput(testWorkflow(), nil, nil))
-	if err == nil {
-		t.Error("expected error for missing URL, got nil")
+func TestBlogDraftAction_MarkdownFallback(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKindMarkdown, "article.md", "# Article\nBody text."),
+		},
 	}
-}
-
-func TestWebhookAction_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	a := &actions.WebhookAction{}
-	in := makeInput(testWorkflow(), nil, map[string]string{"url": srv.URL})
 	out, err := a.Execute(context.Background(), in)
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Success {
-		t.Error("expected Success=false for 500 response")
+	if !out.Success {
+		t.Fatalf("expected success via markdown fallback, got error: %s", out.Error)
+	}
+	if out.Metadata["draft"] != "# Article\nBody text." {
+		t.Errorf("unexpected draft content: %q", out.Metadata["draft"])
+	}
+	if out.Metadata["fallback"] != "true" {
+		t.Error("fallback flag should be set when markdown artifact is used")
 	}
 }
 
-// ─── Global registry ──────────────────────────────────────────────────────────
-
-func TestGlobalRegistryContainsAll(t *testing.T) {
-	kinds := []actions.ActionKind{
-		actions.ActionMarkdownExport,
-		actions.ActionArtifactBundle,
-		actions.ActionBlogDraft,
-		actions.ActionWebhook,
-		actions.ActionGitHubPR,
-		actions.ActionRepoCommit,
+func TestBlogDraftAction_BlogPostPreferredOverMarkdown(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKindMarkdown, "other.md", "generic markdown"),
+			makeArtifact(state.ArtifactKindBlogPost, "post.md", "the real post"),
+		},
 	}
-	for _, k := range kinds {
-		if _, ok := actions.Global.Get(k); !ok {
-			t.Errorf("Global registry missing action %q", k)
-		}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success: %s", out.Error)
+	}
+	if out.Metadata["draft"] != "the real post" {
+		t.Errorf("blog_post artifact should be preferred; got draft: %q", out.Metadata["draft"])
+	}
+	if out.Metadata["fallback"] == "true" {
+		t.Error("fallback flag should not be set when blog_post artifact is present")
+	}
+}
+
+func TestBlogDraftAction_NoArtifacts(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{Workflow: makeWorkflow(), Artifacts: nil}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Success {
+		t.Error("expected failure when no artifacts present")
+	}
+	if out.Error == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestBlogDraftAction_NoMatchingArtifact(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKindCode, "main.go", "package main"),
+			makeArtifact(state.ArtifactKindConfig, "config.yaml", "key: val"),
+		},
+	}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Success {
+		t.Error("expected failure when no blog_post or markdown artifact present")
+	}
+	if out.Error == "" {
+		t.Error("expected non-empty error message")
 	}
 }

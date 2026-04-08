@@ -623,3 +623,65 @@ func TestListProviders(t *testing.T) {
 		t.Error("response missing 'providers' key")
 	}
 }
+
+// TestStreamSurvivesShortWriteTimeout verifies that the SSE handler disables
+// the server-level write deadline so a stream is not killed by a very short
+// write_timeout configuration.
+//
+// Strategy: start a real httptest.Server with a 200ms WriteTimeout, open a
+// live SSE stream to a pending workflow, wait 400ms (two write-timeout cycles),
+// then verify the connection is still open and receiving keepalive frames.
+func TestStreamSurvivesShortWriteTimeout(t *testing.T) {
+	ms := newMemStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	_ = ms.CreateTenant(ctx, &state.Tenant{ID: "t1", Slug: "t1", Name: "T1", CreatedAt: now, UpdatedAt: now})
+	_ = ms.CreateScope(ctx, &state.Scope{ID: "s1", TenantID: "t1", Kind: state.ScopeKindGlobal, Name: "G", Slug: "global", CreatedAt: now, UpdatedAt: now})
+
+	// Seed a pending (non-terminal) workflow.
+	ws := state.NewWorkflowState("t1", "s1", "sse timeout test")
+	_ = ms.CreateWorkflow(ctx, ws)
+
+	// Use the full gin router (same as all other tests) so middleware, param
+	// parsing, and the response writer chain are exactly as they are in prod.
+	r := newRouter(ms)
+
+	// Wrap the gin engine in a real httptest.Server so we can set WriteTimeout.
+	srv := httptest.NewUnstartedServer(r)
+	srv.Config.WriteTimeout = 200 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	// Open the SSE stream with a ?timeout=5 so the handler-side deadline is
+	// well beyond our observation window.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/workflows/"+ws.ID+"/stream?timeout=5", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("Content-Type: got %q, want text/event-stream", resp.Header.Get("Content-Type"))
+	}
+
+	// Read bytes from the stream for 400ms — two WriteTimeout cycles.  If the
+	// server-level deadline is not cleared we would see an EOF here within 200ms.
+	buf := make([]byte, 256)
+	deadline := time.Now().Add(400 * time.Millisecond)
+	bytesRead := 0
+	for time.Now().Before(deadline) {
+		n, readErr := resp.Body.Read(buf)
+		bytesRead += n
+		if readErr != nil {
+			t.Errorf("stream closed prematurely after %d bytes: %v", bytesRead, readErr)
+			return
+		}
+	}
+	if bytesRead == 0 {
+		t.Error("received no bytes from SSE stream within 400ms")
+	}
+}

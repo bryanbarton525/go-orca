@@ -16,7 +16,7 @@ server:
   port: 8080
   mode: "debug"            # verbose Gin logging
   read_timeout: "30s"
-  write_timeout: "120s"    # generous for slow local models
+  write_timeout: "120s"    # governs non-SSE responses; SSE streams manage their own deadline via ?timeout
   shutdown_timeout: "10s"
   trusted_proxies: []
 

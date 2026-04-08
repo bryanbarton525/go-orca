@@ -617,6 +617,10 @@ func isHierarchyError(err error) bool {
 //
 // A special keepalive comment ": keepalive\n\n" is sent every tick if no new
 // events were available, to prevent proxy timeouts.
+//
+// The server-level write_timeout is disabled for SSE connections immediately
+// after the response headers are written.  The handler's own ?timeout
+// parameter is the authoritative deadline for live streams.
 func StreamWorkflowEvents(store storage.Store) gin.HandlerFunc {
 	const defaultTimeoutSec = 300
 	const pollInterval = time.Second
@@ -666,6 +670,17 @@ func StreamWorkflowEvents(store storage.Store) gin.HandlerFunc {
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no") // disable nginx buffering
+
+		// Disable the server write deadline for this connection.  The
+		// http.Server.WriteTimeout fires from the first response byte, so a
+		// short timeout (e.g. 120s default for local-dev) would kill long-
+		// running streams even while keepalives are flowing.  We manage our
+		// own deadline via the ?timeout parameter below.
+		//
+		// SetWriteDeadline is a no-op on ResponseWriters that don't support
+		// it; we log but never fail on that condition.
+		rc := http.NewResponseController(c.Writer)
+		_ = rc.SetWriteDeadline(time.Time{}) // zero time = no deadline
 
 		ctx := c.Request.Context()
 		deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)

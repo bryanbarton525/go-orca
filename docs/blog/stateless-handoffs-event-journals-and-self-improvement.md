@@ -24,7 +24,7 @@ This matters for a few operational reasons:
 
 **Resume semantics.** When a workflow is paused and resumed via `POST /workflows/:id/resume`, the engine reads the workflow state (not replays the journal). But the journal is available for audit: you can see exactly which phases completed before the pause and what each one produced.
 
-**Streaming.** `GET /workflows/:id/events/stream` is an SSE endpoint that tails the journal in real time. The frontend or calling system does not poll — it subscribes and receives events as they are written. The `EventsSince` store method lets callers catch up from a known timestamp.
+**Streaming.** `GET /workflows/:id/stream` is an SSE endpoint that tails the journal in real time. The frontend or calling system does not poll — it subscribes and receives events as they are written. The `EventsSince` store method lets callers catch up from a known timestamp.
 
 **Debugging.** A failed workflow leaves its full journal intact. Every event that fired before the failure is queryable. The `refiner.suggestion` events — emitted after the Finalizer runs — are also in the journal, which means the quality signal from the inline refiner is part of the permanent record.
 

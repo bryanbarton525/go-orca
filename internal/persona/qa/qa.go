@@ -46,11 +46,21 @@ var outputSchema = map[string]any{
 					"description":    map[string]any{"type": "string"},
 					"recommendation": map[string]any{"type": "string"},
 				},
+				"required": []string{"severity", "component", "description", "recommendation"},
 			},
 		},
 		"warnings": map[string]any{
-			"type":  "array",
-			"items": map[string]any{"type": "object"},
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"severity":       map[string]any{"type": "string"},
+					"component":      map[string]any{"type": "string"},
+					"description":    map[string]any{"type": "string"},
+					"recommendation": map[string]any{"type": "string"},
+				},
+				"required": []string{"severity", "component", "description", "recommendation"},
+			},
 		},
 		"suggestions":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"coverage_score": map[string]any{"type": "integer"},
@@ -115,14 +125,24 @@ Respond with your JSON output.`,
 	}
 
 	// Collect blocking issue descriptions for the WorkflowState.
+	// Filter out empty objects that the LLM may emit when the schema's
+	// "required" enforcement is not honoured — an empty blocker would
+	// otherwise produce a "[]: " string that trips the engine's
+	// len(BlockingIssues) > 0 guard and causes a spurious remediation pass.
 	blocking := make([]string, 0, len(out.BlockingIssues))
 	for _, iss := range out.BlockingIssues {
+		if iss.Component == "" && iss.Description == "" {
+			continue // discard phantom empty blocker
+		}
 		blocking = append(blocking, fmt.Sprintf("[%s] %s: %s", iss.Component, iss.Description, iss.Recommendation))
 	}
 
-	// Merge warnings into suggestions list.
+	// Merge warnings into suggestions list (also skip empty items).
 	allSuggestions := make([]string, 0, len(out.Suggestions)+len(out.Warnings))
 	for _, w := range out.Warnings {
+		if w.Component == "" && w.Description == "" {
+			continue
+		}
 		allSuggestions = append(allSuggestions, fmt.Sprintf("[warning][%s] %s: %s", w.Component, w.Description, w.Recommendation))
 	}
 	allSuggestions = append(allSuggestions, out.Suggestions...)

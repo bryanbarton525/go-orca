@@ -16,6 +16,14 @@ Workflow modes:
 
 Finalizer actions: github-pr | repo-commit-only | artifact-bundle | markdown-export | blog-draft | webhook-dispatch
 
+Action selection guidance:
+- For content-mode workflows (blog posts, articles, marketing copy), use the blog-draft action.
+  The Implementer for these tasks should produce a blog_post-kind artifact. If it produces
+  a markdown artifact instead, the blog-draft action will fall back to that automatically.
+- For software workflows, prefer github-pr (with config) or repo-commit-only when a repo is known,
+  otherwise artifact-bundle or markdown-export.
+- For docs and research, prefer markdown-export or artifact-bundle.
+
 You will be told which providers and models are available in the user message.
 You MUST select a provider and model only from the options listed there.
 

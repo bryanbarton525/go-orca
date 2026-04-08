@@ -40,7 +40,7 @@ HTTP server settings.
 | `server.port` | integer | `8080` | TCP port |
 | `server.mode` | string | `"release"` | Gin mode: `debug` \| `release` \| `test` |
 | `server.read_timeout` | duration | `"30s"` | Maximum time to read the request |
-| `server.write_timeout` | duration | `"60s"` | Maximum time to write the response |
+| `server.write_timeout` | duration | `"60s"` | Maximum time to write the response. **Does not affect SSE streams** — the `StreamWorkflowEvents` handler disables the write deadline for long-lived connections and enforces its own deadline via the `?timeout` query parameter instead. |
 | `server.shutdown_timeout` | duration | `"15s"` | Grace period for in-flight requests on shutdown |
 | `server.trusted_proxies` | []string | `[]` | CIDR ranges or IPs of trusted reverse proxies |
 

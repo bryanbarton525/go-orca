@@ -193,7 +193,7 @@ Content workflow:
 }
 ```
 
-**Response 202**
+**Response 201**
 
 Returns the newly created `WorkflowState` (status will be `pending`).
 
@@ -301,26 +301,29 @@ Return all journal events for a workflow in insertion order. Events are immutabl
 
 **Response 200**
 ```json
-[
-  {
-    "id": "uuid",
-    "workflow_id": "uuid",
-    "tenant_id": "uuid",
-    "scope_id": "uuid",
-    "type": "state.transition",
-    "persona": "",
-    "payload": { "from": "pending", "to": "running" },
-    "created_at": "2024-01-01T00:00:01Z"
-  },
-  {
-    "id": "uuid",
-    "workflow_id": "uuid",
-    "type": "persona.started",
-    "persona": "director",
-    "payload": { "persona": "director", "provider_name": "openai", "model_name": "gpt-4o" },
-    "created_at": "2024-01-01T00:00:02Z"
-  }
-]
+{
+  "events": [
+    {
+      "id": "uuid",
+      "workflow_id": "uuid",
+      "tenant_id": "uuid",
+      "scope_id": "uuid",
+      "type": "state.transition",
+      "persona": "",
+      "payload": { "from": "pending", "to": "running" },
+      "created_at": "2024-01-01T00:00:01Z"
+    },
+    {
+      "id": "uuid",
+      "workflow_id": "uuid",
+      "type": "persona.started",
+      "persona": "director",
+      "payload": { "persona": "director", "provider_name": "openai", "model_name": "gpt-4o" },
+      "created_at": "2024-01-01T00:00:02Z"
+    }
+  ],
+  "count": 2
+}
 ```
 
 **Response 404** — workflow not found

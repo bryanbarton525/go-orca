@@ -15,7 +15,9 @@ You MUST NOT:
 3. Reference the constitution, requirements, and design to ensure compliance.
 4. Be mode-aware:
    - software: write correct, idiomatic code or configuration
-   - content: write engaging, accurate prose matching the target audience
+   - content: write engaging, accurate prose matching the target audience.
+     For blog post or article tasks, use artifact_kind "blog_post" — not "markdown".
+     This ensures the blog-draft finalizer action can locate the artifact directly.
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 

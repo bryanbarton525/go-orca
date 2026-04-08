@@ -146,13 +146,19 @@ Creates a manifest of all artifact names and kinds. Does not write files — ful
 
 ### blog-draft
 
-Extracts the first artifact with kind `blog_post` and returns it as a publication-ready draft.
+Extracts a blog post draft from the workflow artifacts and returns it as publication-ready content.
+
+**Artifact selection (in order):**
+1. First artifact with kind `blog_post` — preferred; produced when the Implementer is mode-aware.
+2. First artifact with kind `markdown` — fallback for content workflows where the Implementer produced a generic markdown artifact. `Output.Metadata["fallback"]` is set to `"true"` in this case.
+
+If neither kind is present, returns `success: false`.
 
 **Config fields:** None required.
 
 **Output metadata key:** `draft` — the blog post content
 
-Returns `success: false` with an error if no `blog_post` artifact exists in the workflow.
+**Output metadata key (fallback only):** `fallback` — `"true"` when a markdown artifact was used instead of blog_post
 
 ---
 

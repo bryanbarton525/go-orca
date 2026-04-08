@@ -160,6 +160,7 @@ func (a *BlogDraftAction) Kind() ActionKind    { return ActionBlogDraft }
 func (a *BlogDraftAction) Description() string { return "Produce a publication-ready blog post draft." }
 
 func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) {
+	// Prefer an explicit blog_post artifact.
 	for _, art := range in.Artifacts {
 		if art.Kind == state.ArtifactKindBlogPost {
 			return &Output{
@@ -172,10 +173,26 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 			}, nil
 		}
 	}
+	// Fall back to the first markdown artifact when no blog_post is present.
+	// This handles content-mode workflows where the Implementer produced a
+	// markdown artifact instead of explicitly tagging it as blog_post.
+	for _, art := range in.Artifacts {
+		if art.Kind == state.ArtifactKindMarkdown {
+			return &Output{
+				Action:  ActionBlogDraft,
+				Success: true,
+				Message: fmt.Sprintf("Blog draft (markdown fallback): %s", art.Name),
+				Metadata: map[string]string{
+					"draft":    art.Content,
+					"fallback": "true",
+				},
+			}, nil
+		}
+	}
 	return &Output{
 		Action:  ActionBlogDraft,
 		Success: false,
-		Error:   "no blog_post artifact found",
+		Error:   "no blog_post or markdown artifact found",
 	}, nil
 }
 
