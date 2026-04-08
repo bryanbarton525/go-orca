@@ -51,12 +51,22 @@ func Healthz() gin.HandlerFunc {
 	}
 }
 
-// Readyz checks the store connection (readiness probe).
+// Readyz checks the store connection and all registered providers (readiness probe).
 func Readyz(store storage.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := store.Ping(c.Request.Context()); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
 			return
+		}
+		for _, p := range common.All() {
+			if err := p.HealthCheck(c.Request.Context()); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"status":   "not ready",
+					"provider": p.Name(),
+					"error":    err.Error(),
+				})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	}

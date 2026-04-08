@@ -1,7 +1,7 @@
 # go-orca
 
 <p align="center">
-  <img src="internal/docs/images/go-orca.png" alt="go-orca logo" width="200" />
+  <img src="/docs/images/go-orca.png" alt="go-orca logo" width="200" />
 </p>
 
 <p align="center">

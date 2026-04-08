@@ -51,8 +51,8 @@ providers:
 
   ollama:
     enabled: true
-    host: "http://localhost:11434"
-    default_model: "llama3"
+    host: "https://ollama.barton.local:11434"
+    default_model: "gemma4:e4b"
     timeout: "180s"        # local models can be slow; increase for large models
 
   copilot:

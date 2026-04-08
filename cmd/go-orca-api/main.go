@@ -212,6 +212,7 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 		} else {
 			common.Register(p)
 			log.Info("provider registered", zap.String("name", "openai"))
+			checkProviderReachability(p, log)
 		}
 	}
 
@@ -222,6 +223,7 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 		} else {
 			common.Register(p)
 			log.Info("provider registered", zap.String("name", "ollama"))
+			checkProviderReachability(p, log)
 		}
 	}
 
@@ -232,7 +234,24 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 		} else {
 			common.Register(p)
 			log.Info("provider registered", zap.String("name", "copilot"))
+			checkProviderReachability(p, log)
 		}
+	}
+}
+
+// checkProviderReachability performs a best-effort connectivity check against a
+// registered provider. A failure is logged as a warning but never prevents
+// startup — the provider may become reachable after the server is up.
+func checkProviderReachability(p common.Provider, log *zap.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := p.HealthCheck(ctx); err != nil {
+		log.Warn("provider reachability check failed — provider registered but may not be usable",
+			zap.String("provider", p.Name()),
+			zap.Error(err),
+		)
+	} else {
+		log.Info("provider reachability check passed", zap.String("provider", p.Name()))
 	}
 }
 
