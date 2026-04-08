@@ -19,12 +19,15 @@ go-orca is a backend service that orchestrates multi-agent AI workflows through 
 
 After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration. The Refiner receives the full workflow history and produces structured improvement proposals (component, problem, proposed fix, priority, health score) that tell you exactly what to tune and where. A standalone async Refiner persona can also analyse patterns across many historical workflows at once.
 
+Each persona operates within a strict role contract enforced by the engine: only the Architect may produce tasks, only the Implementer may produce artifacts, and QA is validation-only. Violations are discarded and recorded as suggestions rather than silently corrupting state.
+
 ## Features
 
 - **Automatic self-improvement** — after every workflow the Finalizer runs an inline Refiner retrospective that produces structured improvement proposals: component name, problem, proposed fix, priority, and an overall health score (0–100)
 - **Cross-workflow pattern detection** — a standalone async Refiner persona analyses historical workflow events across many runs to identify recurring issues that single-run retrospectives cannot see
-- **Structured persona pipeline** — six specialist roles, each with a distinct purpose and typed output
-- **QA retry loop** — blocking issues automatically re-invoke the Implementer before re-running QA
+- **Structured persona pipeline** — six specialist roles, each with a distinct purpose and typed output; role contracts enforced at the engine layer
+- **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; the Implementer executes them; QA re-validates; the loop repeats up to `MaxQARetries` times
+- **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
 - **Three LLM backends** — OpenAI, Ollama (local), and GitHub Copilot
 - **Multi-tenancy and scoping** — tenant + scope hierarchy (global → org → team) with per-scope customizations
@@ -116,7 +119,7 @@ curl -N http://localhost:8080/workflows/<id>/stream
 | Document | Description |
 |---|---|
 | [Architecture](docs/architecture.md) | System overview, component map, data flow |
-| [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, QA retry loop, pause/resume, state machine |
+| [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, QA remediation loop, role enforcement, execution progress, pause/resume |
 | [API Reference](docs/api.md) | All HTTP endpoints, request/response schemas, headers |
 | [Configuration](docs/configuration.md) | Every config key, default, env var override |
 | [Providers](docs/providers.md) | OpenAI, Ollama, GitHub Copilot — setup and config |

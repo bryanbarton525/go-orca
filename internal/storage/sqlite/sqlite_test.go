@@ -190,7 +190,83 @@ func TestWorkflowCRUD(t *testing.T) {
 	}
 }
 
-// ─── Event journal ────────────────────────────────────────────────────────────
+// ─── Workflow planning fields (v004) ─────────────────────────────────────────
+
+// TestWorkflowPlanningFields verifies that the four fields introduced in schema
+// v004 (AllSuggestions, PersonaPromptSnapshot, RequiredPersonas, FinalizerAction)
+// survive a full SaveWorkflow → GetWorkflow round-trip.
+func TestWorkflowPlanningFields(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	tid, sid := setupTenantScope(t, s)
+
+	ws := state.NewWorkflowState(tid, sid, "planning field test")
+
+	// Populate the new fields.
+	ws.AllSuggestions = []string{"suggestion-A", "suggestion-B"}
+	ws.PersonaPromptSnapshot = map[string]string{
+		"director": "You are the Director.",
+		"qa":       "You are the QA.",
+	}
+	ws.RequiredPersonas = []state.PersonaKind{
+		state.PersonaProjectMgr,
+		state.PersonaFinalizer,
+	}
+	ws.FinalizerAction = "github-pr"
+
+	if err := s.CreateWorkflow(ctx, ws); err != nil {
+		t.Fatalf("CreateWorkflow: %v", err)
+	}
+
+	got, err := s.GetWorkflow(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflow: %v", err)
+	}
+
+	// AllSuggestions
+	if len(got.AllSuggestions) != 2 {
+		t.Errorf("AllSuggestions len: got %d, want 2", len(got.AllSuggestions))
+	} else if got.AllSuggestions[0] != "suggestion-A" {
+		t.Errorf("AllSuggestions[0]: got %q, want %q", got.AllSuggestions[0], "suggestion-A")
+	}
+
+	// PersonaPromptSnapshot
+	if len(got.PersonaPromptSnapshot) != 2 {
+		t.Errorf("PersonaPromptSnapshot len: got %d, want 2", len(got.PersonaPromptSnapshot))
+	} else if got.PersonaPromptSnapshot["director"] != "You are the Director." {
+		t.Errorf("PersonaPromptSnapshot[director]: got %q", got.PersonaPromptSnapshot["director"])
+	}
+
+	// RequiredPersonas
+	if len(got.RequiredPersonas) != 2 {
+		t.Errorf("RequiredPersonas len: got %d, want 2", len(got.RequiredPersonas))
+	} else if got.RequiredPersonas[1] != state.PersonaFinalizer {
+		t.Errorf("RequiredPersonas[1]: got %q, want %q", got.RequiredPersonas[1], state.PersonaFinalizer)
+	}
+
+	// FinalizerAction
+	if got.FinalizerAction != "github-pr" {
+		t.Errorf("FinalizerAction: got %q, want %q", got.FinalizerAction, "github-pr")
+	}
+
+	// Verify SaveWorkflow (upsert) also persists the fields.
+	ws.AllSuggestions = append(ws.AllSuggestions, "suggestion-C")
+	ws.FinalizerAction = "artifact-bundle"
+	if err := s.SaveWorkflow(ctx, ws); err != nil {
+		t.Fatalf("SaveWorkflow: %v", err)
+	}
+
+	got2, err := s.GetWorkflow(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflow after SaveWorkflow: %v", err)
+	}
+	if len(got2.AllSuggestions) != 3 {
+		t.Errorf("AllSuggestions after save len: got %d, want 3", len(got2.AllSuggestions))
+	}
+	if got2.FinalizerAction != "artifact-bundle" {
+		t.Errorf("FinalizerAction after save: got %q, want %q", got2.FinalizerAction, "artifact-bundle")
+	}
+}
 
 func TestEventJournal(t *testing.T) {
 	ctx := context.Background()

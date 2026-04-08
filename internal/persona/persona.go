@@ -44,6 +44,12 @@ func Get(kind state.PersonaKind) (Persona, bool) {
 	return p, ok
 }
 
+// Unregister removes a persona from the global registry.
+// It is a no-op if the kind was not registered.  Primarily for use in tests.
+func Unregister(kind state.PersonaKind) {
+	delete(registry, kind)
+}
+
 // All returns all registered personas.
 func All() []Persona {
 	out := make([]Persona, 0, len(registry))

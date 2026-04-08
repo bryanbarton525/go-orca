@@ -8,31 +8,10 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/google/uuid"
 )
-
-const systemPrompt = `You are the Implementer persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Execute the assigned task fully and correctly.
-2. Produce an artifact for each task: code, markdown, config, documentation, blog post, etc.
-3. Reference the constitution, requirements, and design to ensure compliance.
-4. Be mode-aware:
-   - software: write correct, idiomatic code or configuration
-   - content: write engaging, accurate prose matching the target audience
-   - docs: write clear, structured technical documentation
-   - ops: write runbooks, deployment scripts, or configuration
-
-Always respond with valid JSON matching this schema:
-{
-  "artifact_kind": "code|document|markdown|config|report|blog_post",
-  "artifact_name": "...",
-  "artifact_description": "...",
-  "content": "...",
-  "summary": "...",
-  "issues": []
-}`
 
 // implOutput is the expected JSON shape from the Implementer.
 type implOutput struct {
@@ -65,7 +44,7 @@ type Implementer struct {
 
 // New returns a new Implementer persona.
 func New() *Implementer {
-	return &Implementer{exec: base.NewExecutor(systemPrompt, "implementer_output", outputSchema)}
+	return &Implementer{exec: base.NewExecutor("implementer_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -92,13 +71,15 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 	}
 	task := packet.Tasks[0]
 
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyImplementer]
+
 	ctx_ := base.BuildHandoffContext(packet)
 	userPrompt := fmt.Sprintf(
 		"%s\n\n## Current Task\nTitle: %s\nDescription: %s\n\nImplement this task and produce your JSON output.",
 		ctx_, task.Title, task.Description,
 	)
 
-	raw, err := im.exec.Run(ctx, packet, userPrompt)
+	raw, err := im.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("implementer: execution error: %w", err)
 	}

@@ -16,12 +16,12 @@ Project Manager
 Architect
    │
    ▼
-Implementer  ◄──────────────┐
-   │                         │  re-run if QA finds blocking issues
-   ▼                         │
-QA ──── blocking issues? ────┘
-   │
-   │ (passes or max retries exhausted)
+Implementer  ◄──────────────────────────┐
+   │                                     │  Implementer executes new tasks
+   ▼                                     │  from Architect's remediation plan
+QA ──── blocking issues? ──► Architect ──┘
+   │                         (re-plans)
+   │ (passes or max QA cycles exhausted)
    ▼
 Finalizer
 ```
@@ -39,21 +39,68 @@ Finalizer
 
 The `refiner` persona exists in the registry but is invoked by the Finalizer internally for a retrospective pass — it is not a separate top-level phase.
 
-## QA Retry Loop
+## QA / Remediation Loop
 
-The QA phase can repeat up to `MaxQARetries` times (default: 2):
+The QA phase runs inside a loop capped at `MaxQARetries` (default: 2). When QA raises blocking issues, the **Architect** leads remediation — not the Implementer directly:
 
 ```
-attempt 0..MaxQARetries:
+for qaCycle = 1 to MaxQARetries+1:
   run QA persona
+  ws.Execution.QACycle = qaCycle
+
   if ws.BlockingIssues is empty → break (QA passed)
-  if attempt == MaxQARetries   → fail workflow ("N blocking issues after K retries")
-  re-run Implementer to address blocking issues
+  if qaCycle == MaxQARetries+1  → fail workflow ("N blocking issues after K QA cycles")
+
+  // Architect remediation
+  run Architect with IsRemediation=true
+    → Architect reads ## QA Blocking Issues and produces targeted new tasks
+    → Engine validates: only tasks with assigned_to=implementer accepted
+    → New tasks appended to ws.Tasks with RemediationSource="qa_remediation"
+    → EventTaskCreated emitted per new task
+  ws.Execution.RemediationAttempt++
+
+  // Implementer re-run on new tasks only
+  run Implementer (skips all tasks not assigned_to=implementer)
+
   clear ws.BlockingIssues
   check pause
 ```
 
-If `MaxQARetries` attempts are exhausted and blocking issues remain, the engine transitions the workflow to `failed`.
+Completed tasks from prior iterations are preserved for audit — only new Pending tasks from the Architect remediation pass are executed.
+
+If `MaxQARetries` QA cycles complete with blocking issues still present, the engine transitions the workflow to `failed`.
+
+## Role Enforcement (applyOutput)
+
+`applyOutput` enforces strict output contracts after every persona invocation:
+
+| Output field | Allowed persona | Violation handling |
+|---|---|---|
+| `Design`, `Tasks[]` | `architect` only | Output silently discarded; warning appended to `AllSuggestions` |
+| `Artifacts[]` | `implementer` only | Output silently discarded; warning appended to `AllSuggestions` |
+| `Constitution`, `Requirements` | `project_manager` only | Output silently discarded; warning appended to `AllSuggestions` |
+
+Warnings follow the pattern: `role-enforcement: persona <kind> produced <field> which is not permitted; output discarded`.
+
+## Task Ownership
+
+Every `Task` carries an `AssignedTo` field (a `PersonaKind`). `runImplementerPhase` skips any task whose `AssignedTo` is not `implementer`. This prevents the Implementer from executing tasks intended for other phases and ensures QA-remediation tasks created by the Architect are correctly routed.
+
+## Execution Progress
+
+`WorkflowState.Execution` is updated at every persona and task boundary and persisted to storage immediately:
+
+```go
+type Execution struct {
+    CurrentPersona     PersonaKind // most-recently active persona
+    ActiveTaskID       string      // task currently running under Implementer
+    ActiveTaskTitle    string
+    QACycle            int         // current QA pass (1-based)
+    RemediationAttempt int         // Architect remediation passes so far
+}
+```
+
+Poll `GET /workflows/:id` to read in-flight progress without subscribing to the SSE stream.
 
 ## HandoffPacket
 
@@ -193,21 +240,27 @@ The Director persona selects the mode from the user's request; it can also be ov
 
 ## Implementer: Per-Task Execution
 
-The Implementer phase iterates over all tasks with status `pending` or `ready`:
+The Implementer phase iterates over all tasks with status `pending` or `ready`, but **only executes tasks whose `assigned_to` field is `implementer`**. Tasks assigned to other personas are skipped without modification.
 
 ```go
 for i := range ws.Tasks {
     t := &ws.Tasks[i]
+    if t.AssignedTo != PersonaImplementer {
+        continue // skip tasks not owned by Implementer
+    }
     if t.Status != TaskStatusReady && t.Status != TaskStatusPending {
         continue
     }
+    // Update ws.Execution.ActiveTaskID / ActiveTaskTitle
     // Build a HandoffPacket with packet.Tasks = []Task{*t}
     // Execute Implementer persona
     // Mark task completed, append artifacts
 }
 ```
 
-Each task gets its own isolated `HandoffPacket` containing only that single task. Summaries are appended per task: `[taskID] summary`.
+Each task gets its own isolated `HandoffPacket` containing only that single task. `ws.Execution.ActiveTaskID` and `ActiveTaskTitle` are updated before each LLM call so `GET /workflows/:id` reflects which task is running. Summaries are appended per task: `[taskID] summary`.
+
+During QA remediation, the Architect appends new tasks with `RemediationSource: "qa_remediation"` and `assigned_to: implementer`. `runImplementerPhase` naturally picks these up on the next Implementer pass without special handling.
 
 ## Scheduler
 
@@ -233,3 +286,6 @@ Internal queue capacity = `Concurrency × 4`. `Enqueue` returns an error immedia
 | `persona_failed` | After `persona.Execute` returns an error |
 | `task_started` | Before Implementer executes a single task |
 | `task_completed` | After Implementer finishes a single task |
+| `task_failed` | After Implementer returns an error for a single task |
+| `task_created` | When Architect appends a new remediation task during QA |
+| `artifact_produced` | After each artifact is committed from Implementer output |

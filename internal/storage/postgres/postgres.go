@@ -84,14 +84,16 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		  (id, tenant_id, scope_id, status, mode, title, request,
 		   provider_name, model_name, constitution, requirements, design,
 		   tasks, artifacts, finalization, summaries, blocking_issues,
-		   created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   created_at, updated_at, execution)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		payload.constitution, payload.requirements, payload.design,
 		payload.tasks, payload.artifacts, payload.finalization,
 		payload.summaries, payload.blockingIssues,
-		ws.CreatedAt, ws.UpdatedAt,
+		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
+		ws.CreatedAt, ws.UpdatedAt, payload.execution,
 	)
 	return err
 }
@@ -102,7 +104,8 @@ func (s *Store) GetWorkflow(ctx context.Context, id string) (*state.WorkflowStat
 		       provider_name, model_name, error_message,
 		       constitution, requirements, design, tasks, artifacts,
 		       finalization, summaries, blocking_issues,
-		       created_at, updated_at, started_at, completed_at
+		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		       created_at, updated_at, started_at, completed_at, execution
 		FROM workflows WHERE id = $1`, id)
 
 	return scanWorkflow(row)
@@ -119,21 +122,25 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   provider_name, model_name, error_message,
 		   constitution, requirements, design, tasks, artifacts,
 		   finalization, summaries, blocking_issues,
-		   created_at, updated_at, started_at, completed_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   created_at, updated_at, started_at, completed_at, execution)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (id) DO UPDATE SET
 		  status=$4, mode=$5, title=$6,
 		  provider_name=$8, model_name=$9, error_message=$10,
 		  constitution=$11, requirements=$12, design=$13,
 		  tasks=$14, artifacts=$15, finalization=$16,
 		  summaries=$17, blocking_issues=$18,
-		  updated_at=$20, started_at=$21, completed_at=$22`,
+		  all_suggestions=$19, persona_prompt_snapshot=$20,
+		  required_personas=$21, finalizer_action=$22,
+		  updated_at=$24, started_at=$25, completed_at=$26, execution=$27`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName, ws.ErrorMessage,
 		payload.constitution, payload.requirements, payload.design,
 		payload.tasks, payload.artifacts, payload.finalization,
 		payload.summaries, payload.blockingIssues,
-		ws.CreatedAt, ws.UpdatedAt, ws.StartedAt, ws.CompletedAt,
+		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
+		ws.CreatedAt, ws.UpdatedAt, ws.StartedAt, ws.CompletedAt, payload.execution,
 	)
 	return err
 }
@@ -144,7 +151,8 @@ func (s *Store) ListWorkflows(ctx context.Context, tenantID string, limit, offse
 		       provider_name, model_name, error_message,
 		       constitution, requirements, design, tasks, artifacts,
 		       finalization, summaries, blocking_issues,
-		       created_at, updated_at, started_at, completed_at
+		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		       created_at, updated_at, started_at, completed_at, execution
 		FROM workflows
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC
@@ -347,14 +355,18 @@ func (s *Store) DeleteScope(ctx context.Context, id string) error {
 
 // workflowPayload holds marshaled JSONB fields.
 type workflowPayload struct {
-	constitution   []byte
-	requirements   []byte
-	design         []byte
-	tasks          []byte
-	artifacts      []byte
-	finalization   []byte
-	summaries      []byte
-	blockingIssues []byte
+	constitution          []byte
+	requirements          []byte
+	design                []byte
+	tasks                 []byte
+	artifacts             []byte
+	finalization          []byte
+	summaries             []byte
+	blockingIssues        []byte
+	allSuggestions        []byte
+	personaPromptSnapshot []byte
+	requiredPersonas      []byte
+	execution             []byte
 }
 
 func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
@@ -392,6 +404,18 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 	if p.blockingIssues, err = json.Marshal(ws.BlockingIssues); err != nil {
 		return p, err
 	}
+	if p.allSuggestions, err = json.Marshal(ws.AllSuggestions); err != nil {
+		return p, err
+	}
+	if p.personaPromptSnapshot, err = json.Marshal(ws.PersonaPromptSnapshot); err != nil {
+		return p, err
+	}
+	if p.requiredPersonas, err = json.Marshal(ws.RequiredPersonas); err != nil {
+		return p, err
+	}
+	if p.execution, err = json.Marshal(ws.Execution); err != nil {
+		return p, err
+	}
 	return p, nil
 }
 
@@ -403,14 +427,18 @@ type scanner interface {
 func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	ws := &state.WorkflowState{}
 	var (
-		constitution   []byte
-		requirements   []byte
-		design         []byte
-		tasks          []byte
-		artifacts      []byte
-		finalization   []byte
-		summaries      []byte
-		blockingIssues []byte
+		constitution          []byte
+		requirements          []byte
+		design                []byte
+		tasks                 []byte
+		artifacts             []byte
+		finalization          []byte
+		summaries             []byte
+		blockingIssues        []byte
+		allSuggestions        []byte
+		personaPromptSnapshot []byte
+		requiredPersonas      []byte
+		execution             []byte
 	)
 
 	err := row.Scan(
@@ -418,7 +446,8 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&ws.ProviderName, &ws.ModelName, &ws.ErrorMessage,
 		&constitution, &requirements, &design, &tasks, &artifacts,
 		&finalization, &summaries, &blockingIssues,
-		&ws.CreatedAt, &ws.UpdatedAt, &ws.StartedAt, &ws.CompletedAt,
+		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &ws.FinalizerAction,
+		&ws.CreatedAt, &ws.UpdatedAt, &ws.StartedAt, &ws.CompletedAt, &execution,
 	)
 	if err != nil {
 		return nil, err
@@ -439,6 +468,10 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	_ = unmarshal(finalization, &ws.Finalization)
 	_ = unmarshal(summaries, &ws.Summaries)
 	_ = unmarshal(blockingIssues, &ws.BlockingIssues)
+	_ = unmarshal(allSuggestions, &ws.AllSuggestions)
+	_ = unmarshal(personaPromptSnapshot, &ws.PersonaPromptSnapshot)
+	_ = unmarshal(requiredPersonas, &ws.RequiredPersonas)
+	_ = unmarshal(execution, &ws.Execution)
 
 	return ws, nil
 }

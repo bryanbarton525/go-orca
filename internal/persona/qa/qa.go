@@ -8,40 +8,9 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 )
-
-const systemPrompt = `You are the QA persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Validate every artifact produced by the Implementer against:
-   - The constitution (vision, goals, constraints, acceptance criteria)
-   - The requirements (functional and non-functional)
-   - The design (architecture, components, decisions)
-2. Identify blocking issues that MUST be resolved before delivery.
-3. Identify non-blocking suggestions that are improvements but not blockers.
-4. Assess overall quality and readiness for finalization.
-5. Be thorough but fair — do not invent issues that do not exist.
-
-Severity levels:
-- "blocking": workflow cannot proceed to Finalizer until resolved
-- "warning": should be addressed but does not block delivery
-- "info": informational, low-priority improvement
-
-Always respond with valid JSON matching this schema:
-{
-  "passed": true|false,
-  "blocking_issues": [
-    {"severity": "blocking", "component": "...", "description": "...", "recommendation": "..."}
-  ],
-  "warnings": [
-    {"severity": "warning", "component": "...", "description": "...", "recommendation": "..."}
-  ],
-  "suggestions": ["..."],
-  "coverage_score": 0-100,
-  "quality_score": 0-100,
-  "summary": "..."
-}`
 
 // qaIssue is a single issue found by the QA persona.
 type qaIssue struct {
@@ -98,7 +67,7 @@ type QA struct {
 
 // New returns a new QA persona.
 func New() *QA {
-	return &QA{exec: base.NewExecutor(systemPrompt, "qa_output", outputSchema)}
+	return &QA{exec: base.NewExecutor("qa_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -115,6 +84,8 @@ func (q *QA) Description() string {
 // Execute implements Persona.
 func (q *QA) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	_ = time.Now()
+
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyQA]
 
 	handoffCtx := base.BuildHandoffContext(packet)
 
@@ -133,7 +104,7 @@ Respond with your JSON output.`,
 		artifactSummary,
 	)
 
-	raw, err := q.exec.Run(ctx, packet, userPrompt)
+	raw, err := q.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("qa: execution error: %w", err)
 	}

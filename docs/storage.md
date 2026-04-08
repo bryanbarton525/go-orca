@@ -83,7 +83,17 @@ SQLite does not use `max_open_conns` or `max_idle_conns` in the same way as Post
 
 ### Migrations
 
-When `auto_migrate: true`, the SQLite store runs `s.Migrate()` at startup. This applies all pending SQL migration files embedded in the binary (no external path needed for SQLite).
+When `auto_migrate: true`, the SQLite store runs `s.Migrate()` at startup. This applies the base DDL and then idempotently adds any new columns via `ALTER TABLE` statements — duplicate-column errors are silently ignored, so it is safe to run against an existing database.
+
+**Schema versions**
+
+| Version | Change |
+|---|---|
+| v001 | Initial schema: `tenants`, `scopes`, `workflows`, `workflow_events` |
+| v002 | `scope_settings` table |
+| v003 | `task_edges` on `workflows` |
+| v004 | `all_suggestions`, `persona_prompt_snapshot`, `required_personas`, `finalizer_action` columns |
+| v005 | `execution` column (`TEXT NOT NULL DEFAULT '{}'`) — stores in-flight progress |
 
 ---
 

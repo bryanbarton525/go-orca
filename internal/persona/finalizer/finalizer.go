@@ -10,61 +10,9 @@ import (
 	"strings"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 )
-
-const systemPrompt = `You are the Finalizer persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Review the complete workflow history (constitution, requirements, design, tasks, artifacts).
-2. Determine the appropriate delivery action for the workflow mode:
-   - github-pr:       open a pull request with all artifacts
-   - repo-commit-only: commit artifacts to the repo without opening a PR
-   - artifact-bundle: package artifacts into a downloadable archive
-   - markdown-export: render a single cohesive markdown document
-   - blog-draft:      produce a publication-ready blog post draft
-   - webhook-dispatch: POST artifacts and metadata to a configured webhook URL
-3. Produce a finalization summary describing what was delivered and where.
-4. Identify any final delivery links, reference URLs, or metadata.
-
-Always respond with valid JSON matching this schema:
-{
-  "delivery_action": "github-pr|repo-commit-only|artifact-bundle|markdown-export|blog-draft|webhook-dispatch",
-  "summary": "...",
-  "links": ["..."],
-  "metadata": {"key": "value"},
-  "suggestions": ["..."],
-  "delivery_notes": "..."
-}`
-
-const refinerSystemPrompt = `You are the Refiner persona in the gorca workflow orchestration system.
-
-You are performing a synchronous retrospective pass at the end of a completed workflow.
-
-Your responsibilities:
-1. Analyze the full workflow history: all persona summaries, blocking issues, suggestions, and artifacts.
-2. Identify concrete improvements for agents, skills, prompts, or persona behavior.
-3. Be specific: reference the persona or component by name, describe the exact problem, and propose a concrete fix.
-4. Focus on systemic improvements, not one-off corrections.
-5. When the component_type is "skill", "prompt", or "agent", populate the "content" field with the
-   complete verbatim file content that should be written to disk so this improvement takes effect
-   in future workflow runs.  For "persona" improvements (behavior changes), leave "content" empty.
-
-Always respond with valid JSON matching this schema:
-{
-  "improvements": [
-    {
-      "component_type": "agent|skill|prompt|persona",
-      "component_name": "...",
-      "problem": "...",
-      "proposed_fix": "...",
-      "content": "...",
-      "priority": "high|medium|low"
-    }
-  ],
-  "overall_assessment": "...",
-  "summary": "..."
-}`
 
 // finalizerOutput is the expected JSON shape from the Finalizer.
 type finalizerOutput struct {
@@ -130,8 +78,8 @@ type Finalizer struct {
 // New returns a new Finalizer persona.
 func New() *Finalizer {
 	return &Finalizer{
-		exec:        base.NewExecutor(systemPrompt, "finalizer_output", finalizerSchema),
-		refinerExec: base.NewExecutor(refinerSystemPrompt, "refiner_output", refinerSchema),
+		exec:        base.NewExecutor("finalizer_output", finalizerSchema),
+		refinerExec: base.NewExecutor("refiner_output", refinerSchema),
 	}
 }
 
@@ -153,22 +101,32 @@ func (f *Finalizer) Description() string {
 func (f *Finalizer) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	handoffCtx := base.BuildHandoffContext(packet)
 
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyFinalizer]
+
 	// ── Phase 1: Finalization ────────────────────────────────────────────────
+	// Build the finalizer user prompt, including the Director-preferred action
+	// when one was set so the LLM understands the intent.
+	preferredActionHint := ""
+	if packet.FinalizerAction != "" {
+		preferredActionHint = fmt.Sprintf("\nPreferred delivery action (selected by Director): %s\n", packet.FinalizerAction)
+	}
+
 	finalPrompt := fmt.Sprintf(
 		`%s
 
 ## Artifact Inventory
 %s
-
+%s
 Based on the workflow mode (%s) and the design's delivery target (%s),
 select the most appropriate delivery action and produce your finalization JSON output.`,
 		handoffCtx,
 		buildArtifactInventory(packet.Artifacts),
+		preferredActionHint,
 		packet.Mode,
 		deliveryTargetHint(packet.Design),
 	)
 
-	rawFinal, err := f.exec.Run(ctx, packet, finalPrompt)
+	rawFinal, err := f.exec.Run(ctx, packet, systemPrompt, finalPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("finalizer: execution error: %w", err)
 	}
@@ -176,6 +134,12 @@ select the most appropriate delivery action and produce your finalization JSON o
 	var finalOut finalizerOutput
 	if err := base.ParseJSON(rawFinal, &finalOut); err != nil {
 		return nil, fmt.Errorf("finalizer: parse error: %w", err)
+	}
+
+	// Director-selected action overrides the LLM's choice immediately so the
+	// delivery action cannot drift from the Director's intent.
+	if packet.FinalizerAction != "" {
+		finalOut.DeliveryAction = packet.FinalizerAction
 	}
 
 	// ── Phase 2: Refiner retrospective ───────────────────────────────────────
@@ -234,7 +198,7 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 		strings.Join(packet.AllSuggestions, "\n"),
 	)
 
-	raw, err := f.refinerExec.Run(ctx, refinerPacket, refinerPrompt)
+	raw, err := f.refinerExec.Run(ctx, refinerPacket, packet.PersonaPromptSnapshot[prompts.KeyFinalizerRefiner], refinerPrompt)
 	if err != nil {
 		return nil, nil, ""
 	}

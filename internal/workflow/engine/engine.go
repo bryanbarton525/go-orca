@@ -4,9 +4,13 @@
 //
 //	Director → ProjectManager → Architect → Implementer(s) → QA → Finalizer
 //
-// QA failures with blocking issues will re-invoke the Implementer (up to a
-// configured retry limit) before proceeding to Finalizer. The engine writes
-// all state transitions and persona events to the journal.
+// When QA reports blocking issues the Architect is re-invoked to produce a
+// targeted remediation task set, then the Implementer executes those tasks,
+// and QA runs again.  This loop repeats up to MaxQARetries times.  Each
+// persona is enforcement-gated: only Implementer may produce Artifacts, only
+// Architect may produce Design/Tasks, and Implementer only executes tasks
+// whose AssignedTo field is "implementer".  The engine writes all state
+// transitions and persona events to the journal.
 package engine
 
 import (
@@ -19,6 +23,7 @@ import (
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
@@ -69,6 +74,11 @@ type Options struct {
 	// When empty, improvements are stored as suggestion strings only.
 	// Defaults to empty (disabled).
 	ImprovementsRoot string
+
+	// PersonaPromptRoot is the directory containing the base persona prompt
+	// markdown files (e.g. director.md, project_manager.md …).
+	// Defaults to prompts.DefaultRoot ("promos/personas") when empty.
+	PersonaPromptRoot string
 }
 
 func (o *Options) applyDefaults() {
@@ -139,6 +149,25 @@ func (e *Engine) checkPause(ctx context.Context, ws *state.WorkflowState) error 
 }
 
 func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
+	// ── Prompt snapshot ───────────────────────────────────────────────────────
+	// Load persona prompts once at workflow start and persist the snapshot so
+	// that resume, retry, and replay use identical prompt text regardless of
+	// subsequent edits to the files on disk.
+	if len(ws.PersonaPromptSnapshot) == 0 {
+		promptRoot := e.opts.PersonaPromptRoot
+		if promptRoot == "" {
+			promptRoot = prompts.DefaultRoot
+		}
+		snapshot, err := prompts.Load(promptRoot)
+		if err != nil {
+			return fmt.Errorf("engine: load persona prompts: %w", err)
+		}
+		ws.PersonaPromptSnapshot = snapshot
+		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+			return fmt.Errorf("engine: save prompt snapshot: %w", err)
+		}
+	}
+
 	// Snapshot customizations once at workflow start so live changes don't
 	// affect a running workflow.
 	var snap *customization.Snapshot
@@ -159,7 +188,25 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		return ws.Summaries != nil && ws.Summaries[kind] != ""
 	}
 
-	// Phase 1: Director
+	// personaRequired returns true when the given kind should run.  Director
+	// is always required.  All others are gated by ws.RequiredPersonas when
+	// that list is non-empty (it is populated by the Director after Phase 1).
+	personaRequired := func(kind state.PersonaKind) bool {
+		if kind == state.PersonaDirector {
+			return true
+		}
+		if len(ws.RequiredPersonas) == 0 {
+			return true // Director hasn't run yet or defaulted — include all
+		}
+		for _, k := range ws.RequiredPersonas {
+			if k == kind {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Phase 1: Director (always mandatory)
 	if !phaseComplete(state.PersonaDirector) {
 		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
 			return fmt.Errorf("director phase: %w", err)
@@ -170,7 +217,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	}
 
 	// Phase 2: Project Manager
-	if !phaseComplete(state.PersonaProjectMgr) {
+	if personaRequired(state.PersonaProjectMgr) && !phaseComplete(state.PersonaProjectMgr) {
 		if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
 			return fmt.Errorf("pm phase: %w", err)
 		}
@@ -180,7 +227,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	}
 
 	// Phase 3: Architect
-	if !phaseComplete(state.PersonaArchitect) {
+	if personaRequired(state.PersonaArchitect) && !phaseComplete(state.PersonaArchitect) {
 		if err := e.runPersona(ctx, ws, state.PersonaArchitect, snap); err != nil {
 			return fmt.Errorf("architect phase: %w", err)
 		}
@@ -190,47 +237,82 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	}
 
 	// Phase 4: Implementer — runs once per ready/pending task.
-	// Any tasks already marked completed survive the skip — only unfinished
-	// tasks are sent to the LLM.
-	if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
-		return fmt.Errorf("implementer phase: %w", err)
-	}
-	if err := e.checkPause(ctx, ws); err != nil {
-		return err
-	}
-
-	// Phase 5: QA — retry loop (skip entirely if QA already passed in a prior run)
-	if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
-		for attempt := 0; attempt <= e.opts.MaxQARetries; attempt++ {
-			if err := e.runPersona(ctx, ws, state.PersonaQA, snap); err != nil {
-				return fmt.Errorf("qa phase (attempt %d): %w", attempt+1, err)
-			}
-
-			if len(ws.BlockingIssues) == 0 {
-				break // QA passed
-			}
-
-			if attempt == e.opts.MaxQARetries {
-				return fmt.Errorf("qa: %d blocking issues remain after %d retries: %v",
-					len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
-			}
-
-			// Re-run Implementer to address blocking issues.
-			if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
-				return fmt.Errorf("implementer re-run (attempt %d): %w", attempt+1, err)
-			}
-			if err := e.checkPause(ctx, ws); err != nil {
-				return err
-			}
-			ws.BlockingIssues = nil // reset before next QA pass
+	if personaRequired(state.PersonaImplementer) {
+		if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
+			return fmt.Errorf("implementer phase: %w", err)
+		}
+		if err := e.checkPause(ctx, ws); err != nil {
+			return err
 		}
 	}
-	if err := e.checkPause(ctx, ws); err != nil {
-		return err
+
+	// Phase 5: QA — architect-led remediation loop.
+	//
+	// On each QA pass:
+	//   1. QA validates; if no blocking issues, advance to Finalizer.
+	//   2. On blockers, Architect is called with the issues to produce
+	//      a targeted remediation task set assigned to Implementer only.
+	//   3. Implementer runs those new tasks.
+	//   4. QA runs again.  Repeats up to MaxQARetries times.
+	if personaRequired(state.PersonaQA) {
+		if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
+			for qaCycle := 1; qaCycle <= e.opts.MaxQARetries+1; qaCycle++ {
+				// Update visible progress before QA runs.
+				ws.Execution.CurrentPersona = state.PersonaQA
+				ws.Execution.QACycle = qaCycle
+				ws.Execution.ActiveTaskID = ""
+				ws.Execution.ActiveTaskTitle = ""
+				_ = e.store.SaveWorkflow(ctx, ws)
+
+				if err := e.runPersona(ctx, ws, state.PersonaQA, snap); err != nil {
+					return fmt.Errorf("qa phase (cycle %d): %w", qaCycle, err)
+				}
+
+				if len(ws.BlockingIssues) == 0 {
+					break // QA passed
+				}
+
+				if qaCycle > e.opts.MaxQARetries {
+					return fmt.Errorf("qa: %d blocking issues remain after %d remediation cycles: %v",
+						len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
+				}
+
+				// Architect-led remediation: re-plan with the current blocking issues.
+				if personaRequired(state.PersonaArchitect) && personaRequired(state.PersonaImplementer) {
+					ws.Execution.CurrentPersona = state.PersonaArchitect
+					ws.Execution.RemediationAttempt = qaCycle
+					_ = e.store.SaveWorkflow(ctx, ws)
+
+					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
+						return fmt.Errorf("remediation planning (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.checkPause(ctx, ws); err != nil {
+						return err
+					}
+
+					ws.Execution.CurrentPersona = state.PersonaImplementer
+					_ = e.store.SaveWorkflow(ctx, ws)
+
+					if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
+						return fmt.Errorf("implementer remediation (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.checkPause(ctx, ws); err != nil {
+						return err
+					}
+				}
+
+				// Clear blocking issues accumulated in this pass so QA evaluates
+				// the remediation fresh.  Retain AllSuggestions for history.
+				ws.BlockingIssues = nil
+			}
+		}
+		if err := e.checkPause(ctx, ws); err != nil {
+			return err
+		}
 	}
 
 	// Phase 6: Finalizer (includes inline Refiner retrospective)
-	if !phaseComplete(state.PersonaFinalizer) {
+	if personaRequired(state.PersonaFinalizer) && !phaseComplete(state.PersonaFinalizer) {
 		if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
 			return fmt.Errorf("finalizer phase: %w", err)
 		}
@@ -293,24 +375,37 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	return nil
 }
 
-// runImplementerPhase runs the Implementer against every ready task.
+// runImplementerPhase runs the Implementer against every runnable task that is
+// assigned to the Implementer persona.  Tasks assigned to any other persona are
+// silently skipped so role boundaries are maintained at the engine layer
+// regardless of what the LLM's Architect output said.
 func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {
+	p, ok := persona.Get(state.PersonaImplementer)
+	if !ok {
+		return fmt.Errorf("implementer persona not registered")
+	}
+
 	for i := range ws.Tasks {
 		t := &ws.Tasks[i]
+
+		// Only process Implementer-owned tasks that still need work.
+		if t.AssignedTo != state.PersonaImplementer {
+			continue
+		}
 		if t.Status != state.TaskStatusReady &&
 			t.Status != state.TaskStatusPending &&
 			t.Status != state.TaskStatusFailed {
 			continue
 		}
 
+		// Update visible progress before calling LLM.
+		ws.Execution.CurrentPersona = state.PersonaImplementer
+		ws.Execution.ActiveTaskID = t.ID
+		ws.Execution.ActiveTaskTitle = t.Title
+
 		// Build a packet scoped to this single task.
 		packet := e.buildPacket(ws, state.PersonaImplementer, snap)
 		packet.Tasks = []state.Task{*t}
-
-		p, ok := persona.Get(state.PersonaImplementer)
-		if !ok {
-			return fmt.Errorf("implementer persona not registered")
-		}
 
 		// Mark task running before LLM call so callers see the transition.
 		t.Status = state.TaskStatusRunning
@@ -328,6 +423,12 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		taskCancel()
 		if err != nil {
 			t.Status = state.TaskStatusFailed
+			ws.Execution.ActiveTaskID = ""
+			ws.Execution.ActiveTaskTitle = ""
+			failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventTaskFailed, state.PersonaImplementer,
+				map[string]string{"task_id": t.ID, "error": err.Error()})
+			_ = e.store.AppendEvents(ctx, failEvt)
 			_ = e.store.SaveWorkflow(ctx, ws)
 			return fmt.Errorf("implementer task %s: %w", t.ID[:8], err)
 		}
@@ -336,7 +437,13 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		now := time.Now().UTC()
 		t.Status = state.TaskStatusCompleted
 		t.CompletedAt = &now
-		ws.Artifacts = append(ws.Artifacts, out.Artifacts...)
+		for _, art := range out.Artifacts {
+			ws.Artifacts = append(ws.Artifacts, art)
+			artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventArtifactProduced, state.PersonaImplementer,
+				map[string]string{"task_id": t.ID, "artifact_name": art.Name, "kind": string(art.Kind)})
+			_ = e.store.AppendEvents(ctx, artEvt)
+		}
 
 		if ws.Summaries == nil {
 			ws.Summaries = make(map[state.PersonaKind]string)
@@ -350,12 +457,80 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		_ = e.store.AppendEvents(ctx, doneEvt)
 	}
 
+	ws.Execution.ActiveTaskID = ""
+	ws.Execution.ActiveTaskTitle = ""
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+// runRemediationPlanning invokes the Architect with the current blocking issues
+// so it can produce a targeted set of implementer-only remediation tasks.
+// The new tasks are appended to the task graph (existing completed tasks are
+// preserved for audit) with Attempt and RemediationSource set.
+func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
+	p, ok := persona.Get(state.PersonaArchitect)
+	if !ok {
+		return fmt.Errorf("architect persona not registered")
+	}
+
+	packet := e.buildPacket(ws, state.PersonaArchitect, snap)
+	packet.IsRemediation = true
+
+	archCtx, archCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+	out, err := p.Execute(archCtx, packet)
+	archCancel()
+	if err != nil {
+		return fmt.Errorf("architect remediation: %w", err)
+	}
+
+	// Validate: Architect must only produce Implementer-assigned tasks during
+	// remediation.  Any task assigned to another persona is dropped with a warning.
+	validTasks := make([]state.Task, 0, len(out.Tasks))
+	for _, t := range out.Tasks {
+		if t.AssignedTo != state.PersonaImplementer && t.AssignedTo != "" {
+			// Emit a suggestion so the issue is visible without aborting the cycle.
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				fmt.Sprintf("[warning][remediation] Architect emitted task %q assigned to %q; only 'implementer' is valid during remediation — task dropped", t.Title, t.AssignedTo))
+			continue
+		}
+		if t.AssignedTo == "" {
+			t.AssignedTo = state.PersonaImplementer
+		}
+		t.Attempt = qaCycle
+		t.RemediationSource = "qa_remediation"
+		validTasks = append(validTasks, t)
+	}
+
+	if len(validTasks) == 0 {
+		return fmt.Errorf("architect produced no valid implementer tasks for remediation cycle %d (blocking issues: %v)", qaCycle, ws.BlockingIssues)
+	}
+
+	// Append new tasks; existing tasks (including completed ones) are retained.
+	for _, t := range validTasks {
+		ws.Tasks = append(ws.Tasks, t)
+		createdEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventTaskCreated, state.PersonaArchitect,
+			map[string]string{"task_id": t.ID, "title": t.Title, "attempt": fmt.Sprint(qaCycle)})
+		_ = e.store.AppendEvents(ctx, createdEvt)
+	}
+
+	// Update architect summary (append so prior planning is retained).
+	if ws.Summaries == nil {
+		ws.Summaries = make(map[state.PersonaKind]string)
+	}
+	ws.Summaries[state.PersonaArchitect] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
+
 	return e.store.SaveWorkflow(ctx, ws)
 }
 
 // ─── State helpers ────────────────────────────────────────────────────────────
 
 // applyOutput merges a PersonaOutput into the WorkflowState.
+// Role contracts are enforced here:
+//   - Only Implementer may append Artifacts (other personas use task-level path).
+//   - Only Architect may set Design or replace Tasks.
+//   - Only QA may set BlockingIssues (Finalizer/Refiner may suggest).
+//   - Violations are recorded as AllSuggestions warnings, not hard failures,
+//     so a misbehaving LLM does not crash the workflow.
 func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) {
 	if ws.Summaries == nil {
 		ws.Summaries = make(map[state.PersonaKind]string)
@@ -374,14 +549,34 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	if out.Requirements != nil {
 		ws.Requirements = out.Requirements
 	}
+	// Only Architect may write Design or the task graph; record a warning for
+	// other personas and drop the output to prevent role drift.
 	if out.Design != nil {
-		ws.Design = out.Design
+		if out.Persona == state.PersonaArchitect {
+			ws.Design = out.Design
+		} else {
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				fmt.Sprintf("[warning][role-enforcement] persona %q attempted to write Design — ignored", out.Persona))
+		}
 	}
 	if len(out.Tasks) > 0 {
-		ws.Tasks = out.Tasks
+		if out.Persona == state.PersonaArchitect {
+			ws.Tasks = out.Tasks
+		} else {
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				fmt.Sprintf("[warning][role-enforcement] persona %q attempted to write Tasks — ignored", out.Persona))
+		}
 	}
+	// Only Implementer may append Artifacts via applyOutput; other personas
+	// that legitimately produce artifacts (e.g. Refiner) use direct ws.Artifacts
+	// writes in their own runner paths.  QA must not create artifacts.
 	if len(out.Artifacts) > 0 {
-		ws.Artifacts = append(ws.Artifacts, out.Artifacts...)
+		if out.Persona == state.PersonaImplementer {
+			ws.Artifacts = append(ws.Artifacts, out.Artifacts...)
+		} else {
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				fmt.Sprintf("[warning][role-enforcement] persona %q attempted to write %d Artifact(s) — ignored", out.Persona, len(out.Artifacts)))
+		}
 	}
 	if out.Finalization != nil {
 		ws.Finalization = out.Finalization
@@ -393,33 +588,53 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
 	}
 
+	// Update live execution progress after every persona phase.
+	ws.Execution.CurrentPersona = out.Persona
+
 	// Director sets provider/model.
 	if out.Persona == state.PersonaDirector {
+		explicitMode := ws.Mode != ""
+		explicitProvider := ws.ProviderName != ""
+		explicitModel := ws.ModelName != ""
+
 		// Parse the raw JSON output from the Director to extract its decisions.
 		dirOut := director.OutputFromRaw(out.RawContent, state.HandoffPacket{
 			ProviderName: ws.ProviderName,
 			ModelName:    ws.ModelName,
+			Mode:         ws.Mode,
+			Request:      ws.Request,
 		})
-		if dirOut.Provider != "" {
+		if !explicitProvider && dirOut.Provider != "" {
 			// Normalize to lowercase and validate the provider is registered.
 			// If the LLM chose an unregistered provider, fall back to the
 			// engine default and reset the model too so they stay consistent.
 			normalized := strings.ToLower(dirOut.Provider)
 			if _, ok := common.Get(normalized); ok {
 				ws.ProviderName = normalized
-				if dirOut.Model != "" {
-					ws.ModelName = dirOut.Model
-				}
 			} else {
 				ws.ProviderName = e.opts.DefaultProvider
-				ws.ModelName = e.opts.DefaultModel
+				if !explicitModel {
+					ws.ModelName = e.opts.DefaultModel
+				}
 			}
 		}
-		if dirOut.Mode != "" {
+		if !explicitModel && dirOut.Model != "" {
+			ws.ModelName = dirOut.Model
+		}
+		if !explicitMode && dirOut.Mode != "" {
 			ws.Mode = dirOut.Mode
 		}
 		if dirOut.Title != "" {
 			ws.Title = dirOut.Title
+		}
+		// Store the Director's pipeline plan so subsequent phases can be
+		// filtered (required_personas) and the Finalizer can be forced to the
+		// correct delivery action (finalizer_action).
+		if len(dirOut.RequiredPersonas) > 0 {
+			ws.RequiredPersonas = dirOut.RequiredPersonas
+		}
+		if dirOut.FinalizerAction != "" {
+			ws.FinalizerAction = dirOut.FinalizerAction
 		}
 	}
 
@@ -439,23 +654,27 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	}
 
 	packet := state.HandoffPacket{
-		WorkflowID:       ws.ID,
-		TenantID:         ws.TenantID,
-		ScopeID:          ws.ScopeID,
-		Mode:             ws.Mode,
-		Request:          ws.Request,
-		Constitution:     ws.Constitution,
-		Requirements:     ws.Requirements,
-		Design:           ws.Design,
-		Tasks:            ws.Tasks,
-		Artifacts:        ws.Artifacts,
-		Summaries:        ws.Summaries,
-		CurrentPersona:   kind,
-		ProviderName:     provider,
-		ModelName:        model,
-		BlockingIssues:   ws.BlockingIssues,
-		AllSuggestions:   ws.AllSuggestions,
-		ImprovementsPath: e.opts.ImprovementsRoot,
+		WorkflowID:            ws.ID,
+		TenantID:              ws.TenantID,
+		ScopeID:               ws.ScopeID,
+		Mode:                  ws.Mode,
+		Request:               ws.Request,
+		Constitution:          ws.Constitution,
+		Requirements:          ws.Requirements,
+		Design:                ws.Design,
+		Tasks:                 ws.Tasks,
+		Artifacts:             ws.Artifacts,
+		Summaries:             ws.Summaries,
+		CurrentPersona:        kind,
+		ProviderName:          provider,
+		ModelName:             model,
+		BlockingIssues:        ws.BlockingIssues,
+		AllSuggestions:        ws.AllSuggestions,
+		ImprovementsPath:      e.opts.ImprovementsRoot,
+		PersonaPromptSnapshot: ws.PersonaPromptSnapshot,
+		FinalizerAction:       ws.FinalizerAction,
+		QACycle:               ws.Execution.QACycle,
+		RemediationAttempt:    ws.Execution.RemediationAttempt,
 	}
 
 	// Populate customization context from the workflow-start snapshot.

@@ -8,38 +8,9 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 )
-
-const systemPrompt = `You are the Project Manager persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Create a Constitution that defines the vision, goals, constraints, audience, output medium, and acceptance criteria.
-2. Produce structured Functional and Non-Functional requirements.
-3. Be mode-aware: for software workflows, focus on technical requirements; for content workflows, focus on tone, audience, format, and publishing constraints.
-
-Always respond with valid JSON matching this schema:
-{
-  "constitution": {
-    "vision": "...",
-    "goals": ["..."],
-    "constraints": ["..."],
-    "audience": "...",
-    "output_medium": "...",
-    "acceptance_criteria": ["..."],
-    "out_of_scope": ["..."]
-  },
-  "requirements": {
-    "functional": [
-      {"id": "F1", "title": "...", "description": "...", "priority": "must|should|could|wont", "source": "..."}
-    ],
-    "non_functional": [
-      {"id": "NF1", "title": "...", "description": "...", "priority": "must", "source": "..."}
-    ],
-    "dependencies": ["..."]
-  },
-  "summary": "..."
-}`
 
 // ProjectManager implements persona.Persona.
 type ProjectManager struct {
@@ -48,7 +19,7 @@ type ProjectManager struct {
 
 // New returns a new ProjectManager persona.
 func New() *ProjectManager {
-	return &ProjectManager{exec: base.NewExecutor(systemPrompt, "pm_output", outputSchema)}
+	return &ProjectManager{exec: base.NewExecutor("pm_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -84,13 +55,15 @@ var outputSchema = map[string]any{
 func (p *ProjectManager) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	_ = time.Now()
 
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyProjectManager]
+
 	ctx_ := base.BuildHandoffContext(packet)
 	userPrompt := fmt.Sprintf(
 		"%s\n\nProduce the Constitution and Requirements JSON for this workflow.",
 		ctx_,
 	)
 
-	raw, err := p.exec.Run(ctx, packet, userPrompt)
+	raw, err := p.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("pm: execution error: %w", err)
 	}

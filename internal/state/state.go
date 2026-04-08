@@ -76,6 +76,22 @@ const (
 
 // ─── Core models ─────────────────────────────────────────────────────────────
 
+// Execution holds the live execution progress for a running workflow.
+// It is overwritten by the engine at every persona/task transition and
+// persisted so that GET /workflows/:id reflects current in-flight state.
+type Execution struct {
+	// CurrentPersona is the persona phase currently executing.
+	CurrentPersona PersonaKind `json:"current_persona,omitempty"`
+	// ActiveTaskID is the ID of the task being executed by the Implementer.
+	ActiveTaskID string `json:"active_task_id,omitempty"`
+	// ActiveTaskTitle is the title of that task for display purposes.
+	ActiveTaskTitle string `json:"active_task_title,omitempty"`
+	// QACycle is the current QA/remediation pass number (1-based).
+	QACycle int `json:"qa_cycle,omitempty"`
+	// RemediationAttempt is the Implementer re-run count within the current QA cycle.
+	RemediationAttempt int `json:"remediation_attempt,omitempty"`
+}
+
 // WorkflowState is the canonical, persisted state of a single workflow run.
 type WorkflowState struct {
 	ID       string         `json:"id"`
@@ -108,6 +124,26 @@ type WorkflowState struct {
 
 	// Suggestions accumulated across all persona phases (from Refiner/QA).
 	AllSuggestions []string `json:"all_suggestions,omitempty"`
+
+	// PersonaPromptSnapshot holds the content of each persona prompt file as it
+	// was at the moment this workflow was first started.  It is persisted so
+	// that resume, retry, and replay use identical prompt text regardless of
+	// subsequent edits to the files on disk.
+	PersonaPromptSnapshot map[string]string `json:"persona_prompt_snapshot,omitempty"`
+
+	// RequiredPersonas is the set of pipeline phases selected by the Director.
+	// When non-empty it is used as a filter over the fixed phase order; phases
+	// not in this list are skipped.  Director itself is always mandatory.
+	RequiredPersonas []PersonaKind `json:"required_personas,omitempty"`
+
+	// FinalizerAction is the delivery action chosen by the Director.
+	// The Finalizer honors this value in code after parsing its LLM response
+	// so the action cannot drift from the Director's intent.
+	FinalizerAction string `json:"finalizer_action,omitempty"`
+
+	// Execution holds live progress metadata for in-flight workflows.
+	// Updated by the engine at every persona/task boundary.
+	Execution Execution `json:"execution,omitempty"`
 
 	// Execution metadata.
 	CreatedAt    time.Time  `json:"created_at"`
@@ -194,8 +230,13 @@ type Task struct {
 	DependsOn   []string    `json:"depends_on,omitempty"` // Task IDs
 	AssignedTo  PersonaKind `json:"assigned_to"`
 	Output      string      `json:"output,omitempty"`
-	CreatedAt   time.Time   `json:"created_at"`
-	CompletedAt *time.Time  `json:"completed_at,omitempty"`
+	// Attempt is the QA/remediation cycle that created this task (0 = initial).
+	Attempt int `json:"attempt,omitempty"`
+	// RemediationSource is "qa_remediation" when the task was created by the
+	// Architect during a post-QA remediation pass.
+	RemediationSource string `json:"remediation_source,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }
 
 // Artifact is a produced output from any persona.
@@ -270,6 +311,16 @@ type HandoffPacket struct {
 	SkillsContext  string `json:"skills_context,omitempty"`  // loaded SKILL.md content
 	PromptsContext string `json:"prompts_context,omitempty"` // loaded .prompt.md
 
+	// PersonaPromptSnapshot is the workflow-start snapshot of all base persona
+	// prompt file contents.  Each persona reads its system prompt from here so
+	// prompt changes on disk do not affect in-flight workflows.
+	PersonaPromptSnapshot map[string]string `json:"persona_prompt_snapshot,omitempty"`
+
+	// FinalizerAction is the delivery action chosen by the Director, forwarded
+	// to the Finalizer so it can be enforced in code rather than inferred by
+	// the LLM.  Empty means no Director preference was set.
+	FinalizerAction string `json:"finalizer_action,omitempty"`
+
 	// Accumulated issues and suggestions from prior phases (populated by engine).
 	BlockingIssues []string `json:"blocking_issues,omitempty"`
 	AllSuggestions []string `json:"all_suggestions,omitempty"`
@@ -277,6 +328,14 @@ type HandoffPacket struct {
 	// ImprovementsPath is the directory where the Refiner may write improvement
 	// files (SKILL.md, .prompt.md, .agent.md).  Set by the engine from Options.
 	ImprovementsPath string `json:"improvements_path,omitempty"`
+
+	// QACycle and RemediationAttempt are populated during the QA remediation
+	// loop so persona prompts can reference the current pass number.
+	QACycle            int `json:"qa_cycle,omitempty"`
+	RemediationAttempt int `json:"remediation_attempt,omitempty"`
+	// IsRemediation signals to the Architect that this invocation is a
+	// targeted remediation pass (not the initial planning phase).
+	IsRemediation bool `json:"is_remediation,omitempty"`
 }
 
 // ─── Persona output ───────────────────────────────────────────────────────────

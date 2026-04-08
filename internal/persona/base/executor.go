@@ -16,7 +16,6 @@ import (
 
 // Executor is the shared execution engine embedded in every built-in persona.
 type Executor struct {
-	SystemPrompt string
 	// SchemaName is a short identifier for the output schema (e.g. "director_output").
 	// Required by providers that need a named schema (e.g. OpenAI json_schema mode).
 	SchemaName string
@@ -26,21 +25,28 @@ type Executor struct {
 	OutputSchema map[string]any
 }
 
-// NewExecutor creates an Executor with the given system prompt and optional
-// output schema. Pass a nil schema to fall back to plain JSON mode.
-func NewExecutor(systemPrompt string, schemaName string, schema map[string]any) Executor {
-	return Executor{SystemPrompt: systemPrompt, SchemaName: schemaName, OutputSchema: schema}
+// NewExecutor creates an Executor with the given schema name and optional
+// output schema. The system prompt is no longer stored at construction time;
+// it is passed per-call via Run so that it can come from the persisted
+// workflow-scoped prompt snapshot. Pass a nil schema to fall back to plain
+// JSON mode.
+func NewExecutor(schemaName string, schema map[string]any) Executor {
+	return Executor{SchemaName: schemaName, OutputSchema: schema}
 }
 
 // Run sends a chat request to the provider resolved from the HandoffPacket,
 // returns the raw assistant response text.
-func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, userPrompt string) (string, error) {
+//
+// systemPrompt is the base persona system prompt loaded from the workflow's
+// PersonaPromptSnapshot. It is layered with customization overlays from the
+// packet before being sent to the model.
+func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPrompt, userPrompt string) (string, error) {
 	provider, ok := common.Get(packet.ProviderName)
 	if !ok {
 		return "", fmt.Errorf("executor: provider %q not registered", packet.ProviderName)
 	}
 
-	systemContent := e.buildSystemContent(packet)
+	systemContent := e.buildSystemContent(systemPrompt, packet)
 
 	msgs := []common.Message{
 		{Role: common.RoleSystem, Content: systemContent},
@@ -71,9 +77,9 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, userProm
 
 // buildSystemContent layers the base system prompt with any skill/agent
 // overlays baked into the HandoffPacket.
-func (e *Executor) buildSystemContent(packet state.HandoffPacket) string {
+func (e *Executor) buildSystemContent(systemPrompt string, packet state.HandoffPacket) string {
 	var sb strings.Builder
-	sb.WriteString(e.SystemPrompt)
+	sb.WriteString(systemPrompt)
 
 	if packet.CustomAgentMD != "" {
 		sb.WriteString("\n\n---\n## Agent instructions\n")
@@ -141,6 +147,23 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		for _, t := range packet.Tasks {
 			sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", t.Status, t.ID[:8], t.Title))
 		}
+	}
+
+	// Surface blocking issues so Implementer (on remediation) and Architect
+	// know exactly what QA rejected.  This is critical context that was missing
+	// previously, causing the Implementer to retry without knowing what to fix.
+	if len(packet.BlockingIssues) > 0 {
+		sb.WriteString("\n## QA Blocking Issues\nThe following issues were raised by QA and MUST be resolved:\n")
+		for _, issue := range packet.BlockingIssues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+	}
+
+	if packet.IsRemediation {
+		sb.WriteString(fmt.Sprintf("\n## Remediation Context\nThis is a targeted remediation pass (QA cycle %d). ", packet.QACycle))
+		sb.WriteString("The blocking issues listed above were found in the previous QA review. ")
+		sb.WriteString("Produce ONLY the specific implementer tasks needed to resolve those issues. ")
+		sb.WriteString("Do NOT re-plan the entire project.\n")
 	}
 
 	return sb.String()

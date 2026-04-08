@@ -51,7 +51,7 @@ providers:
 
   ollama:
     enabled: true
-    host: "https://ollama.barton.local"
+    host: "http://localhost:11434"
     default_model: "gemma4:e4b"
     timeout: "600s"        # local models can be slow; QA receives large artifact context
     tls_skip_verify: true  # homelab CA not trusted on this machine

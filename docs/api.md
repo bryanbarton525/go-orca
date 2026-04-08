@@ -77,6 +77,9 @@ The Director selects a mode automatically from the request when not specified.
 | `persona_failed` | `{ "persona": PersonaKind, "error": string }` |
 | `task_started` | `{ "task_id": uuid, "title": string }` |
 | `task_completed` | `{ "task_id": uuid, "title": string }` |
+| `task_failed` | `{ "task_id": uuid, "title": string, "error": string }` |
+| `task_created` | `{ "task_id": uuid, "title": string, "qa_cycle": integer }` |
+| `artifact_produced` | `{ "task_id": uuid, "artifact_name": string, "kind": ArtifactKind }` |
 
 ---
 
@@ -231,6 +234,13 @@ Retrieve a single workflow with all persisted state.
   "summaries": { "director": "...", "project_manager": "..." },
   "blocking_issues": [],
   "all_suggestions": ["Consider adding rate limiting", "..."],
+  "execution": {
+    "current_persona": "implementer",
+    "active_task_id": "task-uuid",
+    "active_task_title": "Implement user auth endpoint",
+    "qa_cycle": 1,
+    "remediation_attempt": 0
+  },
   "error_message": null,
   "provider_name": "openai",
   "model_name": "gpt-4o",
@@ -259,9 +269,20 @@ Retrieve a single workflow with all persisted state.
 | `artifacts` | array | All produced outputs across all phases |
 | `finalization` | object\|null | Finalizer's delivery result |
 | `summaries` | object | Per-persona compressed summaries keyed by PersonaKind |
-| `blocking_issues` | string[] | Blocking issues raised by QA that caused an Implementer re-run |
+| `blocking_issues` | string[] | Blocking issues raised by QA that caused an Architect remediation pass |
 | `all_suggestions` | string[] | Non-blocking suggestions accumulated across all phases |
+| `execution` | object | Live in-flight progress (see below); persisted on every persona/task boundary |
 | `error_message` | string\|null | Error detail when `status` is `failed` |
+
+**`execution` object**
+
+| Field | Type | Description |
+|---|---|---|
+| `current_persona` | PersonaKind | The persona that ran most recently |
+| `active_task_id` | string | ID of the task currently being executed by the Implementer (empty outside Implementer phase) |
+| `active_task_title` | string | Human-readable title of the active task |
+| `qa_cycle` | int | Current QA pass number (1-based); 0 before QA starts |
+| `remediation_attempt` | int | Number of Architect-led remediation passes completed so far |
 | `provider_name` | string | LLM provider selected by the Director |
 | `model_name` | string | Model selected by the Director |
 | `created_at` | datetime | — |

@@ -8,40 +8,10 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/google/uuid"
 )
-
-const systemPrompt = `You are the Architect persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Design the solution that satisfies the constitution and requirements.
-2. Break the design into a concrete task graph with clear dependencies.
-3. Be mode-aware:
-   - software: component design, data flows, tech stack selection, API contracts
-   - content/docs: content structure, research tasks, draft and review tasks
-   - ops: runbook steps, deployment tasks, validation tasks
-4. Each task must name the persona that should execute it (implementer or qa).
-
-Always respond with valid JSON matching this schema:
-{
-  "design": {
-    "overview": "...",
-    "components": [{"name": "...", "description": "...", "inputs": ["..."], "outputs": ["..."]}],
-    "decisions": [{"decision": "...", "rationale": "...", "tradeoffs": "..."}],
-    "tech_stack": ["..."],
-    "delivery_target": "..."
-  },
-  "tasks": [
-    {
-      "title": "...",
-      "description": "...",
-      "depends_on": [],
-      "assigned_to": "implementer"
-    }
-  ],
-  "summary": "..."
-}`
 
 // archOutput is the expected JSON shape from the Architect.
 type archOutput struct {
@@ -76,7 +46,7 @@ type Architect struct {
 
 // New returns a new Architect persona.
 func New() *Architect {
-	return &Architect{exec: base.NewExecutor(systemPrompt, "architect_output", outputSchema)}
+	return &Architect{exec: base.NewExecutor("architect_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -94,13 +64,15 @@ func (a *Architect) Description() string {
 func (a *Architect) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	_ = time.Now()
 
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyArchitect]
+
 	ctx_ := base.BuildHandoffContext(packet)
 	userPrompt := fmt.Sprintf(
 		"%s\n\nProduce the Design and Task graph JSON for this workflow.",
 		ctx_,
 	)
 
-	raw, err := a.exec.Run(ctx, packet, userPrompt)
+	raw, err := a.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("architect: execution error: %w", err)
 	}

@@ -49,9 +49,44 @@ func (s *Store) Close() error {
 // Migrate runs the embedded schema DDL against the database.
 // In production you should use golang-migrate; this is a convenience helper
 // for homelab / test bootstrapping.
+//
+// For existing databases it also attempts to add any new columns introduced
+// after the initial schema via ALTER TABLE statements.  SQLite does not
+// support IF NOT EXISTS on ALTER TABLE, so each statement is executed
+// individually and "duplicate column" errors are silently ignored.
 func (s *Store) Migrate() error {
-	_, err := s.db.Exec(sqliteDDL)
-	return err
+	if _, err := s.db.Exec(sqliteDDL); err != nil {
+		return err
+	}
+	// Idempotently add columns introduced in schema v004.
+	for _, stmt := range sqliteAlterV004 {
+		if _, err := s.db.Exec(stmt); err != nil {
+			// "duplicate column name" is the expected error when the column
+			// already exists from a previous migration run — ignore it.
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("sqlite migrate v004: %w", err)
+			}
+		}
+	}
+	// Idempotently add columns introduced in schema v005.
+	for _, stmt := range sqliteAlterV005 {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("sqlite migrate v005: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// isDuplicateColumnError returns true when the SQLite error message indicates
+// that a column with that name already exists.
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return len(msg) >= 22 && msg[:22] == "duplicate column name:"
 }
 
 // ─── WorkflowStore ────────────────────────────────────────────────────────────
@@ -66,13 +101,15 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		  (id, tenant_id, scope_id, status, mode, title, request,
 		   provider_name, model_name, constitution, requirements, design,
 		   tasks, artifacts, finalization, summaries, blocking_issues,
-		   created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   created_at, updated_at, execution)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		p.constitution, p.requirements, p.design,
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
-		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(),
+		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
+		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(), p.execution,
 	)
 	return err
 }
@@ -93,8 +130,9 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   provider_name, model_name, error_message,
 		   constitution, requirements, design, tasks, artifacts,
 		   finalization, summaries, blocking_issues,
-		   created_at, updated_at, started_at, completed_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+		   created_at, updated_at, started_at, completed_at, execution)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  status=excluded.status, mode=excluded.mode, title=excluded.title,
 		  provider_name=excluded.provider_name, model_name=excluded.model_name,
@@ -103,14 +141,20 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  design=excluded.design, tasks=excluded.tasks, artifacts=excluded.artifacts,
 		  finalization=excluded.finalization, summaries=excluded.summaries,
 		  blocking_issues=excluded.blocking_issues,
+		  all_suggestions=excluded.all_suggestions,
+		  persona_prompt_snapshot=excluded.persona_prompt_snapshot,
+		  required_personas=excluded.required_personas,
+		  finalizer_action=excluded.finalizer_action,
+		  execution=excluded.execution,
 		  updated_at=excluded.updated_at,
 		  started_at=excluded.started_at, completed_at=excluded.completed_at`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName, ws.ErrorMessage,
 		p.constitution, p.requirements, p.design,
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
+		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(),
-		nullableUnix(ws.StartedAt), nullableUnix(ws.CompletedAt),
+		nullableUnix(ws.StartedAt), nullableUnix(ws.CompletedAt), p.execution,
 	)
 	return err
 }
@@ -305,6 +349,21 @@ func (s *Store) DeleteScope(ctx context.Context, id string) error {
 	return err
 }
 
+// sqliteAlterV004 adds the workflow-planning columns to existing databases.
+// Each statement is run individually so that a "duplicate column name" error
+// for an already-present column can be silently ignored.
+var sqliteAlterV004 = []string{
+	`ALTER TABLE workflows ADD COLUMN all_suggestions       TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE workflows ADD COLUMN persona_prompt_snapshot TEXT NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE workflows ADD COLUMN required_personas     TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE workflows ADD COLUMN finalizer_action      TEXT NOT NULL DEFAULT ''`,
+}
+
+// sqliteAlterV005 adds the execution-progress column to existing databases.
+var sqliteAlterV005 = []string{
+	`ALTER TABLE workflows ADD COLUMN execution TEXT NOT NULL DEFAULT '{}'`,
+}
+
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
 const selectWorkflowSQL = `
@@ -312,7 +371,8 @@ const selectWorkflowSQL = `
 	       provider_name, model_name, error_message,
 	       constitution, requirements, design, tasks, artifacts,
 	       finalization, summaries, blocking_issues,
-	       created_at, updated_at, started_at, completed_at
+	       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
+	       created_at, updated_at, started_at, completed_at, execution
 	FROM workflows`
 
 const selectEventSQL = `
@@ -343,28 +403,33 @@ CREATE TABLE IF NOT EXISTS scopes (
 );
 
 CREATE TABLE IF NOT EXISTS workflows (
-    id              TEXT    NOT NULL PRIMARY KEY,
-    tenant_id       TEXT    NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    scope_id        TEXT    NOT NULL REFERENCES scopes(id),
-    status          TEXT    NOT NULL DEFAULT 'pending',
-    mode            TEXT    NOT NULL DEFAULT 'software',
-    title           TEXT    NOT NULL DEFAULT '',
-    request         TEXT    NOT NULL,
-    provider_name   TEXT,
-    model_name      TEXT,
-    error_message   TEXT,
-    constitution    TEXT,
-    requirements    TEXT,
-    design          TEXT,
-    tasks           TEXT    NOT NULL DEFAULT '[]',
-    artifacts       TEXT    NOT NULL DEFAULT '[]',
-    finalization    TEXT,
-    summaries       TEXT    NOT NULL DEFAULT '{}',
-    blocking_issues TEXT    NOT NULL DEFAULT '[]',
-    created_at      INTEGER NOT NULL,
-    updated_at      INTEGER NOT NULL,
-    started_at      INTEGER,
-    completed_at    INTEGER
+    id                    TEXT    NOT NULL PRIMARY KEY,
+    tenant_id             TEXT    NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    scope_id              TEXT    NOT NULL REFERENCES scopes(id),
+    status                TEXT    NOT NULL DEFAULT 'pending',
+    mode                  TEXT    NOT NULL DEFAULT 'software',
+    title                 TEXT    NOT NULL DEFAULT '',
+    request               TEXT    NOT NULL,
+    provider_name         TEXT,
+    model_name            TEXT,
+    error_message         TEXT,
+    constitution          TEXT,
+    requirements          TEXT,
+    design                TEXT,
+    tasks                 TEXT    NOT NULL DEFAULT '[]',
+    artifacts             TEXT    NOT NULL DEFAULT '[]',
+    finalization          TEXT,
+    summaries             TEXT    NOT NULL DEFAULT '{}',
+    blocking_issues       TEXT    NOT NULL DEFAULT '[]',
+    all_suggestions       TEXT    NOT NULL DEFAULT '[]',
+    persona_prompt_snapshot TEXT  NOT NULL DEFAULT '{}',
+    required_personas     TEXT    NOT NULL DEFAULT '[]',
+    finalizer_action      TEXT    NOT NULL DEFAULT '',
+    execution             TEXT    NOT NULL DEFAULT '{}',
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    started_at            INTEGER,
+    completed_at          INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS workflow_events (
@@ -453,6 +518,11 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		constitution, requirements, design sql.NullString
 		tasks, artifacts, finalization     sql.NullString
 		summaries, blockingIssues          sql.NullString
+		allSuggestions                     sql.NullString
+		personaPromptSnapshot              sql.NullString
+		requiredPersonas                   sql.NullString
+		execution                          sql.NullString
+		finalizerAction                    sql.NullString
 		providerName, modelName            sql.NullString
 		errorMessage                       sql.NullString
 		createdAt, updatedAt               int64
@@ -464,7 +534,8 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&providerName, &modelName, &errorMessage,
 		&constitution, &requirements, &design, &tasks, &artifacts,
 		&finalization, &summaries, &blockingIssues,
-		&createdAt, &updatedAt, &startedAt, &completedAt,
+		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &finalizerAction,
+		&createdAt, &updatedAt, &startedAt, &completedAt, &execution,
 	)
 	if err != nil {
 		return nil, err
@@ -473,6 +544,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	ws.ProviderName = providerName.String
 	ws.ModelName = modelName.String
 	ws.ErrorMessage = errorMessage.String
+	ws.FinalizerAction = finalizerAction.String
 
 	ws.CreatedAt = time.Unix(createdAt, 0).UTC()
 	ws.UpdatedAt = time.Unix(updatedAt, 0).UTC()
@@ -499,6 +571,10 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	unmarshal(finalization, &ws.Finalization)
 	unmarshal(summaries, &ws.Summaries)
 	unmarshal(blockingIssues, &ws.BlockingIssues)
+	unmarshal(allSuggestions, &ws.AllSuggestions)
+	unmarshal(personaPromptSnapshot, &ws.PersonaPromptSnapshot)
+	unmarshal(requiredPersonas, &ws.RequiredPersonas)
+	unmarshal(execution, &ws.Execution)
 
 	return ws, nil
 }
@@ -559,6 +635,10 @@ type workflowPayload struct {
 	constitution, requirements, design []byte
 	tasks, artifacts, finalization     []byte
 	summaries, blockingIssues          []byte
+	allSuggestions                     []byte
+	personaPromptSnapshot              []byte
+	requiredPersonas                   []byte
+	execution                          []byte
 }
 
 func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
@@ -592,6 +672,18 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 		return p, err
 	}
 	if p.blockingIssues, err = json.Marshal(ws.BlockingIssues); err != nil {
+		return p, err
+	}
+	if p.allSuggestions, err = json.Marshal(ws.AllSuggestions); err != nil {
+		return p, err
+	}
+	if p.personaPromptSnapshot, err = json.Marshal(ws.PersonaPromptSnapshot); err != nil {
+		return p, err
+	}
+	if p.requiredPersonas, err = json.Marshal(ws.RequiredPersonas); err != nil {
+		return p, err
+	}
+	if p.execution, err = json.Marshal(ws.Execution); err != nil {
 		return p, err
 	}
 	return p, nil

@@ -10,42 +10,10 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
+	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
-
-const systemPrompt = `You are the Director persona in the gorca workflow orchestration system.
-
-Your responsibilities:
-1. Analyse the user's request and classify the workflow mode.
-2. Select the most appropriate delivery target and finalizer action.
-3. Decide which downstream personas are required (project_manager, architect, implementer, qa, finalizer).
-4. Output a structured JSON plan.
-
-Workflow modes:
-- software: code, apps, libraries, infra-as-code
-- content: blog posts, articles, marketing copy
-- docs: technical documentation, wikis, READMEs
-- research: analysis, reports, competitive research
-- ops: CI/CD, deployment, operational tasks
-- mixed: combination of the above
-
-Finalizer actions: github-pr | repo-commit-only | artifact-bundle | markdown-export | blog-draft | webhook-dispatch
-
-You will be told which providers and models are available in the user message.
-You MUST select a provider and model only from the options listed there.
-
-Always respond with valid JSON matching this schema:
-{
-  "mode": "<WorkflowMode>",
-  "title": "<short descriptive title>",
-  "provider": "<provider name from the available list>",
-  "model": "<model name from the available list>",
-  "finalizer_action": "<action>",
-  "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
-  "rationale": "<brief explanation of decisions>",
-  "summary": "<one sentence description for handoff>"
-}`
 
 // Output is the Director's typed JSON output.
 type Output struct {
@@ -82,7 +50,7 @@ type Director struct {
 
 // New returns a new Director persona.
 func New() *Director {
-	return &Director{exec: base.NewExecutor(systemPrompt, "director_output", outputSchema)}
+	return &Director{exec: base.NewExecutor("director_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -100,6 +68,8 @@ func (d *Director) Description() string {
 func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	started := time.Now()
 
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyDirector]
+
 	// Build a dynamic list of available providers and their default models from
 	// the live registry so the LLM cannot choose a provider that isn't running.
 	providers := common.All()
@@ -111,15 +81,25 @@ func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*st
 	// default; the per-provider model hint is the engine-resolved default.
 	providerHint := strings.Join(providerLines, "\n")
 
+	modeHint := ""
+	if packet.Mode != "" {
+		modeHint = fmt.Sprintf(
+			"\nRequested workflow mode override: %s\nThis mode was preselected before the Director ran. You MUST keep the \"mode\" field set to exactly %q and choose downstream personas/finalizer accordingly.\n",
+			packet.Mode,
+			packet.Mode,
+		)
+	}
+
 	userPrompt := fmt.Sprintf(
-		"Analyse this request and produce your JSON plan.\n\nAvailable providers:\n%s\n\nYou MUST use one of the provider names exactly as listed above.\nDefault provider: %s\nDefault model: %s\n\nRequest:\n%s",
+		"Analyse this request and produce your JSON plan.\n\nAvailable providers:\n%s\n\nYou MUST use one of the provider names exactly as listed above.\nDefault provider: %s\nDefault model: %s\n%s\nRequest:\n%s",
 		providerHint,
 		packet.ProviderName,
 		packet.ModelName,
+		modeHint,
 		packet.Request,
 	)
 
-	raw, err := d.exec.Run(ctx, packet, userPrompt)
+	raw, err := d.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("director: execution error: %w", err)
 	}
@@ -132,7 +112,7 @@ func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*st
 
 	// Normalise.
 	if out.Mode == "" {
-		out.Mode = state.WorkflowModeSoftware
+		out.Mode = defaultMode(packet)
 	}
 	if out.Provider == "" {
 		out.Provider = packet.ProviderName
@@ -174,7 +154,7 @@ func OutputFromRaw(raw string, packet state.HandoffPacket) Output {
 
 func defaultOutput(packet state.HandoffPacket) Output {
 	return Output{
-		Mode:             state.WorkflowModeSoftware,
+		Mode:             defaultMode(packet),
 		Title:            truncate(packet.Request, 60),
 		Provider:         packet.ProviderName,
 		Model:            packet.ModelName,
@@ -183,6 +163,13 @@ func defaultOutput(packet state.HandoffPacket) Output {
 		Rationale:        "Defaulted due to parse failure.",
 		Summary:          packet.Request,
 	}
+}
+
+func defaultMode(packet state.HandoffPacket) state.WorkflowMode {
+	if packet.Mode != "" {
+		return packet.Mode
+	}
+	return state.WorkflowModeSoftware
 }
 
 func defaultPersonas() []state.PersonaKind {
