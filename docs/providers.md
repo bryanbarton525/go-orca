@@ -1,6 +1,6 @@
 # Providers
 
-go-orca supports three LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
+go-orca supports four LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
 
 ## Provider Registry
 
@@ -11,8 +11,9 @@ Providers are registered at startup via `internal/provider/common`. The global r
 At startup, the first enabled provider in this priority order becomes the default:
 
 1. OpenAI
-2. Ollama
-3. Copilot
+2. Anthropic
+3. Ollama
+4. Copilot
 
 The default is used when the Director does not select a provider, or as a fallback.
 
@@ -108,6 +109,40 @@ ollama serve
 | General purpose | `llama3`, `mistral` |
 | Code generation | `codellama`, `deepseek-coder` |
 | Small / fast | `phi3`, `gemma` |
+
+---
+
+## Anthropic
+
+Package: `internal/provider/anthropic`
+
+Talks to the Anthropic Claude API (Messages API).
+
+### Configuration
+
+```yaml
+providers:
+  anthropic:
+    enabled: true
+    api_key: "sk-ant-..."    # required
+    base_url: ""             # optional; defaults to api.anthropic.com
+    default_model: "claude-opus-4-5"
+    max_tokens: 0            # 0 = provider default
+    timeout: "120s"
+```
+
+| Key | Required | Description |
+|---|---|---|
+| `enabled` | Yes | Must be `true` to activate |
+| `api_key` | Yes | Anthropic API key; also accepts `GOORCA_PROVIDERS_ANTHROPIC_API_KEY` env var |
+| `base_url` | No | Override base URL for Anthropic-compatible endpoints |
+| `default_model` | No | Model used when the Director does not specify one |
+| `max_tokens` | No | Maximum tokens per response. `0` uses the provider default |
+| `timeout` | No | Per-request timeout. Default: `120s` |
+
+### Compatible Models
+
+Any model available via the Messages API: `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-3-5`, etc.
 
 ---
 

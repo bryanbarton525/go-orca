@@ -108,24 +108,36 @@ Every persona receives a `HandoffPacket` — a self-contained context snapshot b
 
 ```go
 type HandoffPacket struct {
-    WorkflowID     string
-    TenantID       string
-    ScopeID        string
-    Mode           WorkflowMode
-    Request        string
+    WorkflowID string
+    TenantID   string
+    ScopeID    string
+    Mode       WorkflowMode
+    Request    string
 
     // Accumulated phase outputs from prior personas
-    Constitution   *Constitution
-    Requirements   *Requirements
-    Design         *Design
-    Tasks          []Task
-    Artifacts      []Artifact
-    Summaries      map[PersonaKind]string
+    Constitution *Constitution
+    Requirements *Requirements
+    Design       *Design
+    Tasks        []Task
+    Artifacts    []Artifact
+    Summaries    map[PersonaKind]string
 
     // Active execution context
     CurrentPersona PersonaKind
     ProviderName   string
     ModelName      string
+
+    // Workflow-start snapshot of all base persona prompt file contents.
+    // Personas read their system prompt from here so disk edits cannot
+    // affect an in-flight workflow.
+    PersonaPromptSnapshot map[string]string
+
+    // Delivery action chosen by the Director, forwarded to the Finalizer
+    // so it is enforced in code rather than inferred by the LLM.
+    FinalizerAction string
+
+    // Directory where the Refiner may write improvement files after the run.
+    ImprovementsPath string
 
     // Customization context (snapshotted at workflow start)
     CustomAgentMD  string
@@ -135,6 +147,11 @@ type HandoffPacket struct {
     // Issues and suggestions accumulated across prior phases
     BlockingIssues []string
     AllSuggestions []string
+
+    // QA/remediation loop context — populated during Phase 5
+    QACycle            int  // current QA pass (1-based)
+    RemediationAttempt int  // number of Architect remediation passes so far
+    IsRemediation      bool // true when this Architect invocation is a remediation pass
 }
 ```
 

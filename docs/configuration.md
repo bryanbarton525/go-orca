@@ -138,6 +138,7 @@ All providers default to `enabled: false`. Enable at least one before submitting
 | `providers.ollama.host` | string | `"http://localhost:11434"` | Ollama server URL |
 | `providers.ollama.default_model` | string | `"llama3"` | Default model |
 | `providers.ollama.timeout` | duration | `"120s"` | Per-request timeout |
+| `providers.ollama.tls_skip_verify` | bool | `false` | Skip TLS certificate verification (use only for self-signed certs in dev) |
 
 ### providers.copilot
 
@@ -147,6 +148,17 @@ All providers default to `enabled: false`. Enable at least one before submitting
 | `providers.copilot.github_token` | string | `""` | GitHub PAT (or `GOORCA_PROVIDERS_COPILOT_GITHUB_TOKEN`) |
 | `providers.copilot.cli_path` | string | `""` | Path to the `gh` CLI binary; empty = use `$PATH` |
 | `providers.copilot.default_model` | string | `"gpt-4o"` | Default model |
+
+### providers.anthropic
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `providers.anthropic.enabled` | bool | `false` | Enable this provider |
+| `providers.anthropic.api_key` | string | `""` | Anthropic API key (or `GOORCA_PROVIDERS_ANTHROPIC_API_KEY`) |
+| `providers.anthropic.base_url` | string | `""` | Override base URL (empty = `api.anthropic.com`) |
+| `providers.anthropic.default_model` | string | `""` | Default model (e.g. `claude-opus-4-5`) |
+| `providers.anthropic.max_tokens` | integer | `0` | Maximum tokens per request (0 = provider default) |
+| `providers.anthropic.timeout` | duration | `"120s"` | Per-request timeout |
 
 ---
 
@@ -256,6 +268,10 @@ providers:
     enabled: false
     github_token: ""
     default_model: "gpt-4o"
+  anthropic:
+    enabled: false
+    api_key: ""          # set GOORCA_PROVIDERS_ANTHROPIC_API_KEY
+    default_model: ""
 
 customizations:
   sources: []

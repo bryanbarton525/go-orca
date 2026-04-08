@@ -14,8 +14,8 @@ go-orca is a single Go binary that exposes an HTTP API, runs a workflow engine, 
                           │   └──────────┘     │  Project Manager          │  │
                           │        │           │  Architect                │  │
                           │        │           │  Implementer (per task)   │  │
-                          │        ▼           │  QA (retry loop)          │  │
-                          │   ┌──────────┐     │  Finalizer                │  │
+                          │        ▼           │  QA (remediation loop)    │  │
+                          │   ┌──────────┐     │  Finalizer + Refiner      │  │
                           │   │ Store    │     └──────────────────────────┘  │
                           │   │ SQLite / │             │                      │
                           │   │ Postgres │◄────────────┤                      │
@@ -84,11 +84,13 @@ POST /workflows
   2. Transition to status=running
   3. Snapshot customizations (once, at workflow start)
   4. Run persona pipeline phases sequentially:
-        Director → PM → Architect → Implementer(s) → QA loop → Finalizer
-  5. After each persona: merge PersonaOutput into WorkflowState, append event, save
-  6. On completion: transition to status=completed
-  7. On error:     transition to status=failed
-  8. On pause:     transition to status=paused, return ErrPaused
+        Director → PM → Architect → Implementer(s) → QA/Architect remediation loop → Finalizer → Refiner
+  5. After each persona: merge PersonaOutput into WorkflowState, update Execution progress, append event, save
+  6. On QA blocking issues: Architect re-plans → Implementer executes new tasks → QA re-validates (up to MaxQARetries)
+  7. After Finalizer: inline Refiner retrospective writes improvement files to ImprovementsRoot
+  8. On completion: transition to status=completed
+  9. On error:     transition to status=failed
+  10. On pause:    transition to status=paused, return ErrPaused
        │
        ▼
  Client polls GET /workflows/:id  or  streams GET /workflows/:id/stream
@@ -103,6 +105,9 @@ Every state change and persona transition appends an immutable event to the jour
 - `persona_completed` — a persona finished; includes duration and summary
 - `persona_failed` — a persona returned an error
 - `task_started` / `task_completed` — Implementer per-task events
+- `task_failed` — an individual Implementer task returned an error
+- `task_created` — Architect appended a remediation task during the QA loop
+- `artifact_produced` — an artifact was committed from Implementer output
 
 Clients can retrieve the full event list via `GET /workflows/:id/events`, or subscribe to the live SSE feed via `GET /workflows/:id/stream`.
 

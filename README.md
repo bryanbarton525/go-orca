@@ -29,7 +29,7 @@ Each persona operates within a strict role contract enforced by the engine: only
 - **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; the Implementer executes them; QA re-validates; the loop repeats up to `MaxQARetries` times
 - **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
-- **Three LLM backends** — OpenAI, Ollama (local), and GitHub Copilot
+- **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), and GitHub Copilot
 - **Multi-tenancy and scoping** — tenant + scope hierarchy (global → org → team) with per-scope customizations
 - **Customization system** — inject skills, agent personas, and prompt overlays from the filesystem or a repo
 - **Six delivery actions** — GitHub PR, direct commit, artifact bundle, markdown export, blog draft, webhook
