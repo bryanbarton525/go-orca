@@ -86,7 +86,16 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		// less), causing done_reason=length on long persona responses.
 		Options: map[string]any{"num_predict": -1},
 	}
-	if req.JSONMode {
+
+	// Use the strongest structured-output mode available.
+	// Schema-constrained format is strictly better than plain "json" — the model
+	// is constrained to the exact field names and types we expect.
+	if req.OutputSchema != nil {
+		schemaBytes, err := json.Marshal(req.OutputSchema)
+		if err == nil {
+			ollamaReq.Format = json.RawMessage(schemaBytes)
+		}
+	} else if req.JSONMode {
 		ollamaReq.Format = json.RawMessage(`"json"`)
 	}
 

@@ -48,7 +48,7 @@ type ProjectManager struct {
 
 // New returns a new ProjectManager persona.
 func New() *ProjectManager {
-	return &ProjectManager{exec: base.NewExecutor(systemPrompt)}
+	return &ProjectManager{exec: base.NewExecutor(systemPrompt, "pm_output", outputSchema)}
 }
 
 // Kind implements Persona.
@@ -67,6 +67,17 @@ type pmOutput struct {
 	Constitution state.Constitution `json:"constitution"`
 	Requirements state.Requirements `json:"requirements"`
 	Summary      string             `json:"summary"`
+}
+
+// outputSchema defines the structured JSON shape for ProjectManager responses.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"constitution": map[string]any{"type": "object"},
+		"requirements": map[string]any{"type": "object"},
+		"summary":      map[string]any{"type": "string"},
+	},
+	"required": []string{"constitution", "requirements", "summary"},
 }
 
 // Execute implements Persona.

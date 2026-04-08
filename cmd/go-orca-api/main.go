@@ -30,6 +30,7 @@ import (
 	"github.com/go-orca/go-orca/internal/persona/refiner"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	copilotProvider "github.com/go-orca/go-orca/internal/provider/copilot"
+	anthropicProvider "github.com/go-orca/go-orca/internal/provider/anthropic"
 	ollamaProvider "github.com/go-orca/go-orca/internal/provider/ollama"
 	openaiProvider "github.com/go-orca/go-orca/internal/provider/openai"
 	"github.com/go-orca/go-orca/internal/storage"
@@ -237,6 +238,17 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 			checkProviderReachability(p, log)
 		}
 	}
+
+	if cfg.Providers.Anthropic.Enabled {
+		p, err := anthropicProvider.New(cfg.Providers.Anthropic)
+		if err != nil {
+			log.Warn("anthropic provider init failed", zap.Error(err))
+		} else {
+			common.Register(p)
+			log.Info("provider registered", zap.String("name", "anthropic"))
+			checkProviderReachability(p, log)
+		}
+	}
 }
 
 // checkProviderReachability performs a best-effort connectivity check against a
@@ -259,6 +271,9 @@ func resolveDefaultProvider(cfg *config.Config) string {
 	if cfg.Providers.Ollama.Enabled {
 		return "ollama"
 	}
+	if cfg.Providers.Anthropic.Enabled {
+		return "anthropic"
+	}
 	if cfg.Providers.OpenAI.Enabled {
 		return "openai"
 	}
@@ -271,6 +286,9 @@ func resolveDefaultProvider(cfg *config.Config) string {
 func resolveDefaultModel(cfg *config.Config) string {
 	if cfg.Providers.Ollama.Enabled && cfg.Providers.Ollama.DefaultModel != "" {
 		return cfg.Providers.Ollama.DefaultModel
+	}
+	if cfg.Providers.Anthropic.Enabled && cfg.Providers.Anthropic.DefaultModel != "" {
+		return cfg.Providers.Anthropic.DefaultModel
 	}
 	if cfg.Providers.OpenAI.Enabled && cfg.Providers.OpenAI.DefaultModel != "" {
 		return cfg.Providers.OpenAI.DefaultModel

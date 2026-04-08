@@ -58,6 +58,17 @@ type taskSpec struct {
 	AssignedTo  state.PersonaKind `json:"assigned_to"`
 }
 
+// outputSchema defines the structured JSON shape for Architect responses.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"design":  map[string]any{"type": "object"},
+		"tasks":   map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+		"summary": map[string]any{"type": "string"},
+	},
+	"required": []string{"design", "tasks", "summary"},
+}
+
 // Architect implements persona.Persona.
 type Architect struct {
 	exec base.Executor
@@ -65,7 +76,7 @@ type Architect struct {
 
 // New returns a new Architect persona.
 func New() *Architect {
-	return &Architect{exec: base.NewExecutor(systemPrompt)}
+	return &Architect{exec: base.NewExecutor(systemPrompt, "architect_output", outputSchema)}
 }
 
 // Kind implements Persona.

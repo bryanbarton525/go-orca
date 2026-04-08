@@ -84,6 +84,26 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		params.Temperature = oai.Float(req.Temperature)
 	}
 
+	// Structured output: prefer schema-constrained mode over plain json_object.
+	if req.OutputSchema != nil {
+		name := req.SchemaName
+		if name == "" {
+			name = "response"
+		}
+		params.ResponseFormat = oai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &oai.ResponseFormatJSONSchemaParam{
+				JSONSchema: oai.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   name,
+					Schema: req.OutputSchema,
+				},
+			},
+		}
+	} else if req.JSONMode {
+		params.ResponseFormat = oai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &oai.ResponseFormatJSONObjectParam{},
+		}
+	}
+
 	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("openai: chat error: %w", err)

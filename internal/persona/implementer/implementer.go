@@ -44,6 +44,20 @@ type implOutput struct {
 	Issues              []string `json:"issues"`
 }
 
+// outputSchema defines the structured JSON shape for Implementer responses.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"artifact_kind":        map[string]any{"type": "string"},
+		"artifact_name":        map[string]any{"type": "string"},
+		"artifact_description": map[string]any{"type": "string"},
+		"content":              map[string]any{"type": "string"},
+		"summary":              map[string]any{"type": "string"},
+		"issues":               map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+	},
+	"required": []string{"artifact_kind", "artifact_name", "artifact_description", "content", "summary", "issues"},
+}
+
 // Implementer implements persona.Persona.
 type Implementer struct {
 	exec base.Executor
@@ -51,7 +65,7 @@ type Implementer struct {
 
 // New returns a new Implementer persona.
 func New() *Implementer {
-	return &Implementer{exec: base.NewExecutor(systemPrompt)}
+	return &Implementer{exec: base.NewExecutor(systemPrompt, "implementer_output", outputSchema)}
 }
 
 // Kind implements Persona.

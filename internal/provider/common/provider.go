@@ -70,7 +70,16 @@ type ChatRequest struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	// JSONMode asks the provider to constrain output to valid JSON.
 	// Supported by Ollama (format=json) and OpenAI (response_format=json_object).
+	// Ignored when OutputSchema is set (schema is strictly stronger).
 	JSONMode bool `json:"json_mode,omitempty"`
+	// OutputSchema is a JSON Schema object that constrains the model's output
+	// to a specific structure. When set, providers use their strongest
+	// structured-output mechanism (Ollama: format=<schema>,
+	// OpenAI: response_format=json_schema, Anthropic: output_format=json_schema).
+	OutputSchema map[string]any `json:"output_schema,omitempty"`
+	// SchemaName is a short identifier for the schema, used by providers that
+	// require a name (OpenAI json_schema response format).
+	SchemaName string `json:"schema_name,omitempty"`
 }
 
 // ChatResponse is the canonical response from any provider.

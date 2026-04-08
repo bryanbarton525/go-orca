@@ -62,6 +62,35 @@ type qaOutput struct {
 	Summary        string    `json:"summary"`
 }
 
+// outputSchema defines the structured JSON shape for QA responses.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"passed": map[string]any{"type": "boolean"},
+		"blocking_issues": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"severity":       map[string]any{"type": "string"},
+					"component":      map[string]any{"type": "string"},
+					"description":    map[string]any{"type": "string"},
+					"recommendation": map[string]any{"type": "string"},
+				},
+			},
+		},
+		"warnings": map[string]any{
+			"type": "array",
+			"items": map[string]any{"type": "object"},
+		},
+		"suggestions":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"coverage_score": map[string]any{"type": "integer"},
+		"quality_score":  map[string]any{"type": "integer"},
+		"summary":        map[string]any{"type": "string"},
+	},
+	"required": []string{"passed", "blocking_issues", "warnings", "suggestions", "coverage_score", "quality_score", "summary"},
+}
+
 // QA implements persona.Persona.
 type QA struct {
 	exec base.Executor
@@ -69,7 +98,7 @@ type QA struct {
 
 // New returns a new QA persona.
 func New() *QA {
-	return &QA{exec: base.NewExecutor(systemPrompt)}
+	return &QA{exec: base.NewExecutor(systemPrompt, "qa_output", outputSchema)}
 }
 
 // Kind implements Persona.

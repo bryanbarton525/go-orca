@@ -87,6 +87,43 @@ type refinerOutput struct {
 	Summary           string `json:"summary"`
 }
 
+// finalizerSchema defines the structured output shape for the Finalizer.
+var finalizerSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"delivery_action": map[string]any{"type": "string"},
+		"summary":         map[string]any{"type": "string"},
+		"links":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"metadata":        map[string]any{"type": "object"},
+		"suggestions":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"delivery_notes":  map[string]any{"type": "string"},
+	},
+	"required": []string{"delivery_action", "summary", "links", "metadata", "suggestions", "delivery_notes"},
+}
+
+// refinerSchema defines the structured output shape for the embedded Refiner.
+var refinerSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"improvements": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"component_type": map[string]any{"type": "string"},
+					"component_name": map[string]any{"type": "string"},
+					"problem":        map[string]any{"type": "string"},
+					"proposed_fix":   map[string]any{"type": "string"},
+					"priority":       map[string]any{"type": "string"},
+				},
+			},
+		},
+		"overall_assessment": map[string]any{"type": "string"},
+		"summary":            map[string]any{"type": "string"},
+	},
+	"required": []string{"improvements", "overall_assessment", "summary"},
+}
+
 // Finalizer implements persona.Persona.
 type Finalizer struct {
 	exec        base.Executor
@@ -96,8 +133,8 @@ type Finalizer struct {
 // New returns a new Finalizer persona.
 func New() *Finalizer {
 	return &Finalizer{
-		exec:        base.NewExecutor(systemPrompt),
-		refinerExec: base.NewExecutor(refinerSystemPrompt),
+		exec:        base.NewExecutor(systemPrompt, "finalizer_output", finalizerSchema),
+		refinerExec: base.NewExecutor(refinerSystemPrompt, "refiner_output", refinerSchema),
 	}
 }
 

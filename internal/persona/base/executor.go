@@ -17,11 +17,19 @@ import (
 // Executor is the shared execution engine embedded in every built-in persona.
 type Executor struct {
 	SystemPrompt string
+	// SchemaName is a short identifier for the output schema (e.g. "director_output").
+	// Required by providers that need a named schema (e.g. OpenAI json_schema mode).
+	SchemaName string
+	// OutputSchema is the JSON Schema that constrains the model's response.
+	// When set, the provider uses its strongest structured-output mechanism.
+	// When nil, JSONMode (format=json) is used as a fallback.
+	OutputSchema map[string]any
 }
 
-// NewExecutor creates an Executor with the given system prompt.
-func NewExecutor(systemPrompt string) Executor {
-	return Executor{SystemPrompt: systemPrompt}
+// NewExecutor creates an Executor with the given system prompt and optional
+// output schema. Pass a nil schema to fall back to plain JSON mode.
+func NewExecutor(systemPrompt string, schemaName string, schema map[string]any) Executor {
+	return Executor{SystemPrompt: systemPrompt, SchemaName: schemaName, OutputSchema: schema}
 }
 
 // Run sends a chat request to the provider resolved from the HandoffPacket,
@@ -40,9 +48,11 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, userProm
 	}
 
 	resp, err := provider.Chat(ctx, common.ChatRequest{
-		Model:    packet.ModelName,
-		Messages: msgs,
-		JSONMode: true,
+		Model:        packet.ModelName,
+		Messages:     msgs,
+		JSONMode:     true,
+		OutputSchema: e.OutputSchema,
+		SchemaName:   e.SchemaName,
 	})
 	if err != nil {
 		return "", fmt.Errorf("executor: chat error: %w", err)
@@ -149,8 +159,8 @@ func ParseJSON(raw string, target interface{}) error {
 		if strings.Contains(err.Error(), "unexpected end of JSON") {
 			if recovered := repairTruncatedJSON(cleaned); recovered != cleaned {
 				if err2 := json.Unmarshal([]byte(recovered), target); err2 == nil {
-					// Parsed after repair — warn but don't fail.
-					return fmt.Errorf("base: model output was truncated (hit token limit) — JSON was partially repaired; some fields may be missing")
+					// Repaired successfully — log and continue; don't fail the task.
+					return nil
 				}
 			}
 			return fmt.Errorf(
@@ -230,16 +240,54 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// extractJSON strips markdown code fences from a model response.
+// extractJSON strips markdown code fences from a model response, then finds
+// the first { or [ if there is leading prose before the JSON.
+//
+// It only looks for code fences when the response actually starts with a
+// backtick — NOT when the first character is already { or [. This avoids
+// misidentifying Go code fences embedded inside JSON string values (e.g.
+// inside the "content" field of an implementer artifact) as fence wrappers.
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
-	for _, fence := range []string{"```json", "```"} {
-		if idx := strings.Index(s, fence); idx != -1 {
-			s = s[idx+len(fence):]
-			if end := strings.LastIndex(s, "```"); end != -1 {
-				s = s[:end]
+
+	if strings.HasPrefix(s, "```") {
+		// Response is wrapped in a markdown code fence — strip it.
+		for _, fence := range []string{"```json", "```"} {
+			if strings.HasPrefix(s, fence) {
+				s = s[len(fence):]
+				if end := strings.LastIndex(s, "```"); end != -1 {
+					s = s[:end]
+				}
+				return strings.TrimSpace(s)
 			}
-			return strings.TrimSpace(s)
+		}
+	}
+
+	// No fence wrapper. The response may have prose before a fenced JSON block,
+	// e.g. "Here is the output:\n```json\n{...}\n```". In that case, strip the
+	// intervening fence opener and then trim whatever closing fence remains.
+	if idx := strings.Index(s, "```"); idx != -1 {
+		after := strings.TrimSpace(s[idx:])
+		for _, fence := range []string{"```json", "```"} {
+			if strings.HasPrefix(after, fence) {
+				after = strings.TrimSpace(after[len(fence):])
+				break
+			}
+		}
+		// Strip trailing fence, if any.
+		if end := strings.LastIndex(after, "```"); end != -1 {
+			after = strings.TrimSpace(after[:end])
+		}
+		// Make sure we actually found JSON, not just more prose.
+		if len(after) > 0 && (after[0] == '{' || after[0] == '[') {
+			return after
+		}
+	}
+
+	// Advance past any leading prose to the first { or [.
+	for i, ch := range s {
+		if ch == '{' || ch == '[' {
+			return s[i:]
 		}
 	}
 	return s

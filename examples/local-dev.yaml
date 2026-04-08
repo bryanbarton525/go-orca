@@ -53,11 +53,18 @@ providers:
     enabled: true
     host: "https://ollama.barton.local"
     default_model: "qwen3.5:9b"
-    timeout: "180s"        # local models can be slow; increase for large models
+    timeout: "600s"        # local models can be slow; QA receives large artifact context
     tls_skip_verify: true  # homelab CA not trusted on this machine
 
   copilot:
     enabled: false
+
+  anthropic:
+    enabled: false
+    # api_key: "sk-ant-..."       # or set GOORCA_PROVIDERS_ANTHROPIC_API_KEY
+    default_model: "claude-sonnet-4-5"
+    max_tokens: 16384
+    timeout: "120s"
 
 # ─── Customizations ───────────────────────────────────────────────────────────
 customizations:

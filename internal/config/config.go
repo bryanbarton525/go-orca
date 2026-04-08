@@ -91,9 +91,20 @@ type ScopingConfig struct {
 
 // ProvidersConfig holds per-provider settings.
 type ProvidersConfig struct {
-	OpenAI  OpenAIConfig  `mapstructure:"openai"`
-	Ollama  OllamaConfig  `mapstructure:"ollama"`
-	Copilot CopilotConfig `mapstructure:"copilot"`
+	OpenAI    OpenAIConfig    `mapstructure:"openai"`
+	Ollama    OllamaConfig    `mapstructure:"ollama"`
+	Copilot   CopilotConfig   `mapstructure:"copilot"`
+	Anthropic AnthropicConfig `mapstructure:"anthropic"`
+}
+
+// AnthropicConfig holds Anthropic Claude API settings.
+type AnthropicConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	APIKey       string        `mapstructure:"api_key"`
+	BaseURL      string        `mapstructure:"base_url"`
+	DefaultModel string        `mapstructure:"default_model"`
+	MaxTokens    int           `mapstructure:"max_tokens"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // OpenAIConfig holds OpenAI / Codex settings.

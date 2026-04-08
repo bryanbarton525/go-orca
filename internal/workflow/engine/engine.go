@@ -284,12 +284,20 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			return fmt.Errorf("implementer persona not registered")
 		}
 
+		// Mark task running before LLM call so callers see the transition.
+		t.Status = state.TaskStatusRunning
+		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+			return fmt.Errorf("save before implementer task %s: %w", t.ID[:8], err)
+		}
+
 		startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventTaskStarted, state.PersonaImplementer,
 			map[string]string{"task_id": t.ID, "title": t.Title})
 		_ = e.store.AppendEvents(ctx, startEvt)
 
-		out, err := p.Execute(ctx, packet)
+		taskCtx, taskCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+		out, err := p.Execute(taskCtx, packet)
+		taskCancel()
 		if err != nil {
 			t.Status = state.TaskStatusFailed
 			_ = e.store.SaveWorkflow(ctx, ws)

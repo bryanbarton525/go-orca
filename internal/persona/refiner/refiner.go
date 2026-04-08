@@ -66,6 +66,31 @@ type Output struct {
 // refinerOutput mirrors Output for JSON parsing.
 type refinerOutput = Output
 
+// outputSchema defines the structured output shape for standalone Refiner runs.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"improvements": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"component_type": map[string]any{"type": "string"},
+					"component_name": map[string]any{"type": "string"},
+					"problem":        map[string]any{"type": "string"},
+					"proposed_fix":   map[string]any{"type": "string"},
+					"example":        map[string]any{"type": "string"},
+					"priority":       map[string]any{"type": "string"},
+				},
+			},
+		},
+		"overall_assessment": map[string]any{"type": "string"},
+		"health_score":       map[string]any{"type": "integer"},
+		"summary":            map[string]any{"type": "string"},
+	},
+	"required": []string{"improvements", "overall_assessment", "health_score", "summary"},
+}
+
 // Refiner implements persona.Persona.
 type Refiner struct {
 	exec base.Executor
@@ -73,7 +98,7 @@ type Refiner struct {
 
 // New returns a new Refiner persona.
 func New() *Refiner {
-	return &Refiner{exec: base.NewExecutor(systemPrompt)}
+	return &Refiner{exec: base.NewExecutor(systemPrompt, "refiner_output", outputSchema)}
 }
 
 // Kind implements Persona.

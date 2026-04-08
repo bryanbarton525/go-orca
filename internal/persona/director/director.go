@@ -59,6 +59,22 @@ type Output struct {
 	Summary          string              `json:"summary"`
 }
 
+// outputSchema defines the structured JSON shape for Director responses.
+var outputSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"mode":              map[string]any{"type": "string"},
+		"title":            map[string]any{"type": "string"},
+		"provider":         map[string]any{"type": "string"},
+		"model":            map[string]any{"type": "string"},
+		"finalizer_action": map[string]any{"type": "string"},
+		"required_personas": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"rationale": map[string]any{"type": "string"},
+		"summary":   map[string]any{"type": "string"},
+	},
+	"required": []string{"mode", "title", "provider", "model", "finalizer_action", "required_personas", "rationale", "summary"},
+}
+
 // Director implements persona.Persona.
 type Director struct {
 	exec base.Executor
@@ -66,7 +82,7 @@ type Director struct {
 
 // New returns a new Director persona.
 func New() *Director {
-	return &Director{exec: base.NewExecutor(systemPrompt)}
+	return &Director{exec: base.NewExecutor(systemPrompt, "director_output", outputSchema)}
 }
 
 // Kind implements Persona.
