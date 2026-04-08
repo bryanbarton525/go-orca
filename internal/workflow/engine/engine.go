@@ -145,31 +145,47 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		}
 	}
 
-	// Phase 1: Director
-	if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
-		return fmt.Errorf("director phase: %w", err)
+	// phaseComplete returns true when a persona phase already ran in a prior
+	// attempt (indicated by a non-empty summary entry).  This lets a resumed or
+	// retried workflow skip phases that succeeded, rather than replaying the
+	// entire pipeline from scratch.
+	phaseComplete := func(kind state.PersonaKind) bool {
+		return ws.Summaries != nil && ws.Summaries[kind] != ""
 	}
-	if err := e.checkPause(ctx, ws); err != nil {
-		return err
+
+	// Phase 1: Director
+	if !phaseComplete(state.PersonaDirector) {
+		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
+			return fmt.Errorf("director phase: %w", err)
+		}
+		if err := e.checkPause(ctx, ws); err != nil {
+			return err
+		}
 	}
 
 	// Phase 2: Project Manager
-	if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
-		return fmt.Errorf("pm phase: %w", err)
-	}
-	if err := e.checkPause(ctx, ws); err != nil {
-		return err
+	if !phaseComplete(state.PersonaProjectMgr) {
+		if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
+			return fmt.Errorf("pm phase: %w", err)
+		}
+		if err := e.checkPause(ctx, ws); err != nil {
+			return err
+		}
 	}
 
 	// Phase 3: Architect
-	if err := e.runPersona(ctx, ws, state.PersonaArchitect, snap); err != nil {
-		return fmt.Errorf("architect phase: %w", err)
-	}
-	if err := e.checkPause(ctx, ws); err != nil {
-		return err
+	if !phaseComplete(state.PersonaArchitect) {
+		if err := e.runPersona(ctx, ws, state.PersonaArchitect, snap); err != nil {
+			return fmt.Errorf("architect phase: %w", err)
+		}
+		if err := e.checkPause(ctx, ws); err != nil {
+			return err
+		}
 	}
 
-	// Phase 4: Implementer — runs once per ready task
+	// Phase 4: Implementer — runs once per ready/pending task.
+	// Any tasks already marked completed survive the skip — only unfinished
+	// tasks are sent to the LLM.
 	if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
 		return fmt.Errorf("implementer phase: %w", err)
 	}
@@ -177,37 +193,41 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		return err
 	}
 
-	// Phase 5: QA — retry loop
-	for attempt := 0; attempt <= e.opts.MaxQARetries; attempt++ {
-		if err := e.runPersona(ctx, ws, state.PersonaQA, snap); err != nil {
-			return fmt.Errorf("qa phase (attempt %d): %w", attempt+1, err)
-		}
+	// Phase 5: QA — retry loop (skip entirely if QA already passed in a prior run)
+	if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
+		for attempt := 0; attempt <= e.opts.MaxQARetries; attempt++ {
+			if err := e.runPersona(ctx, ws, state.PersonaQA, snap); err != nil {
+				return fmt.Errorf("qa phase (attempt %d): %w", attempt+1, err)
+			}
 
-		if len(ws.BlockingIssues) == 0 {
-			break // QA passed
-		}
+			if len(ws.BlockingIssues) == 0 {
+				break // QA passed
+			}
 
-		if attempt == e.opts.MaxQARetries {
-			return fmt.Errorf("qa: %d blocking issues remain after %d retries: %v",
-				len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
-		}
+			if attempt == e.opts.MaxQARetries {
+				return fmt.Errorf("qa: %d blocking issues remain after %d retries: %v",
+					len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
+			}
 
-		// Re-run Implementer to address blocking issues.
-		if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
-			return fmt.Errorf("implementer re-run (attempt %d): %w", attempt+1, err)
+			// Re-run Implementer to address blocking issues.
+			if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
+				return fmt.Errorf("implementer re-run (attempt %d): %w", attempt+1, err)
+			}
+			if err := e.checkPause(ctx, ws); err != nil {
+				return err
+			}
+			ws.BlockingIssues = nil // reset before next QA pass
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
-			return err
-		}
-		ws.BlockingIssues = nil // reset before next QA pass
 	}
 	if err := e.checkPause(ctx, ws); err != nil {
 		return err
 	}
 
 	// Phase 6: Finalizer (includes inline Refiner retrospective)
-	if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
-		return fmt.Errorf("finalizer phase: %w", err)
+	if !phaseComplete(state.PersonaFinalizer) {
+		if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
+			return fmt.Errorf("finalizer phase: %w", err)
+		}
 	}
 
 	return nil
@@ -271,7 +291,9 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {
 	for i := range ws.Tasks {
 		t := &ws.Tasks[i]
-		if t.Status != state.TaskStatusReady && t.Status != state.TaskStatusPending {
+		if t.Status != state.TaskStatusReady &&
+			t.Status != state.TaskStatusPending &&
+			t.Status != state.TaskStatusFailed {
 			continue
 		}
 
