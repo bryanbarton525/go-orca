@@ -1,0 +1,47 @@
+<!-- index.html content updated to include the corrected fetchWorkflows function -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go-Orca Workflow Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; background-color: #f4f4f9; }
+        header { background: #333; color: white; padding: 1em; text-align: center; margin-bottom: 1em; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: #333; }
+        #workflow-list-container { margin-top: 20px; }
+        .workflow-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 6px; background-color: #fafafa; }
+        .workflow-card h3 { margin-top: 0; color: #0056b3; }
+        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 15px; color: white; font-weight: bold; font-size: 0.9em; margin-left: 10px; }
+        .status-RUNNING { background-color: #28a745; }
+        .status-PENDING { background-color: #ffc107; color: #333; }
+        .status-PAUSED { background-color: #6c757d; }
+        .status-FAILED { background-color: #dc3545; }
+        .submission-form { padding: 20px; border: 2px dashed #ccc; border-radius: 8px; margin-bottom: 30px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], textarea { width: 98%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        button:hover { background-color: #0056b3; }
+        .error-message { color: red; margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>go-orca Workflow Dashboard</h1>
+        <p>Monitor and trigger workflow executions.</p>
+    </header>
+
+    <div class="container">
+        <section class="submission-section">
+            <h2>Submit New Workflow</h2>
+            <form id="submit-form" class="submission-form">
+                <div class="form-group">
+                    <label for="workflowName">Workflow Name *</label>
+                    <input type="text" id="workflowName" name="workflowName" required>
+                </div>
+                <div class="form-group">
+                    <label for="parameters">Parameters (JSON recommended)</label>
+                    <textarea id="parameters" name="parameters" rows="4" placeholder='{
