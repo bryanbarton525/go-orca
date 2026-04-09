@@ -1,0 +1,82 @@
+package main
+
+import (
+	"fmt"
+)
+
+// StringChunks splits a UTF-8 string into chunks, ensuring no chunk exceeds `size` runes.
+// It returns the chunks as a slice of strings. Adheres strictly to rune counting.
+func StringChunks(s string, size int) []string {
+	// F3: Handle empty string
+	if s == "" {
+		return []string{}
+	}
+
+	// F2: Handle zero or negative size
+	if size < 1 {
+		return []string{}
+	}
+
+	// Convert to rune slice to guarantee correct UTF-8 boundary handling
+	runes := []rune(s)
+	var chunks []string
+	
+	for i := 0; i < len(runes); {
+		// Determine the end index for the current chunk, respecting 'size' limit
+		end := i + size
+		
+		// Ensure 'end' does not exceed the total number of runes
+		if end > len(runes) {
+			end = len(runes)
+		}
+
+		// Extract the runes for the current chunk
+		chunkRunes := runes[i:end]
+		
+		// Append the chunk (converting runes back to string) to the result slice
+		chunks = append(chunks, string(chunkRunes))
+		
+		// Move the start index past the runes just processed
+	i = end
+	}
+
+	return chunks
+}
+
+// --- Example Usage and Basic Test Demonstration (Not part of the required function, but useful for completeness) ---
+func main() {
+	// Test Case 1: Basic chunking
+	text1 := "abcdefghijklm"
+	size1 := 3
+	chunks1 := StringChunks(text1, size1)
+	fmt.Printf("Input: %q, Size: %d, Chunks: %v (Total Runes: %d)
+", text1, size1, chunks1, len([]rune(text1)))
+
+	// Test Case 2: UTF-8 boundary test (Japanese characters)
+	text2 := "こんにちは世界"
+	size2 := 2
+	chunks2 := StringChunks(text2, size2)
+	fmt.Printf("Input: %q, Size: %d, Chunks: %v (Total Runes: %d)
+", text2, size2, chunks2, len([]rune(text2)))
+	
+	// Test Case 3: Edge Case - Size > Length
+	text3 := "short"
+	size3 := 10
+	chunks3 := StringChunks(text3, size3)
+	fmt.Printf("Input: %q, Size: %d, Chunks: %v (Total Runes: %d)
+", text3, size3, chunks3, len([]rune(text3)))
+
+	// Test Case 4: Edge Case - Empty String
+	text4 := ""
+	size4 := 5
+	chunks4 := StringChunks(text4, size4)
+	fmt.Printf("Input: %q, Size: %d, Chunks: %v (Total Runes: %d)
+", text4, size4, chunks4, len([]rune(text4)))
+
+	// Test Case 5: Edge Case - Invalid Size
+	text5 := "test"
+	size5 := 0
+	chunks5 := StringChunks(text5, size5)
+	fmt.Printf("Input: %q, Size: %d, Chunks: %v (Total Runes: %d)
+", text5, size5, chunks5, len([]rune(text5)))
+}
