@@ -1,0 +1,33 @@
+# Feature: Workflow Dashboard UI Integration
+
+## Summary
+
+This pull request integrates a read-only/write-only dashboard UI into the existing `go-orca` application. The dashboard is accessible via the new `/dashboard` endpoint and allows users to monitor in-flight workflows and submit new workflow requests using existing API endpoints.
+
+The primary functional enhancements are:
+
+*   **Workflow Monitoring:** Client-side JavaScript fetches the list of active workflows by calling `GET /workflows` and provides client-side filtering/display for 'pending', 'running', or 'paused' statuses.
+*   **Workflow Submission:** Client-side JavaScript handles form submissions, serializing the input data, and submitting a new workflow request via `POST /workflows`.
+*   **Integration:** The UI is served by modifying the main application router to point `/dashboard` to the static `index.html` asset, ensuring minimal disruption to existing API surface area.
+
+This change adheres to the goal of minimizing new code surface area while providing essential operational visibility.
+
+## Testing
+
+To verify the functionality and ensure no regressions, please run the entire test suite:
+
+```bash
+go test ./...
+```
+
+**Testing Scope Notes:**
+
+1.  **Backend Contract Testing:** Existing unit and integration tests (`go test ./...`) verify that the underlying `/workflows` GET and POST endpoints retain their contracts.
+2.  **Dashboard Service Test:** A new integration test (`dashboard_integration_test.go`) verifies that the router correctly serves the static `/dashboard` page.
+3.  **Client-Side Functionality:** Full validation of the client-side JS logic (filtering, data rendering, form submission success/error handling) should be verified via manual End-to-End (E2E) browser testing using the UI in a staging environment, as this is outside the scope of standard Go unit tests.
+
+## Risks
+
+1.  **Client-Side Coupling:** The UI is tightly coupled to the exact structure and contracts of the existing `/workflows` GET/POST endpoints. Any future, unannounced schema change to these endpoints will immediately break the dashboard UI.
+2.  **Error State Depth:** Error handling is currently limited to basic client-side notifications (e.g., form alert). Complex API error payloads (beyond general failures) require manual updates to the client JavaScript.
+3.  **Testing Surface Area:** While the backend is covered by existing unit tests, the integration of the static assets means the entire system's behavior is reliant on the correct mapping and serving mechanism, which is inherently more brittle than purely API-driven changes.
