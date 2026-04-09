@@ -1,0 +1,25 @@
+## Asset Placement and Structure Update
+
+To comply with the constraints of modifying only existing files and avoiding new packages, the static assets must be placed within an existing, recognized asset serving directory.
+
+**Recommended Location:**
+Based on the constraint requiring minimal invasiveness, the assets should be placed in a location analogous to where other static content is served. If an existing directory like `web/assets/` or a similar subdirectory handling client-side content exists, use that. For this guidance, we assume the assets will reside under `web/assets/dashboard/` to logically group the new UI components, but the router modification must ensure this directory serving mechanism hooks into existing path patterns.
+
+**File Structure:**
+```
+[root]/web/assets/dashboard/
+├── index.html
+├── main.js
+└── style.css
+```
+
+**Implementation Adjustments Required:**
+
+1.  **Router Update:** The handler responsible for serving the dashboard must be updated to use `http.FileServer` pointing to the `web/assets/dashboard` directory path. This pattern must mimic how other static directories are served to avoid introducing new routing logic.
+2.  **`index.html` Updates:** All internal links and script references must be updated to use relative paths from the root served directory. 
+    *   The main JavaScript bundle must reference `main.js`: `<script src="main.js"></script>`
+    *   CSS must reference `style.css`: `<link rel="stylesheet" href="style.css">
+
+**File Contents Verification:**
+*   **`index.html`**: Ensure all paths use relative addressing (e.g., `<script src="main.js"></script>`).
+*   **`main.js`**: No changes are expected here other than ensuring it reads relative paths correctly when run in the browser environment served by the updated router.
