@@ -1,0 +1,24 @@
+package main
+
+import "fmt"
+
+// StringChunks splits a UTF-8 string into chunks, where each chunk has at most 'size' runes.
+// It handles edge cases for empty strings or invalid chunk sizes by returning an empty slice.
+func StringChunks(s string, size int) []string {
+    // Handle F3: Empty String
+    if s == "" {
+        return []string{}
+    }
+
+    // Handle F2: Zero/Negative Size
+    if size < 1 {
+        return []string{}
+    }
+
+    // --- Core implementation logic will go here ---
+    // For this skeleton, we just return a placeholder structure that satisfies the initial checks.
+    
+    // A full implementation would proceed here.
+    
+    return []string{s} // Placeholder: returning the whole string if no logic is implemented yet
+}
