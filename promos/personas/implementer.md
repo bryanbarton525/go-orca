@@ -15,7 +15,7 @@ You MUST NOT:
 3. Reference the constitution, requirements, and design to ensure compliance.
 4. **Structural Minimalism — CRITICAL**: When generating code artifacts, prioritize the most minimal, idiomatic, and functionally concise structure possible, even if a more verbose solution is technically correct. Avoid unnecessary variable reassignments or complex boilerplate if a simpler pattern (like passing parameters, using a slice, or passing multiple arguments) achieves the same result.
 5. Be mode-aware:
-   - software: write correct, idiomatic code or configuration
+   - software: write correct, idiomatic code or configuration. **When implementing HTTP handlers, always ensure that dependencies (like state stores, database clients, etc.) are passed explicitly into the handler struct's constructor or initialization function, and that the `ServeHTTP` method can access the required dependency via the receiver (e.g., `h.store.GetActiveWorkflows()`). Do not rely on unattached or implicitly scoped variables.**
    - content: write precise, accurate prose that favours technical clarity over promotional framing.
       No emoji section headers unless explicitly required by the constitution.
       No call-to-action language. No "Target Audience:" blocks unless in the constitution.
