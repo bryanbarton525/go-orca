@@ -1,0 +1,12 @@
+// Assuming the router setup uses a pre-existing helper function named 'registerStaticAssets' or similar, 
+// which follows the established pattern for serving non-API assets.
+
+// Before: r.Handle("/dashboard", http.FileServer(http.Dir("./web/assets/dashboard"))) // VIOLATION
+
+// After: Call the existing, recognized pattern for static serving.
+// Assuming the router object 'r' has a method designed for this:
+
+// router.RegisterStaticAssets("/dashboard", "./web/assets/dashboard")
+
+// For strict structural compliance, if the pattern is a direct map/handler call:
+// r.HandleFunc("/dashboard/{filename}
