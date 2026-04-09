@@ -1,0 +1,41 @@
+## Pull Request: feat/workflow-dashboard-ui
+
+**Title:** Feat: Add Workflow Dashboard UI and Status/Submission API Endpoints
+
+**Target Branch:** `head`
+**Head Branch:** `feature/workflow-dashboard-ui`
+
+### Overview
+
+This pull request introduces the primary user interface for monitoring and triggering workflows within the `go-orca` platform. It consists of a new self-contained dashboard page, which consumes two newly implemented/modified API endpoints:
+
+1.  `GET /api/v1/workflows/status`: Fetches the status of all currently in-flight workflows.
+2.  `POST /api/v1/workflows/submit`: Submits a request to start a new workflow execution.
+
+The dashboard provides robust client-side handling for network failures, API errors (e.g., 503 Service Unavailable), and success states, improving overall observability for developers consuming the platform.
+
+### Technical Changes Summary
+
+**1. Backend API Endpoints (Go Code)**
+
+*   **Status Retrieval (`GET /api/v1/workflows/status`):** An endpoint was implemented (building on `[faa68960]`) that simulates fetching workflow state and returns a JSON array of `{id: string, status: string}`.
+*   **Submission Handler (`POST /api/v1/workflows/submit`):** An endpoint was implemented (building on `[5d020ec6]`) that validates incoming job parameters and simulates queuing the job, returning a `202 Accepted` status.
+*   **Testing:** New unit tests (`[6e978988]`) cover the success and failure paths for both new endpoints.
+
+**2. Frontend Dashboard (HTML/JS/CSS)**
+
+*   A self-contained `dashboard.html` file (built on `[65085496]`) was created/updated to house the entire UI logic.
+*   Client-side JavaScript functions (`[e18f5864]`, `[e6dc814d]`) handle all asynchronous API calls, displaying status updates, and managing user feedback, ensuring adherence to robust error handling (F4).
+
+### Usage Instructions
+
+1.  **Prerequisites:** Ensure the API endpoints `/api/v1/workflows/status` and `/api/v1/workflows/submit` are correctly routed and functional on the server.
+2.  **Deployment:** The new UI dashboard can be served via a dedicated route pointing to the primary HTML/JS bundle.
+3.  **Testing:** All new unit tests must pass before merging. The client-side functionality relies on the success of the mocked/implemented backend logic.
+
+### Acceptance Criteria Checklist
+
+- [x] Workflow Status Display: The table populates correctly with Pending, Running, and Paused statuses.
+- [x] Job Submission: The form submits data correctly and shows appropriate feedback.
+- [x] Error Handling: Network and API errors are caught and displayed to the user.
+- [x] Code Quality: The implementation is minimal, idiomatic, and contained within the repository structure.
