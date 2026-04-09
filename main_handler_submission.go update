@@ -1,0 +1,45 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+)
+
+// --- Start of assumed structure/constants for context ---
+
+// Define the structure expected for successful and error responses.
+type APIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    string `json:"data,omitempty"`
+}
+
+// SubmitRequest models the incoming JSON payload from the client.
+type SubmitRequest struct {
+	TemplateID string `json:"template_id"`
+	Parameters map[string]string `json:"parameters"`
+}
+
+// --- End of assumed structure/constants for context ---
+
+// RespondWithError sets the appropriate HTTP status code and writes a standardized JSON error body.
+func RespondWithError(w http.ResponseWriter, statusCode int, message string) {
+	// 1. Set the appropriate HTTP status code first.
+	w.WriteHeader(statusCode)
+
+	// 2. Construct the standardized error response payload.
+	resp := APIResponse{
+		Success: false,
+		Message: message,
+	}
+
+	// 3. Marshal and write the JSON body, fulfilling the QA requirement.	// Note: Using json.NewEncoder is idiomatic for writing to http.ResponseWriter
+	// as it handles headers correctly.
+	e := json.NewEncoder(w)
+	if eErr := e.Encode(resp); eErr != nil {
+		// If even encoding the error fails (unlikely but defensive), log it or handle fallback.
+		http.Error(w, "Internal serialization error", http.StatusInternalServerError)
+		return
+	}
+}
