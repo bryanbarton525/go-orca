@@ -1,0 +1,10 @@
+## Summary
+This pull request includes the implementation of a simple dashboard page within the go-orca codebase that displays in-flight workflows and allows users to submit new ones. The implementation uses existing API endpoints (GET /workflows and POST /workflows) and adheres to architectural simplicity by using only one HTML page and one JS file.
+
+## Testing
+The quality gate requires running `go test ./...` until all tests are passing. After executing the command, all unit tests passed successfully.
+
+```
+go test ./...
+ok      github.com/gorca/go-orca 0.512s
+```
