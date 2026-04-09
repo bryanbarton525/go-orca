@@ -1,0 +1,314 @@
+<!--
+/**
+ * Workflow Dashboard UI Template
+ * Purpose: Provides the structural foundation (HTML/CSS/JS) for the go-orca workflow dashboard.
+ * This file is intended to be served by a minimal backend endpoint.
+ * Contains client-side logic skeletons for status fetching and job submission.
+ * @author Implementer
+ * @version 1.0
+ */
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestrator Dashboard - Workflow Status</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            margin: 0; 
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #007bff;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+            margin-bottom: 25px;
+        }
+        section {
+            margin-bottom: 40px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #555;
+        }
+
+        /* Status Table Styling */
+        #workflowStatusContainer table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        #workflowStatusContainer th, #workflowStatusContainer td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        #workflowStatusContainer th {
+            background-color: #007bff; 
+            color: white;
+            font-weight: 600;
+        }
+        #workflowStatusContainer tr:nth-child(even) { background-color: #f9f9f9; }
+        #workflowStatusContainer tr:hover { background-color: #e9ecef; }
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-weight: bold;
+            color: white;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+        .status-PENDING { background-color: #ffc107; color: #333; } /* Yellow */
+        .status-RUNNING { background-color: #28a745; } /* Green */
+        .status-PAUSED { background-color: #dc3545; } /* Red */
+        .status-ERROR { background-color: #6c757d; } /* Grey */
+
+        /* Submission Form Styling */
+        #submissionFormContainer form {
+            display: grid;
+            gap: 15px;
+            max-width: 600px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box; /* Important for padding/width consistency */
+        }
+        button {
+            background-color: #28a745; /* Success color for primary action */
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        button:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+        }
+        #feedbackMessage { 
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 15px;
+            display: none;
+        }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Orchestration Workflow Dashboard</h1>
+
+        <!-- Section 1: Status Display (F1) -->
+        <section id="workflowStatusSection">
+            <h2><i class="fas fa-list-alt"></i> In-Flight Workflow Status</h2>
+            <p>Displays workflows currently being processed, pending, or paused. Last updated: <span id="lastUpdated">N/A</span></p>
+            <button id="refreshStatusBtn" style="background-color: #007bff; margin-bottom: 20px;" onclick="fetchWorkflowStatuses()">Refresh Status</button>
+            
+            <div id="workflowStatusContainer">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Workflow ID</th>
+                            <th>Status</th>
+                            <th>Initiated By</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workflowTableBody">
+                        <!-- Workflow rows will be injected here by JavaScript -->
+                        <tr><td colspan="4" style="text-align:center;">Click 'Refresh Status' to load active workflows.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 2: Submission Form (F2) -->
+        <section id="submissionFormSection">
+            <h2><i class="fas fa-play-circle"></i> Submit New Workflow Request</h2>
+            <p>Use the form below to trigger a new workflow execution. All fields are mandatory unless otherwise noted by the API contract.</p>
+            
+            <div id="submissionFormContainer">
+                <form id="workflowSubmitForm">
+                    <div>
+                        <label for="templateId">Workflow Template ID <span style="color:red;">*</span></label>
+                        <input type="text" id="templateId" name="template_id" placeholder="e.g., data_processing_v2" required>
+                    </div>
+                    <div>
+                        <label for="parameters">Parameters (JSON/Key-Value)</label>
+                        <textarea id="parameters" name="parameters" rows="3" placeholder="{"dataset_name": "users", "batch_size": 100}" required></textarea>
+                    </div>
+                    <div>
+                        <label for="owner">Owner/Requester</label>
+                        <input type="text" id="owner" name="owner" placeholder="user@example.com" required>
+                    </div>
+                    
+                    <button type="submit" id="submitBtn">Trigger Workflow</button>
+                </form>
+                <div id="feedbackMessage"></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // --- Configuration --- 
+        // These URLs must point to the actual implemented backend endpoints.
+        const STATUS_API_URL = '/api/v1/workflows/status'; 
+        const SUBMIT_API_URL = '/api/v1/workflows/submit'; 
+
+        // --- Utility Functions ---
+        const getStatusBadgeClass = (status) => `status-${status.toUpperCase()}`; 
+
+        // --- Status Fetching Logic (F1, F4) ---
+        async function fetchWorkflowStatuses() {
+            const tableBody = document.getElementById('workflowTableBody');
+            const refreshBtn = document.getElementById('refreshStatusBtn');
+            const lastUpdatedSpan = document.getElementById('lastUpdated');
+            
+            // UI Feedback: Loading State
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px;">Loading workflow status...</td></tr>';
+            refreshBtn.disabled = true; 
+            refreshBtn.textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(STATUS_API_URL);
+                if (!response.ok) {
+                    // Handle non-2xx server errors (e.g., 503 from mock store unavailability)
+                    const errorData = await response.json().catch(() => ({ message: 'Unknown API Error' }));
+                    throw new Error(`Failed to fetch status. Server responded with ${response.status}: ${errorData.message || 'Check backend logs.'}`);
+                }
+                
+                const workflows = await response.json();
+                displayWorkflows(workflows);
+                lastUpdatedSpan.textContent = new Date().toLocaleTimeString();
+
+            } catch (error) {
+                // Handle network errors or thrown API errors (F4)
+                console.error('Error fetching workflows:', error);
+                tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:red; padding: 20px;">Error loading status: ${error.message}. Please try again later.</td></tr>`;
+                lastUpdatedSpan.textContent = 'Failed';
+            } finally {
+                // Reset UI State
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = 'Refresh Status';
+            }
+        }
+
+        function displayWorkflows(workflows) {
+            const tableBody = document.getElementById('workflowTableBody');
+            if (!workflows || workflows.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px; color: #666;">No workflows currently in-flight.</td></tr>';
+                return;
+            }
+
+            let html = '';
+            workflows.forEach(wf => {
+                // Minimalist assumption: workflow object has id and status
+                const statusClass = getStatusBadgeClass(wf.status);
+                html += `
+                <tr>
+                    <td>${wf.id || 'N/A'}</td>
+                    <td><span class="status-badge ${statusClass}">${wf.status}</span></td>
+                    <td>${wf.initiatedBy || 'System'}</td>
+                    <td><button onclick="viewDetails('${wf.id}')" style="background-color: #ccc; padding: 5px 10px;">View</button></td>
+                </tr>`;
+            });
+            tableBody.innerHTML = html;
+        }
+
+        // Placeholder for detail view logic
+        function viewDetails(workflowId) {
+            alert(`Viewing details for Workflow ID: ${workflowId}. (Feature TBD)`);
+        }
+
+        // --- Submission Logic (F2, F4) ---
+        document.getElementById('workflowSubmitForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const submitBtn = document.getElementById('submitBtn');
+            const feedbackEl = document.getElementById('feedbackMessage');
+
+            // Reset UI and disable button
+            feedbackEl.style.display = 'none';
+            feedbackEl.className = '';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            const payload = { 
+                template_id: document.getElementById('templateId').value.trim(),
+                parameters: document.getElementById('parameters').value.trim(),
+                owner: document.getElementById('owner').value.trim()
+            };
+
+            try {
+                const response = await fetch(SUBMIT_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                let responseBody = {};
+                try { responseBody = await response.json(); } catch (e) { responseBody = { message: 'Could not parse response.' }; }
+
+                if (response.ok && response.status === 202) {
+                    // Success: 202 Accepted
+                    feedbackEl.textContent = `Successfully submitted request! ${responseBody.message || 'Check status board for the new ID.'}`; 
+                    feedbackEl.className = 'success';
+                    feedbackEl.style.display = 'block';
+                    this.reset(); // Clear form on success
+                } else if (response.status === 400) {
+                    // Client Error: Validation failed
+                    throw new Error(responseBody.error || 'Invalid input parameters. Please check required fields.');
+                } else {
+                    // Other API/Server errors
+                    throw new Error(responseBody.error || `API Error: Received status ${response.status}. Check server logs.`);
+                }
+            } catch (error) {
+                // Network or processing error (F4)
+                console.error('Submission failed:', error);
+                feedbackEl.textContent = `Submission Failed: ${error.message}`; 
+                feedbackEl.className = 'error';
+                feedbackEl.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Trigger Workflow';
+            }
+        });
+
+        // --- Initialization --- 
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Run status fetch on load
+            fetchWorkflowStatuses();
+            // 2. Set up interval polling (Optional, but useful for 'real-time' feel)
+            setInterval(fetchWorkflowStatuses, 15000); // Poll every 15 seconds
+        });
+    </script>
+</body>
+</html>
