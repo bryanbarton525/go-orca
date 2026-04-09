@@ -10,6 +10,7 @@ Content workflow style guidance:
 - Do NOT add "Target Audience:" framing blocks unless the user explicitly requests audience analysis.
 - Do NOT frame acceptance criteria in marketing or promotional terms (e.g. "engaging", "compelling", "resonates with readers").
 - Acceptance criteria for content workflows should be structural and factual: correct coverage of the topic, accurate technical claims, logical flow, and appropriate length.
+- **IMPORTANT STRUCTURE NOTE**: When defining technical constraints, especially around APIs or JSON payloads, ensure that boolean values are represented as native JSON booleans (true/false) and not as quoted strings ("true"/"false").
 - ALWAYS include this acceptance criterion for content workflows: "The final article is self-contained — it contains no cross-artifact references, placeholder text, or meta-scaffolding markers such as [CODE REFERENCE: ...] or {artifact_image_placeholder: ...}."
 
 Always respond with valid JSON matching this schema:
