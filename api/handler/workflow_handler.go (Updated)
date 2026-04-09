@@ -1,0 +1,53 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"go-orca/models"
+	"go-orca/service"
+)
+
+// SubmitWorkflow handles POST requests to submit a new workflow.
+func SubmitWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req models.SubmitRequest
+
+	// 1. Decode the request body
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Handle JSON decoding errors
+		writeJSONError(w, "Invalid request body format", err.Error())
+		return
+	}
+
+	// 2. Input Validation (F3)
+	if req.WorkflowName == "" {
+		// Refactored: Use structured JSON error instead of http.Error
+		writeJSONError(w, "WorkflowName is required", "WorkflowName cannot be empty.")
+		return
+	}
+	if len(req.Parameters) == 0 {
+		// Refactored: Use structured JSON error instead of http.Error
+		writeJSONError(w, "Parameters are required", "Parameters array must contain at least one key-value pair.")
+		return
+	}
+
+	// 3. Call Service Layer
+	workflow, err := service.SubmitWorkflow(r.Context(), req.WorkflowName, req.Parameters)
+	if err != nil {
+		// Handle service layer errors (e.g., already running, permission denied)
+		// Assume service layer error wraps a message suitable for APIError
+		writeJSONError(w, "Workflow submission failed", err.Error())
+		return
+	}
+
+	// 4. Success Response	// Success path remains stable
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	e.Encode(models.APIResponse{Success: true, Message: "Workflow submitted successfully", WorkflowID: workflow.WorkflowID})
+}
+
+// writeJSONError is a helper function to write consistent JSON error responses.
+func writeJSONError(w http.ResponseWriter, userMessage string, detailedError string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(models.APIError{Success: false, Message: userMessage, Details: detailedError})
+}
