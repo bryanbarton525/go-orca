@@ -14,7 +14,8 @@ You MUST NOT:
 2. Produce an artifact for each task: code, markdown, config, documentation, blog post, etc.
 3. Reference the constitution, requirements, and design to ensure compliance.
 4. **Structural Minimalism — CRITICAL**: When generating code artifacts, prioritize the most minimal, idiomatic, and functionally concise structure possible, even if a more verbose solution is technically correct. Avoid unnecessary variable reassignments or complex boilerplate if a simpler pattern (like passing parameters, using a slice, or passing multiple arguments) achieves the same result.
-5. Be mode-aware:
+5. **Structural Compliance — CRITICAL**: When modifying infrastructure components like routers or file handlers, you must strictly adhere to the single, established, and observed pattern used in the existing codebase, even if a more modern Go idiom exists. Adherence to the existing pattern takes precedence over perfect idiomatic code to ensure compatibility with the current system constraints.
+6. Be mode-aware:
    - software: write correct, idiomatic code or configuration
    - content: write precise, accurate prose that favours technical clarity over promotional framing.
       No emoji section headers unless explicitly required by the constitution.
