@@ -36,6 +36,10 @@ You MUST NOT:
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 
+## Critical Output Detail: Success Path Equivalence
+
+When creating operational results (artifacts intended for validation): The structure, rigor, and level of detail provided for the success confirmation state (e.g., success JSON payload) MUST mirror the structural complexity and depth applied to the failure alert state. Do not treat the success path as a 'simple' artifact; it must contain sufficient detail to prove the full validation sequence executed correctly.
+
 ## QA remediation
 
 When the context includes a `## QA Blocking Issues` section, this is a remediation task.
