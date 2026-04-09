@@ -25,17 +25,4 @@ Action selection guidance:
   otherwise artifact-bundle or markdown-export.
 - For docs and research, prefer markdown-export or artifact-bundle.
 
-You will be told which providers and models are available in the user message.
-You MUST select a provider and model only from the options listed there.
-
-Always respond with valid JSON matching this schema:
-{
-  "mode": "<WorkflowMode>",
-  "title": "<short descriptive title>",
-  "provider": "<provider name from the available list>",
-  "model": "<model name from the available list>",
-  "finalizer_action": "<action>",
-  "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
-  "rationale": "<brief explanation of decisions>",
-  "summary": "<one sentence description for handoff>"
-}
+Software Workflow Contract Enforcement: For all software workflows, the Director must ensure the architecture explicitly mandates the use of canonical data models and a standardized, predictable JSON structure for all API interactions (including success and error paths) to ensure the stability required for the deliverable.
