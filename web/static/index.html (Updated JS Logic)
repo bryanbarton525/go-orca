@@ -1,0 +1,163 @@
+<!-- This file is the updated web/static/index.html, focusing on the JavaScript section -->
+
+<script>
+    // --- DOM Elements ---
+    const workflowListContainer = document.getElementById('workflow-list');
+    const submitForm = document.getElementById('workflow-submit-form');
+    const statusMessage = document.getElementById('status-message');
+
+    /**
+     * Renders the list of workflows based on the canonical Workflow model.
+     * Maps API fields to display structure.
+     * @param {Array<Object>} workflows - Array of workflow objects from the API.
+     */
+    function displayWorkflows(workflows) {
+        if (!workflows || workflows.length === 0) {
+            workflowListContainer.innerHTML = '<p class="text-muted">No workflows currently in flight.</p>';
+            return;
+        }
+
+        // Clear previous content
+        workflowListContainer.innerHTML = '';
+
+        const cards = workflows.map(wf => {
+            // Canonical Model Mapping based on backend structure:
+            // Expected fields: WorkflowID (string), WorkflowName (string), Status (string), SubmittedAt (string), Details (string)
+            const name = wf.WorkflowName || 'N/A';
+            const id = wf.WorkflowID || 'Unknown';
+            const status = wf.Status || 'unknown';
+            const startTime = wf.SubmittedAt || new Date().toISOString();
+            const progress = wf.Details ? 'Details available' : 'N/A';
+
+            // Determine color class based on status
+            let statusClass = 'status-pending';
+            if (status === 'running') {
+                statusClass = 'status-running';
+            } else if (status === 'paused') {
+                statusClass = 'status-paused';
+            }
+
+            return `
+                <div class="card workflow-card status-${status.toLowerCase()}">
+                    <div class="card-body">
+                        <h5 class="card-title">${name} <span class="card-subtitle">(${id})</span></h5>
+                        <p class="card-text mb-1"><strong>Status:</strong> <span class="status-badge ${statusClass}">${status.toUpperCase()}</span></p>
+                        <p class="card-text mb-1"><strong>Submitted:</strong> ${new Date(startTime).toLocaleString()}</p>
+                        <p class="card-text"><strong>Progress/Details:</strong> ${progress}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        workflowListContainer.innerHTML = cards;
+    }
+
+    /**
+     * Fetches and displays all in-flight workflows.
+     */
+    async function fetchWorkflows() {
+        statusMessage.textContent = 'Loading workflows...';
+        statusMessage.className = 'status-message loading';
+        try {
+            const response = await fetch('/api/workflows/list');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.Error || 'Failed to fetch workflows.');
+            }
+            const data = await response.json();
+            if (data.Workflows && Array.isArray(data.Workflows)) {
+                displayWorkflows(data.Workflows);
+            } else {
+                displayWorkflows([]);
+                statusMessage.textContent = 'Error: Invalid response structure received.';
+                statusMessage.className = 'status-message error';
+            }
+        } catch (error) {
+            displayWorkflows([]); // Clear UI on error
+            statusMessage.textContent = `Error: ${error.message}`; 
+            statusMessage.className = 'status-message error';
+        } finally {
+            statusMessage.textContent = 'Workflows loaded successfully.';
+            statusMessage.className = 'status-message success';
+        }
+    }
+
+    // --- Event Listeners ---
+    document.addEventListener('DOMContentLoaded', () => {
+        // 1. Load workflows on dashboard load
+        fetchWorkflows();
+
+        // 2. Handle Form Submission
+        submitForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            statusMessage.textContent = 'Submitting workflow...';
+            statusMessage.className = 'status-message info';
+            
+            const name = document.getElementById('workflow-name').value.trim();
+            const params = document.getElementById('workflow-params').value.trim();
+
+            const payload = { workflowName: name, parameters: params };
+
+            try {
+                const response = await fetch('/api/workflows/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    statusMessage.textContent = `Success: ${result.Message}`; 
+                    statusMessage.className = 'status-message success';
+                    submitForm.reset();
+                    // Refresh list to show new entry
+                    fetchWorkflows();
+                } else {
+                    // Handle validation/API errors consistently returned by the backend
+                    const errorMessage = result.Error || 'An unknown API error occurred.';
+                    statusMessage.textContent = `Submission Failed: ${errorMessage}`; 
+                    statusMessage.className = 'status-message error';
+                }
+            } catch (error) {
+                statusMessage.textContent = `Network Error: Could not reach the API. (${error.message})`; 
+                statusMessage.className = 'status-message error';
+            }
+        });
+    });
+</script>
+
+<!-- Minimal CSS for readability (required for self-contained nature) -->
+<style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f7f9; }
+    .container { max-width: 1200px; margin: auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; }
+    .section-title { margin-top: 30px; color: #333; border-left: 3px solid #007bff; padding-left: 10px; }
+    /* Status Badges */
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; color: white; display: inline-block; }
+    .status-pending { background-color: #ffc107; color: #333; }
+    .status-running { background-color: #007bff; }
+    .status-paused { background-color: #6c757d; }
+
+    /* Workflow List */
+    #workflow-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
+    .workflow-card { border: 1px solid #eee; border-radius: 6px; overflow: hidden; transition: transform 0.2s; }
+    .workflow-card:hover { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+    /* Form Styling */
+    .form-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    input[type="text"], textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    #submit-btn { background-color: #28a745; color: white; }
+    #submit-btn:hover { background-color: #218838; }
+    
+    /* Status Message Area */
+    .status-message { padding: 12px; margin-bottom: 20px; border-radius: 4px; font-weight: 600; }
+    .status-message.loading { background-color: #fff3cd; border: 1px solid #ffe08a; color: #856404; }
+    .status-message.success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+    .status-message.error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+    .status-message.info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+</style>
