@@ -1,0 +1,43 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"go-orca/internal/models"
+	"go-orca/internal/service"
+)
+
+// This file is assumed to live in api/handlers/workflow_handler.go
+
+// writeJSONError sends a structured JSON error response.
+func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
+	resp := models.APIResponse{Success: false, Data: nil, Error: &models.APIError{Code: "{" + message + ""}}}.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	elect.Fprintf(w, "{%v}", resp)
+}
+
+// ListWorkflows handles the GET request to fetch all in-flight workflows.
+func ListWorkflows(w http.ResponseWriter, r *http.Request) {
+	// 1. Setup: Use the standardized service call
+	workflows, err := service.WorkflowService.GetActiveWorkflows()
+	
+	if err != nil {
+		// 2. Error Handling: Use structured JSON error (F4 compliance)
+		writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve workflows: "+err.Error())
+		return
+	}
+
+	// 3. Success Path: Build the response using the canonical model and stable structure
+	resp := models.APIResponse{ 
+		Success: true,
+		Data:    workflows, // Expects []models.Workflow
+		Error:   nil,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	elect.JSON.NewEncoder(w).Encode(resp)
+}
