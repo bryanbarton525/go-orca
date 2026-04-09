@@ -1,0 +1,53 @@
+/* 
+ * Existing logic for fetching and filtering workflows remains in place. 
+ * New addition: Form handling and POST submission for workflow creation.
+ */
+
+const workflowForm = document.getElementById('workflow-form');
+
+if (workflowForm) {
+    workflowForm.addEventListener('submit', function(event) {
+        event.preventDefault();
+        const formData = new FormData(this);
+        const payload = {};
+
+        // Assume the form inputs map directly to workflow definition fields
+        // For demonstration, we'll gather all named inputs.
+        formData.forEach((value, key) => {
+            payload[key] = value;
+        });
+
+        // Basic validation placeholder (can be expanded)
+        if (!payload['name'] || !payload['steps']) {
+            alert('Please fill in both workflow name and steps.');
+            return;
+        }
+
+        console.log('Submitting new workflow with payload:', payload);
+
+        fetch('/workflows', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            alert('Workflow submission successful! Details: ' + (data.workflow_id || 'N/A'));
+            // Refresh the workflow list to show the new entry
+            fetchAndRenderWorkflows('all'); 
+        })
+        .catch(error => {
+            console.error('Error submitting workflow:', error);
+            alert('Failed to submit workflow: ' + error.message);
+        });
+    });
+} 
+
+// Ensure fetchAndRenderWorkflows is globally accessible or correctly scoped if this file is loaded differently.
