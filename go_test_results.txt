@@ -1,0 +1,7 @@
+Test run results:
+
+PASS
+testing: coverage: 85.7% of statements
+ok      github.com/example/go-orca/internal/api/handlers    0.123s
+FAIL    github.com/example/go-orca/internal/api/routes     0.456s
+PASS    github.com/example/go-orca/web/dashboard         0.789s
