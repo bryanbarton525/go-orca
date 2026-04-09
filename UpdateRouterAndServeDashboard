@@ -1,0 +1,32 @@
+/* Assuming the following files need modification based on the previous tasks and design decision:
+
+1. `main.go` or equivalent router initialization file.
+2. Directory structure for static assets (e.g., `web/` or similar location accessible to the handler).
+
+--- 1. Modification to Router Initialization (e.g., in `main.go` or `router/routes.go`) ---
+
+// Before: Existing router setup initialization
+// After: Add the dashboard route
+
+func setupRouter() *http.ServeMux {
+    mux := http.NewServeMux()
+    // ... existing routes setup (e.g., /workflows, /workflows/{id})
+
+    // Add the static dashboard route
+    mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+        http.ServeFile(w, r, "./web/index.html") // Assuming 'web/index.html' is placed in assets
+    })
+
+    // ... return mux
+    return mux
+}
+
+--- 2. Static Asset Placement Assumption ---
+
+// Place index.html and main.js inside a directory relative to the main application entry point, e.g., 'web/'.
+// Structure: go-orca/web/index.html
+// Structure: go-orca/web/main.js
+
+// --- 3. Test Considerations ---
+// Ensure that any middleware or setup that registers routes remains robust after adding the /dashboard handler. 
+// The addition of a static file handler should not impact existing API endpoint testing.
