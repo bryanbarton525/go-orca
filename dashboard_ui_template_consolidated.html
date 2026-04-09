@@ -1,0 +1,223 @@
+<!-- NOTE: This artifact consolidates all necessary client-side logic into the main template file to serve as the single source of truth for the UI. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestrator Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f7f9; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        section { margin-bottom: 40px; padding: 20px; border: 1px solid #ddd; border-radius: 6px; }
+        /* Form Styling */
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #666; }
+        input[type="text"], select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        .message-box { padding: 10px; margin-bottom: 20px; border-radius: 4px; display: none; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; } 
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; } 
+
+        /* Table Styling */
+        #workflow-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        #workflow-table th, #workflow-table td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        #workflow-table th { background-color: #f2f2f2; color: #333; font-weight: bold; }
+        /* Status-specific styling */
+        .status-Pending { background-color: #fff3cd; color: #856404; font-weight: bold; }
+        .status-Running { background-color: #d1ecf1; color: #0c5460; font-weight: bold; }
+        .status-Paused { background-color: #f8d7da; color: #721c24; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>go-orca Workflow Dashboard</h1>
+        <p>Monitor active workflows and submit new execution requests.</p>
+
+        <!-- Status Display Section -->
+        <section id="status-section">
+            <h2>Active Workflow Status</h2>
+            <button id="fetch-status-btn">Refresh Status</button>
+            <div id="status-message" class="message-box"></div>
+            <table id="workflow-table"><thead><tr><th>Workflow ID</th><th>Status</th><th>Details</th></tr></thead><tbody><!-- Status rows will be inserted here --></tbody></table>
+        </section>
+
+        <!-- Submission Form Section -->
+        <section id="submission-section">
+            <h2>Submit New Workflow Request</h2>
+            <div id="submit-message" class="message-box"></div>
+            <form id="workflow-submit-form">
+                <div class="form-group">
+                    <label for="templateId">Workflow Template ID <span style="color: red;">*</span></label>
+                    <input type="text" id="templateId" name="template_id" required placeholder="e.g., data_ingestion_v1">
+                </div>
+                <div class="form-group">
+                    <label for="parameters">Parameters (JSON or key=value)</label>
+                    <textarea id="parameters" name="parameters" rows="4" placeholder="Enter parameters as JSON, e.g., {"scope": "prod", "dataset": "user_data"}"></textarea>
+                </div>
+                <button type="submit" id="submit-btn">Submit Workflow</button>
+            </form>
+        </section>
+    </div>
+
+<script>
+    const STATUS_API = "/api/v1/workflows/status";
+    const SUBMIT_API = "/api/v1/workflows/submit";
+
+    /**
+     * Utility function to display temporary messages to the user.
+     * @param {string} elementId - The ID of the message box element.
+     * @param {string} message - The message text.
+     * @param {'success'|'error'} type - The type of message.
+     */
+    function displayMessage(elementId, message, type) {
+        const msgBox = document.getElementById(elementId);
+        msgBox.textContent = message;
+        msgBox.className = `message-box ${type}`; 
+        msgBox.style.display = 'block';
+        // Clear message after 5 seconds
+        setTimeout(() => { msgBox.style.display = 'none'; }, 5000);
+    }
+
+    // --- 1. Status Fetching Logic (F1, F4) ---
+    async function fetchWorkflowStatus() {
+        const tableBody = document.querySelector('#workflow-table tbody');
+        const statusMessageDiv = document.getElementById('status-message');
+        document.getElementById('fetch-status-btn').disabled = true;
+        tableBody.innerHTML = '<tr><td colspan="3">Loading workflow status...</td></tr>';
+        statusMessageDiv.style.display = 'none';
+
+        try {
+            const response = await fetch(STATUS_API);
+
+            if (!response.ok) {
+                // Handle 503 Service Unavailable or other non-200 errors
+                let errorMsg = `Failed to fetch status. HTTP ${response.status}. `; 
+                if (response.status === 503) {
+                    errorMsg += "Service Unavailable. The backend state store may be down.";
+                } else if (response.status === 400) {
+                     errorMsg += "Bad Request. Check the API documentation.";
+                } else {
+                    errorMsg += "Please check the service status or try again later.";
+                }
+                displayMessage('status-message', errorMsg, 'error');
+                tableBody.innerHTML = ''; // Clear table on critical failure
+                return;
+            }
+            
+            const workflows = await response.json();
+            renderWorkflowTable(workflows);
+            displayMessage('status-message', `Successfully loaded ${workflows.length} active workflows.`, 'success');
+
+        } catch (error) {
+            // Handle network errors (e.g., CORS, no connection)
+            console.error("Network error fetching status:", error);
+            displayMessage('status-message', `Network Error: Could not connect to status endpoint. ${error.message}`, 'error');
+            tableBody.innerHTML = '';
+        } finally {
+            document.getElementById('fetch-status-btn').disabled = false;
+        }
+    }
+
+    /**
+     * Renders the fetched workflow data into the HTML table.
+     * @param {Array<{id: string, status: string}>} workflows - Array of workflow objects.
+     */
+    function renderWorkflowTable(workflows) {
+        const tableBody = document.querySelector('#workflow-table tbody');
+        tableBody.innerHTML = ''; // Clear existing content
+
+        if (!workflows || workflows.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="3">No workflows are currently active (Pending, Running, or Paused).</td></tr>';
+            return;
+        }
+
+        workflows.forEach(wf => {
+            const row = tableBody.insertRow();
+            // Apply status class for styling (e.g., status-Running)
+            row.classList.add(`status-${wf.status.replace(/[^a-zA-Z]/g, '')}`); 
+            
+            row.insertCell().textContent = wf.id || 'N/A';
+            row.insertCell().textContent = wf.status || 'UNKNOWN';
+            row.insertCell().textContent = `View Details`; // Placeholder for link
+        });
+    }
+
+    // --- 2. Submission Handling Logic (F2, F4) ---
+    document.getElementById('workflow-submit-form').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        
+        const templateId = document.getElementById('templateId').value.trim();
+        const parametersRaw = document.getElementById('parameters').value.trim();
+        const submitBtn = document.getElementById('submit-btn');
+        const submitMessageDiv = document.getElementById('submit-message');
+
+        // Client-side validation
+        if (!templateId) {
+            displayMessage('submit-message', 'Workflow Template ID is required.', 'error');
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
+        submitMessageDiv.style.display = 'none';
+        
+        let payload = { template_id: templateId };
+        
+        // Basic attempt to parse parameters if provided
+        if (parametersRaw) {
+            try {
+                // Assume JSON if it looks like JSON
+                const parsedJson = JSON.parse(parametersRaw);
+                payload = { ...payload, **parsedJson };
+            } catch (e) {
+                // Fallback or use simple key=value parsing if required by stricter spec
+                // For now, we assume if JSON fails, the input should be treated as a string parameter map.
+                payload.parameters = parametersRaw; 
+            }
+        }
+
+        try {
+            const response = await fetch(SUBMIT_API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success && result.workflow_id) {
+                    displayMessage('submit-message', `Success! Workflow ${result.workflow_id} submitted successfully.`, 'success');
+                    this.reset(); // Clear form on success
+                } else if (result.error) {
+                    displayMessage('submit-message', `Submission Failed (API Error): ${result.error}`, 'error');
+                }
+            } else {
+                // Handle HTTP error codes (e.g., 400 Bad Request from API)
+                const errorBody = await response.json().catch(() => ({ error: "Unknown API Error" }));
+                let message = `Submission failed with status: ${response.status}. `; 
+                message += `Details: ${errorBody.error || 'Check payload structure.'}`;
+                displayMessage('submit-message', message, 'error');
+            }
+        } catch (error) {
+            // Handle network errors
+            console.error("Network error submitting workflow:", error);
+            displayMessage('submit-message', `Network Error: Could not reach the submission API. ${error.message}`, 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Submit Workflow';
+        }
+    });
+
+    // --- Initialization --- 
+    document.addEventListener('DOMContentLoaded', () => {
+        // Event Listeners
+        document.getElementById('fetch-status-btn').addEventListener('click', fetchWorkflowStatus);
+        
+        // Initial load trigger
+        fetchWorkflowStatus();
+    });
+</script>
