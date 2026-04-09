@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go-Orca Workflow Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #workflow-list {
+            margin-top: 20px;
+        }
+        .workflow-item {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Go-Orca Workflow Dashboard</h1>
+    <div id="workflow-list"></div>
+
+    <h2>Add New Workflow</h2>
+    <form id="new-workflow-form">
+        <label for="workflow-name">Workflow Name:</label>
+        <input type="text" id="workflow-name" name="workflow-name" required>
+        <button type="submit">Submit</button>
+    </form>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>
