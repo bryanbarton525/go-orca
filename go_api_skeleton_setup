@@ -1,0 +1,119 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+)
+
+// --- Models (Internal Structure Definition) ---
+
+type WorkflowState string
+
+const ( 
+	StatePending WorkflowState = "pending" 
+	StateRunning WorkflowState = "running" 
+	StatePaused WorkflowState = "paused" 
+	StateCompleted WorkflowState = "completed"
+)
+
+type Workflow struct {
+	ID        string       `json:"id"`
+	WorkflowID string     `json:"workflow_id"`
+	State     WorkflowState `json:"state"`
+	SubmittedAt time.Time `json:"submitted_at"`	"Details string `json:"details"`
+}
+
+// SubmitRequest models the input payload for starting a new workflow.
+type SubmitRequest struct {
+	WorkflowType string `json:"workflow_type"`
+	Payload      string `json:"payload"` // Simplified for skeleton
+	Parameters   map[string]string `json:"parameters"`
+}
+
+// ApiResponse standardizes all API responses for stable JSON output.
+type ApiResponse struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
+// --- Handlers (API Logic Implementation) ---
+
+// listWorkflowsHandler handles GET /api/v1/workflows/list
+func listWorkflowsHandler(w http.ResponseWriter, r *http.Request) {
+	// STUB: Placeholder for actual fetching logic (F1)
+	// In a real implementation, this would query the workflow service.
+
+	workflows := []Workflow{
+		{ID: "wf-1001", WorkflowID: "abc-1", State: StateRunning, SubmittedAt: time.Now().Add(-2 * time.Hour), Details: "Data processing..."},
+		{ID: "wf-1002", WorkflowID: "def-2", State: StatePending, SubmittedAt: time.Now().Add(-30 * time.Minute), Details: "Waiting for trigger..."},
+		{ID: "wf-1003", WorkflowID: "ghi-3", State: StatePaused, SubmittedAt: time.Now().Add(-1 * time.Hour), Details: "Manual intervention required.",},
+	}
+
+	response := ApiResponse{Success: true, Data: workflows}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// submitWorkflowHandler handles POST /api/v1/workflows/submit
+func submitWorkflowHandler(w http.ResponseWriter, r *http.Request) {
+	var req SubmitRequest
+
+	// F3: Input Validation placeholder
+	if r.Body == nil || r.Header.Get("Content-Type") != "application/json" {
+		response := ApiResponse{Success: false, Error: "Invalid request format: Must send JSON content type."}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Decode payload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response := ApiResponse{Success: false, Error: "Failed to decode request body: " + err.Error()}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Basic structural validation (F3)
+	if req.WorkflowType == "" || req.Payload == "" {
+		response := ApiResponse{Success: false, Error: "WorkflowType and Payload are required fields."}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// STUB: Actual submission logic would go here (F2)
+	fmt.Printf("Received submission: Type=%s, Payload=%s\n", req.WorkflowType, req.Payload)
+
+	// F4: Stable Success Response
+	response := ApiResponse{Success: true, Data: map[string]string{ "message": "Workflow submission accepted.", "submitted_id": "new-wf-123" }}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(response)
+}
+
+// --- Main Initialization --- 
+// Main function simulates setup and routing setup.
+func main() {
+	http.HandleFunc("/api/v1/workflows/list", listWorkflowsHandler)
+	http.HandleFunc("/api/v1/workflows/submit", submitWorkflowHandler)
+
+	port := "8080"
+	fmt.Printf("--- Starting go-orca Dashboard API Skeleton on :%s ---\n", port)
+	fmt.Println("Endpoints available: ")
+	fmt.Println("- GET /api/v1/workflows/list")
+	fmt.Println("- POST /api/v1/workflows/submit")
+
+	// For the purpose of this execution, we only simulate the setup, not running the server.
+	// log.Fatal(http.ListenAndServe(":"+port, nil))
+}
