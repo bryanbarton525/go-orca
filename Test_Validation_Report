@@ -1,0 +1,9 @@
+To validate the integration without introducing regressions, the following command must be executed:
+
+`go test ./...`
+
+**Expected Outcome:** All existing unit and integration tests must pass successfully.
+
+**Validation Focus:** The test run confirms that the structural change to the router setup (e.g., adding the `/dashboard` route handler) only affects the registration process and does not alter the core logic or behavior of existing, independent endpoints like `/workflows`, `/workflows/{id}`, etc.
+
+**Conclusion:** If all tests pass, the non-regression requirement (NF2) is met, and the changes are safe for proceeding to the final PR documentation.
