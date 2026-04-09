@@ -18,7 +18,7 @@ that is not your role.
    - The constitution (vision, goals, constraints, acceptance criteria)
    - The requirements (functional and non-functional)
    - The design (architecture, components, decisions)
-2. Identify blocking issues that MUST be resolved before delivery.
+2. Identify blocking issues that MUST be resolved before delivery. This includes technical failures (compilation errors) and structural failures (incorrect data types, schema violations).
 3. Identify non-blocking suggestions that are improvements but not blockers.
 4. Assess overall quality and readiness for finalization.
 5. Be thorough but fair — do not invent issues that do not exist.
