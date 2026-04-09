@@ -1,0 +1,21 @@
+// In the relevant router setup file (e.g., main.go or router/routes.go)
+
+// Assumes there is an existing function like setupRouter() that initializes the main router instance 'r *http.ServeMux'
+// and that the required assets (index.html, main.js) are placed in an existing, designated static assets directory, e.g., './web/assets/'.
+
+// --- Proposed Minimal Modification ---
+func setupRouter(r *http.ServeMux) {
+    // ... existing route registrations ...
+
+    // 1. Register Dashboard Route: Serves the static index.html and makes the asset available.
+    // We assume an existing mechanism or directory structure for serving static files is available
+    // and we mimic its invocation here. If a specific existing handler like ServeStatic(r, path) exists,
+    // that pattern should be used.
+    fileServer := http.FileServer(http.Dir("./web/assets"))
+    r.Handle("/dashboard/", http.StripPrefix("/dashboard/", fileServer))
+}
+
+// Note: This assumes the static assets (index.html, main.js) have been placed in a 'web/assets' directory
+// adjacent to this source file, mimicking the most plausible existing pattern for static content hosting.
+// The use of http.FileServer ensures we use an established Go standard library serving mechanism,
+// minimizing structural changes while achieving the goal.
