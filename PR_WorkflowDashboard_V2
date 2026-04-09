@@ -1,0 +1,32 @@
+# Chore: Implement V2 Workflow Dashboard UI
+
+**Description:** This PR introduces the V2 version of the go-orca dashboard UI, providing a minimal yet functional web interface to visualize in-flight workflows and submit new execution requests. The implementation adheres strictly to idiomatic Go for the backend API and uses static HTML/JS for the frontend, ensuring separation of concerns and robust input validation on the server side.
+
+## Summary
+
+*   **Feature Parity:** Implements listing of active workflows (pending, running, paused) and submission capability for new workflows.
+*   **API Robustness:** The backend handlers (`/api/workflows/list`, `/api/workflows/submit`) enforce strict input validation (F3) and guarantee stable JSON output formats (F4) for all responses.
+*   **Frontend Experience:** A clean, static dashboard UI is provided, allowing asynchronous interaction with the backend endpoints via vanilla JavaScript.
+*   **Code Quality:** The entire implementation follows idiomatic Go practices, minimizing boilerplate and ensuring clear structural separation (F5).
+
+## Testing
+
+To verify the functionality, run the comprehensive unit test suite for the API handlers:
+
+```bash
+# Navigate to the API root directory
+cd api/handler
+# Run unit tests and check coverage
+got test -v ./...
+```
+
+**Expected Results:** All tests should pass, covering successful API calls, input validation failure cases (e.g., missing required fields in submission), and general error handling paths. 
+
+*Unit Test Command:* `go test ./...`
+*Expected Outcome:* All tests pass with full coverage on core API handlers.
+
+## Risks
+
+1.  **Placeholder Data Dependency:** The current frontend relies on mocked/stubbed API responses. Full integration with the actual workflow service layer is necessary to replace placeholder logic.
+2.  **Client-Side Error Visibility:** While the API handlers validate inputs, sophisticated user-facing error messaging (beyond basic JSON structure) may require more nuanced client-side state management.
+3.  **API Contract Adherence:** Future changes to the core `Workflow` or `SubmitRequest` models must be coordinated immediately to prevent breaking the established API contract used by the frontend.
