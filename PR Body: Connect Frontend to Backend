@@ -1,0 +1,28 @@
+# Feature: Implement Dashboard Workflow Submission Integration
+
+This PR integrates the client-side logic required to submit new workflow execution requests from the dashboard UI to the backend API. It completes the functionality initiated in previous iterations, allowing users to initiate workflows directly from the web interface.
+
+## Summary
+
+*   **Workflow Submission:** Implements the JavaScript function `submitWorkflow` to handle form submission from the 'Submit New Workflow' section.
+*   **Client-Side Validation:** Adds basic client-side validation checks (required fields) to provide immediate user feedback before an API call is made.
+*   **API Interaction:** Makes an asynchronous `fetch` POST request to `/api/workflows/submit`, serializing form data into the expected JSON payload.
+*   **User Feedback:** Updates the UI dynamically to display success or error messages returned from the backend, ensuring a stable user experience.
+*   **Integration:** The logic is placed within `web/static/index.html`'s script block, targeting the existing form structure.
+
+## Testing
+
+Unit tests for the backend handlers (`/api/workflows/submit`) have been updated to ensure proper validation and JSON response formatting (refer to existing test files).
+
+**Command to run tests:**
+```bash
+go test ./... 
+```
+
+**Expected Results:** All tests pass, confirming that the backend API validates the payload correctly and returns the stable JSON structure for both success and failure cases.
+
+## Risks
+
+*   **Schema Drift:** If the backend API schema for submission changes (e.g., renaming `WorkflowName` or changing required fields), the frontend JavaScript must be updated immediately.
+*   **Network Errors:** The current implementation handles API-level HTTP errors but does not implement sophisticated retry logic for transient network failures.
+*   **Security:** As this is client-side JS, all sensitive validation must remain on the server. The current client validation is purely for UX enhancement.
