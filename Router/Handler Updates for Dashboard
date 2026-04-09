@@ -1,0 +1,195 @@
+*(Assumes the router setup file is `internal/router/routes.go` and a handler wrapper exists for serving static files, e.g., `http.FileServer` or similar helper)*
+
+**1. Update Router Setup (e.g., `internal/router/routes.go`):**
+
+Modify the main routing function to include a new route path `/dashboard` that serves the static index.html.
+
+```go
+// Example modification within the router initialization function
+// router.HandleFunc("/dashboard", dashboardHandler).Methods("GET")
+```
+
+**2. Implement Dashboard Handler (Handler File, e.g., `internal/handlers/dashboard.go`):**
+
+Create a simple handler function that serves the static content directory.
+
+```go
+package handlers
+
+import (
+	"net/http"
+)
+
+// DashboardHandler serves the static dashboard UI assets.
+func DashboardHandler(w http.ResponseWriter, r *http.Request) {
+	// Assuming static assets are placed in an 'assets/dashboard/' directory
+	http.ServeFile(w, r, "assets/dashboard/index.html")
+}
+```
+
+**3. Create Static Assets (File System Placement):**
+
+Create the following files within the appropriate asset serving directory (`assets/dashboard/`):
+
+**`assets/dashboard/index.html`:**
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orca Workflow Dashboard</title>
+    <style>body { font-family: Arial, sans-serif; padding: 20px; }
+    .container { display: flex; gap: 40px; }
+    .column { flex: 1; padding: 15px; border: 1px solid #eee; border-radius: 5px; }
+    h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; }
+    .workflow-card { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+    .status-pending { background-color: #fff3cd; color: #856404; }
+    .status-running { background-color: #d1ecf1; color: #0c5460; }
+    .status-paused { background-color: #f8d7da; color: #721c24; }
+</style>
+</head>
+<body>
+    <h1>Workflow Dashboard</h1>
+
+    <div class="container">
+        <!-- Workflow Monitoring Column -->
+        <div class="column" id="workflow-monitor">
+            <h2>In-Flight Workflows</h2>
+            <div style="margin-bottom: 15px;">
+                <label for="statusFilter">Filter by Status:</label>
+                <select id="statusFilter">
+                    <option value="all">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="running">Running</option>
+                    <option value="paused">Paused</option>
+                </select>
+                <button onclick="fetchWorkflows()" style="margin-left: 10px;">Refresh</button>
+            </div>
+            <div id="workflowList">Loading workflows...</div>
+        </div>
+
+        <!-- Workflow Submission Column -->
+        <div class="column" id="workflow-submit">
+            <h2>Submit New Workflow</h2>
+            <form id="workflowForm">
+                <p><em>(Payload structure must match expected POST body for POST /workflows)</em></p>
+                <label for="workflowType">Workflow Type:</label><br>
+                <input type="text" id="workflowType" name="workflowType" value="default_process" required style="width: 100%; padding: 8px; margin-bottom: 10px;"> <br><br>
+                <button type="submit">Submit Workflow</button>
+            </form>
+            <div id="submissionMessage" style="margin-top: 20px; color: green;"></div>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
+```
+
+**`assets/dashboard/main.js`:**
+```javascript
+const API_BASE_URL = ''; // Assumes the API root is accessible
+
+// --- Workflow Monitoring (GET /workflows) ---
+async function fetchWorkflows() {
+    const filter = document.getElementById('statusFilter').value;
+    const workflowList = document.getElementById('workflowList');
+    workflowList.innerHTML = 'Loading workflows...';
+
+    try {
+        // Call GET /workflows. In a real scenario, we might pass the filter as a query param.
+        const response = await fetch(`${API_BASE_URL}/workflows?status=${filter}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        const workflows = await response.json();
+        displayWorkflows(workflows, filter);
+    } catch (error) {
+        console.error("Failed to fetch workflows:", error);
+        workflowList.innerHTML = `<p style="color: red;">Error loading workflows: ${error.message}. Check the API logs.</p>`;
+    }
+}
+
+function getStatusClass(status) {
+    switch(status.toLowerCase()) {
+        case 'pending': return 'status-pending';
+        case 'running': return 'status-running';
+        case 'paused': return 'status-paused';
+        default: return '';
+    }
+}
+
+function displayWorkflows(workflows, currentFilter) {
+    const workflowList = document.getElementById('workflowList');
+    let html = '';
+    let filteredCount = 0;
+
+    const filteredWorkflows = workflows.filter(wf => {
+        if (currentFilter === 'all') return true;
+        return wf.status.toLowerCase() === currentFilter;
+    });
+
+    if (filteredWorkflows.length === 0) {
+        html = '<p>No workflows found matching the current filter.</p>';
+    } else {
+        filteredWorkflows.forEach(wf => {
+            html += `
+            <div class="workflow-card ${getStatusClass(wf.status)}">
+                <strong>ID:</strong> ${wf.id || 'N/A'}<br>
+                <strong>Name:</strong> ${wf.name || 'Unnamed'}<br>
+                <strong>Status:</strong> ${wf.status.toUpperCase()}<br>
+                <strong>Started:</strong> ${new Date(wf.startedAt).toLocaleString()}<br>
+            </div>`;
+            filteredCount++;
+        });
+    }
+    
+    if (filteredCount > 0) {
+        workflowList.innerHTML = html;
+    } else {
+        workflowList.innerHTML = `<p>No workflows found matching ${currentFilter} status.</p>`;
+    }
+}
+
+// --- Workflow Submission (POST /workflows) ---
+document.getElementById('workflowForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const messageDiv = document.getElementById('submissionMessage');
+    messageDiv.textContent = 'Submitting workflow...';
+
+    const payload = { 
+        workflowType: document.getElementById('workflowType').value, 
+        // Include other mandatory fields required by the POST endpoint, e.g., inputs: []
+    };
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/workflows`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            messageDiv.textContent = `Success! Workflow submitted. ID: ${result.id || 'Unknown'}. Status: ${result.status}.`;
+            // Optionally refresh the list after successful submission
+            setTimeout(fetchWorkflows, 1000);
+        } else {
+            throw new Error(result.message || 'Unknown API error occurred.');
+        }
+    } catch (error) {
+        console.error("Submission Error:", error);
+        messageDiv.textContent = `Submission Failed: ${error.message}`; 
+        messageDiv.style.color = 'red';
+    }
+});
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', fetchWorkflows);
+
+
+/* NOTE TO SELF: The API_BASE_URL must resolve correctly when embedded. For testing purposes, we assume the frontend can reach /workflows */
