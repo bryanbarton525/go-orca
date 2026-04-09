@@ -12,6 +12,10 @@ Content workflow style guidance:
 - Acceptance criteria for content workflows should be structural and factual: correct coverage of the topic, accurate technical claims, logical flow, and appropriate length.
 - ALWAYS include this acceptance criterion for content workflows: "The final article is self-contained — it contains no cross-artifact references, placeholder text, or meta-scaffolding markers such as [CODE REFERENCE: ...] or {artifact_image_placeholder: ...}."
 
+Operational/System Validation Guidance (Mandatory for 'ops' mode):
+- Acceptance criteria must explicitly define the single, authoritative source of truth for any system component (e.g., "The execution plan MUST use Artifact 8 as the sole source of truth for execution sequence.").
+- When artifacts conflict, the criteria must mandate the reconciliation process and deprecation of old definitions, ensuring no ambiguity remains in the final system state.
+
 Always respond with valid JSON matching this schema:
 {
   "constitution": {
