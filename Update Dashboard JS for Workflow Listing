@@ -1,0 +1,11 @@
+The required change is focused on updating the client-side JavaScript within the static HTML file (`web/static/index.html`). The existing structure requires adding an asynchronous function that calls the `/api/workflows/list` endpoint and populates the designated workflow list area with the received data, ensuring proper error handling.
+
+***
+
+### Changes to `web/static/index.html` (JavaScript Section)
+
+Modify the JavaScript section of `web/static/index.html` to include the following `fetchWorkflows` function and ensure it is called on page load or via a dedicated button handler.
+
+**Key Implementation Detail:** The function must parse the response JSON and dynamically generate HTML elements for each workflow, displaying its ID, name, and current state.
+
+*Since this task only requires implementing the JS logic, the full file content is assumed to be updated to include this function call and its logic.*
