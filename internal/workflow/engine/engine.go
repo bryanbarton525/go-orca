@@ -56,6 +56,18 @@ type Store interface {
 // error; callers (e.g. the scheduler) should NOT treat this as a failure.
 var ErrPaused = fmt.Errorf("engine: workflow paused")
 
+// ImprovementDispatcher applies a single RefinerImprovement and returns the
+// outcome.  It is called by the engine after the Finalizer phase completes.
+//
+// The interface is defined in the engine package so that Options can accept it
+// without the engine importing the concrete improvements package (which imports
+// neither engine nor scheduler — no circular dependency).
+//
+// improvements.ConcreteDispatcher satisfies this interface.
+type ImprovementDispatcher interface {
+	Dispatch(ctx context.Context, parentWS *state.WorkflowState, imp state.RefinerImprovement) (state.ImprovementApplyResult, error)
+}
+
 // Options configures the Engine.
 type Options struct {
 	// MaxQARetries is the maximum number of times the Implementer will be
@@ -70,6 +82,18 @@ type Options struct {
 	// HandoffTimeout is the per-persona execution timeout.
 	// Defaults to 5 minutes.
 	HandoffTimeout time.Duration
+
+	// PersonaMaxRetries is the number of additional attempts made when a
+	// persona's LLM call fails with a transient error (e.g. context deadline
+	// exceeded, connection refused).  Only retried when the parent context is
+	// still alive — a cancelled parent (server shutdown / workflow cancel)
+	// aborts immediately.  Defaults to 3.
+	PersonaMaxRetries int
+
+	// PersonaRetryBackoff is the base wait duration before the first retry.
+	// Each subsequent retry doubles the wait (exponential backoff).
+	// Defaults to 10 seconds.
+	PersonaRetryBackoff time.Duration
 
 	// CustomizationRegistry, when set, is snapshotted at workflow start to
 	// populate skills/agent/prompts context in every HandoffPacket.
@@ -92,6 +116,12 @@ type Options struct {
 	// Defaults to empty (disabled).
 	ImprovementsRoot string
 
+	// ImprovementDispatcher, when set, is called after the Finalizer phase
+	// completes to route each RefinerImprovement to direct-apply or a child
+	// improvement workflow.  When nil the engine falls back to speculative
+	// applied_path construction (backward-compatible with existing tests).
+	ImprovementDispatcher ImprovementDispatcher
+
 	// PersonaPromptRoot is the directory containing the base persona prompt
 	// markdown files (e.g. director.md, project_manager.md …).
 	// Defaults to prompts.DefaultRoot ("promos/personas") when empty.
@@ -105,6 +135,12 @@ func (o *Options) applyDefaults() {
 	if o.HandoffTimeout <= 0 {
 		o.HandoffTimeout = 5 * time.Minute
 	}
+	if o.PersonaMaxRetries <= 0 {
+		o.PersonaMaxRetries = 3
+	}
+	if o.PersonaRetryBackoff <= 0 {
+		o.PersonaRetryBackoff = 10 * time.Second
+	}
 }
 
 // Engine drives a single workflow run.
@@ -117,6 +153,13 @@ type Engine struct {
 func New(store Store, opts Options) *Engine {
 	opts.applyDefaults()
 	return &Engine{store: store, opts: opts}
+}
+
+// SetImprovementDispatcher replaces the dispatcher after construction.
+// It must be called before any workflows are enqueued; it is not safe for
+// concurrent use with Run.
+func (e *Engine) SetImprovementDispatcher(d ImprovementDispatcher) {
+	e.opts.ImprovementDispatcher = d
 }
 
 // Run executes the workflow identified by workflowID to completion (or failure).
@@ -302,8 +345,20 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				}
 
 				if qaCycle > e.opts.MaxQARetries {
-					return fmt.Errorf("qa: %d blocking issues remain after %d remediation cycles: %v",
+					// QA retries exhausted — emit a warning event and continue
+					// to the Finalizer rather than failing the workflow.
+					exhaustedEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+						events.EventQAExhausted, state.PersonaQA,
+						events.QAExhaustedPayload{
+							RetriesAllowed: e.opts.MaxQARetries,
+							BlockingIssues: ws.BlockingIssues,
+						})
+					_ = e.store.AppendEvents(ctx, exhaustedEvt)
+					// Surface the unresolved issues to the Refiner's retrospective.
+					note := fmt.Sprintf("[qa.exhausted] %d blocking issue(s) unresolved after %d remediation cycle(s): %v",
 						len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
+					ws.AllSuggestions = append(ws.AllSuggestions, note)
+					break
 				}
 
 				// Architect-led remediation: re-plan with the current blocking issues.
@@ -368,13 +423,64 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		})
 	_ = e.store.AppendEvents(ctx, startEvt)
 
-	// Apply per-persona handoff timeout.
-	personaCtx, cancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
-	defer cancel()
+	// Pre-announce: update current_persona in persisted state before the LLM
+	// call starts so that GET /workflows/:id reflects the in-flight persona
+	// immediately, not only after it completes.
+	ws.Execution.CurrentPersona = kind
+	_ = e.store.SaveWorkflow(ctx, ws)
 
-	start := time.Now()
-	out, err := p.Execute(personaCtx, packet)
-	elapsed := time.Since(start)
+	// Retry loop: attempt the LLM call up to (1 + PersonaMaxRetries) times.
+	// A fresh context.WithTimeout is created for each attempt so that a prior
+	// deadline expiry never poisons a subsequent try.  The loop aborts without
+	// retry when the parent context is already cancelled (server shutdown,
+	// workflow cancel).
+	maxAttempts := 1 + e.opts.PersonaMaxRetries
+	var out *state.PersonaOutput
+	var err error
+	var elapsed time.Duration
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Parent context cancelled — no point retrying.
+			if ctx.Err() != nil {
+				break
+			}
+
+			// Exponential backoff: backoff * 2^(attempt-1)
+			waitDur := e.opts.PersonaRetryBackoff * time.Duration(uint(1)<<uint(attempt-1))
+
+			retryEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventPersonaRetrying, kind,
+				events.PersonaRetryingPayload{
+					Persona:      kind,
+					Attempt:      attempt,
+					MaxAttempts:  maxAttempts,
+					Error:        err.Error(),
+					RetryAfterMs: waitDur.Milliseconds(),
+				})
+			_ = e.store.AppendEvents(ctx, retryEvt)
+
+			select {
+			case <-ctx.Done():
+				// Parent cancelled during wait.
+			case <-time.After(waitDur):
+			}
+
+			if ctx.Err() != nil {
+				break
+			}
+		}
+
+		personaCtx, cancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+		start := time.Now()
+		out, err = p.Execute(personaCtx, packet)
+		elapsed = time.Since(start)
+		cancel() // release immediately; do not defer inside a loop
+
+		if err == nil {
+			break
+		}
+	}
 
 	if err != nil {
 		failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
@@ -399,36 +505,61 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 
 	// ── Finalizer post-processing ─────────────────────────────────────────────
 	if kind == state.PersonaFinalizer {
-		// 1. Emit refiner.suggestion events for every improvement produced by
-		//    the inline Refiner retrospective so SSE subscribers can act on them.
-		if ws.Finalization != nil {
-			for _, imp := range ws.Finalization.RefinerImprovements {
-				// Derive the applied_path for improvements that carry file content
-				// so SSE subscribers know where the file was written.
-				appliedPath := ""
-				if e.opts.ImprovementsRoot != "" && imp.Content != "" {
-					var relPath string
-					switch imp.ComponentType {
-					case "skill":
-						relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
-					case "prompt":
-						relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
-					case "agent":
-						relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
-					default:
-						relPath = filepath.Join("personas", imp.ComponentName+".md")
-					}
-					appliedPath = filepath.Join(e.opts.ImprovementsRoot, relPath)
+		// 1. Route each improvement through the dispatcher (when configured and
+		//    not already inside an improvement workflow — recursion guard).
+		if ws.Finalization != nil && len(ws.Finalization.RefinerImprovements) > 0 {
+			recursionGuard := ws.Execution.ImprovementDepth >= 1
+
+			if e.opts.ImprovementDispatcher != nil && !recursionGuard {
+				// Dispatcher path: dispatch each improvement, collect results,
+				// then emit refiner.suggestion events with actual outcomes.
+				results := make([]state.ImprovementApplyResult, 0, len(ws.Finalization.RefinerImprovements))
+				for _, imp := range ws.Finalization.RefinerImprovements {
+					result, _ := e.opts.ImprovementDispatcher.Dispatch(ctx, ws, imp)
+					results = append(results, result)
+
+					suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+						events.EventRefinerSuggestion, state.PersonaRefiner,
+						events.RefinerSuggestionPayload{
+							Component:       imp.ComponentType,
+							Name:            imp.ComponentName,
+							Suggestion:      fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+							AppliedPath:     result.AppliedPath,
+							Status:          result.Status,
+							ChildWorkflowID: result.ChildWorkflowID,
+						})
+					_ = e.store.AppendEvents(ctx, suggEvt)
 				}
-				suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-					events.EventRefinerSuggestion, state.PersonaRefiner,
-					events.RefinerSuggestionPayload{
-						Component:   imp.ComponentType,
-						Name:        imp.ComponentName,
-						Suggestion:  fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
-						AppliedPath: appliedPath,
-					})
-				_ = e.store.AppendEvents(ctx, suggEvt)
+				ws.Finalization.ImprovementResults = results
+			} else {
+				// Fallback / recursion-guarded path: speculative applied_path
+				// construction for backward compatibility and when depth >= 1.
+				for _, imp := range ws.Finalization.RefinerImprovements {
+					appliedPath := ""
+					if e.opts.ImprovementsRoot != "" && imp.Content != "" {
+						var relPath string
+						switch imp.ComponentType {
+						case "skill":
+							relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
+						case "prompt":
+							relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
+						case "agent":
+							relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
+						default:
+							relPath = filepath.Join("personas", imp.ComponentName+".md")
+						}
+						appliedPath = filepath.Join(e.opts.ImprovementsRoot, relPath)
+					}
+					suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+						events.EventRefinerSuggestion, state.PersonaRefiner,
+						events.RefinerSuggestionPayload{
+							Component:   imp.ComponentType,
+							Name:        imp.ComponentName,
+							Suggestion:  fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+							AppliedPath: appliedPath,
+						})
+					_ = e.store.AppendEvents(ctx, suggEvt)
+				}
 			}
 		}
 

@@ -88,3 +88,8 @@ workflow:
   event_retention_days: 30
   artifact_storage_path: "./artifacts"
   handoff_timeout: "10m"
+  # Retry persona LLM calls on transient failures (deadline exceeded, connection
+  # errors).  Each retry waits persona_retry_backoff * 2^(attempt-1) before
+  # trying again.  Set persona_max_retries: 0 to disable.
+  persona_max_retries: 3       # 3 extra attempts = 4 total
+  persona_retry_backoff: "15s" # local Ollama can be slow; use a generous backoff

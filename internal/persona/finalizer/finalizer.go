@@ -5,10 +5,9 @@ package finalizer
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/go-orca/go-orca/internal/improvements"
 	"github.com/go-orca/go-orca/internal/persona/base"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
@@ -47,6 +46,7 @@ var finalizerSchema = map[string]any{
 }
 
 // refinerSchema defines the structured output shape for the embedded Refiner.
+// It includes change_type, apply_mode, and files fields for the self-improvement pipeline.
 var refinerSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
@@ -59,10 +59,23 @@ var refinerSchema = map[string]any{
 					"component_name": map[string]any{"type": "string", "minLength": 1},
 					"problem":        map[string]any{"type": "string", "minLength": 1},
 					"proposed_fix":   map[string]any{"type": "string", "minLength": 1},
-					"content":        map[string]any{"type": "string"},
-					"priority":       map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
+					"change_type":    map[string]any{"type": "string", "enum": []any{"create", "update", "advisory"}},
+					"apply_mode":     map[string]any{"type": "string"},
+					"files": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"path":    map[string]any{"type": "string"},
+								"content": map[string]any{"type": "string"},
+							},
+							"required": []string{"path", "content"},
+						},
+					},
+					"content":  map[string]any{"type": "string"},
+					"priority": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
 				},
-				"required": []string{"component_type", "component_name", "problem", "proposed_fix", "priority"},
+				"required": []string{"component_type", "component_name", "problem", "proposed_fix", "change_type", "priority"},
 			},
 		},
 		"overall_assessment": map[string]any{"type": "string"},
@@ -189,6 +202,13 @@ func (f *Finalizer) runRefiner(ctx context.Context, packet state.HandoffPacket, 
 	refinerPrompt := fmt.Sprintf(
 		`%s
 
+## Current Persona Prompt Files
+These are the current verbatim contents of the persona prompt files.
+If you propose a "persona" improvement with change_type "update", you MUST include
+a modified version of the relevant file below in the "files" array.
+
+%s
+
 ## Blocking Issues Encountered
 %s
 
@@ -197,6 +217,7 @@ func (f *Finalizer) runRefiner(ctx context.Context, packet state.HandoffPacket, 
 
 Analyze the above workflow history and produce your retrospective JSON output.`,
 		handoffCtx,
+		buildPersonaPromptContext(packet.PersonaPromptSnapshot),
 		strings.Join(packet.BlockingIssues, "\n"),
 		strings.Join(packet.AllSuggestions, "\n"),
 	)
@@ -221,50 +242,37 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 		))
 	}
 
-	// Persist improvements that carry file content to the ImprovementsPath.
-	if packet.ImprovementsPath != "" {
-		_ = writeImprovements(packet.ImprovementsPath, out.Improvements)
-	}
-
 	return out.Improvements, suggestions, out.Summary
 }
 
-// writeImprovements persists Refiner improvements that have content to disk.
-// Each improvement is written to a file whose path is determined by its
-// component_type and component_name:
-//
-//	skill  → {root}/skills/{name}/SKILL.md
-//	prompt → {root}/prompts/{name}.prompt.md
-//	agent  → {root}/agents/{name}.agent.md
-//	persona (advisory) → {root}/personas/{name}.md
-//
-// Errors are logged but never surfaced — the Refiner must not break delivery.
-func writeImprovements(root string, improvements []state.RefinerImprovement) error {
-	for _, imp := range improvements {
-		if imp.Content == "" {
-			continue
-		}
-
-		var relPath string
-		switch imp.ComponentType {
-		case "skill":
-			relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
-		case "prompt":
-			relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
-		case "agent":
-			relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
-		default:
-			// persona or unknown — write an advisory markdown under personas/
-			relPath = filepath.Join("personas", imp.ComponentName+".md")
-		}
-
-		fullPath := filepath.Join(root, relPath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-			continue
-		}
-		_ = os.WriteFile(fullPath, []byte(imp.Content), 0o644)
+// buildPersonaPromptContext formats the workflow personas' current prompt content
+// so the Refiner can produce updated file content when proposing persona improvements.
+// The self-referential refiner prompts are excluded to avoid confusion.
+func buildPersonaPromptContext(snapshot map[string]string) string {
+	if len(snapshot) == 0 {
+		return "(no persona prompt files available)"
 	}
-	return nil
+	// Only include the main workflow personas in a stable order.
+	order := []struct{ key, file string }{
+		{"director", "director.md"},
+		{"project_manager", "project_manager.md"},
+		{"architect", "architect.md"},
+		{"implementer", "implementer.md"},
+		{"qa", "qa.md"},
+		{"finalizer", "finalizer.md"},
+	}
+	var sb strings.Builder
+	for _, entry := range order {
+		content, ok := snapshot[entry.key]
+		if !ok || content == "" {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("### promos/personas/%s\n```\n%s\n```\n\n", entry.file, content))
+	}
+	if sb.Len() == 0 {
+		return "(no persona prompt files available)"
+	}
+	return sb.String()
 }
 
 // buildArtifactInventory formats a short listing of artifacts for the prompt.
@@ -290,25 +298,41 @@ func deliveryTargetHint(design *state.Design) string {
 	return design.DeliveryTarget
 }
 
-// normalizeImprovements trims whitespace from all string fields and drops
+// normalizeImprovements trims whitespace from all string fields, drops
 // improvements that have any blank required field (component_type,
-// component_name, problem, proposed_fix, priority) or a priority value that is
-// not one of "high", "medium", or "low".
+// component_name, problem, proposed_fix, priority) or an invalid priority, and
+// deduplicates by (component_type, component_name) — keeping the highest-
+// priority entry when duplicates exist.
 //
-// This prevents partially-filled LLM improvement objects from being persisted
-// or emitted as events.  Priority is also normalised to lowercase so that
-// "HIGH" and "High" both survive the filter.
+// Deduplication prevents the model from spawning multiple child improvement
+// workflows for the same component when it emits repeated suggestions.
+// Priority is also normalised to lowercase so that "HIGH" and "High" both
+// survive the filter.
 func normalizeImprovements(imps []state.RefinerImprovement) []state.RefinerImprovement {
-	valid := make([]state.RefinerImprovement, 0, len(imps))
+	priorityRank := map[string]int{"high": 0, "medium": 1, "low": 2}
+
+	// First pass: trim, validate, and collect the best entry per component key.
+	type key struct{ ctype, cname string }
+	best := make(map[key]state.RefinerImprovement)
+	order := make([]key, 0, len(imps))
+
 	for _, imp := range imps {
 		imp.ComponentType = strings.TrimSpace(imp.ComponentType)
 		imp.ComponentName = strings.TrimSpace(imp.ComponentName)
 		imp.Problem = strings.TrimSpace(imp.Problem)
 		imp.ProposedFix = strings.TrimSpace(imp.ProposedFix)
 		imp.Priority = strings.TrimSpace(strings.ToLower(imp.Priority))
+		imp.ChangeType = strings.TrimSpace(strings.ToLower(imp.ChangeType))
+		imp.ApplyMode = strings.TrimSpace(strings.ToLower(imp.ApplyMode))
 		imp.Content = strings.TrimSpace(imp.Content)
 		if imp.ComponentType == "" || imp.ComponentName == "" ||
 			imp.Problem == "" || imp.ProposedFix == "" || imp.Priority == "" {
+			continue
+		}
+		// Reject placeholder component names that the LLM uses when it cannot
+		// identify a specific target.
+		switch strings.ToLower(strings.TrimSpace(imp.ComponentName)) {
+		case "n/a", "na", "unknown", "placeholder", "tbd":
 			continue
 		}
 		switch imp.Priority {
@@ -317,7 +341,27 @@ func normalizeImprovements(imps []state.RefinerImprovement) []state.RefinerImpro
 		default:
 			continue
 		}
-		valid = append(valid, imp)
+
+		// Enforce improvement surface: only persona/prompt/skill markdown assets
+		// are in scope. Engine code, agents, and repo source are never targets.
+		if !improvements.IsSurfaceAllowed(imp) {
+			continue
+		}
+
+		k := key{imp.ComponentType, imp.ComponentName}
+		if existing, seen := best[k]; !seen {
+			best[k] = imp
+			order = append(order, k)
+		} else if priorityRank[imp.Priority] < priorityRank[existing.Priority] {
+			// Replace with higher-priority duplicate.
+			best[k] = imp
+		}
+	}
+
+	// Second pass: emit in original first-seen order.
+	valid := make([]state.RefinerImprovement, 0, len(order))
+	for _, k := range order {
+		valid = append(valid, best[k])
 	}
 	return valid
 }

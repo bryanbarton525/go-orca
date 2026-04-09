@@ -20,6 +20,8 @@ import (
 	"github.com/go-orca/go-orca/internal/api/routes"
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
+	"github.com/go-orca/go-orca/internal/finalizer/actions"
+	"github.com/go-orca/go-orca/internal/improvements"
 	"github.com/go-orca/go-orca/internal/logger"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/architect"
@@ -68,6 +70,11 @@ func main() {
 		zap.String("scoping_mode", string(cfg.Scoping.Mode)),
 	)
 
+	// Seed the GitHub token into the delivery action registry from Viper config.
+	// This makes GOORCA_GITHUB_TOKEN the canonical env var (prefix consistent
+	// with all other credentials); per-workflow config.token still overrides.
+	actions.InitGlobal(cfg.GitHub.Token)
+
 	// ── Open storage ──────────────────────────────────────────────────────────
 	ctx := context.Background()
 	store, err := openStore(ctx, cfg)
@@ -114,30 +121,40 @@ func main() {
 
 	// ── Build workflow engine + scheduler ─────────────────────────────────────
 	improvementsRoot := filepath.Join(cfg.Workflow.ArtifactStoragePath, "improvements")
-	// Register the improvements directory as a low-precedence customization
-	// source so subsequent workflow runs automatically pick up Refiner outputs.
+	// Register only the active/ subdirectory as a customization source so
+	// staging files are never accidentally loaded before promotion.
+	improvementsActiveRoot := filepath.Join(improvementsRoot, "active")
 	customReg.AddSource(customization.Source{
 		Name:       "refiner-improvements",
 		Type:       "filesystem",
-		Root:       improvementsRoot,
+		Root:       improvementsActiveRoot,
 		Precedence: 100, // lowest priority; explicit sources override
 		ScopeSlug:  "",  // applies to all scopes
 	})
 
+	// Build the engine first (dispatcher is nil until after the scheduler exists).
 	eng := engine.New(store, engine.Options{
 		MaxQARetries:          2,
 		DefaultProvider:       resolveDefaultProvider(cfg),
 		DefaultModel:          resolveDefaultModel(cfg),
 		CustomizationRegistry: customReg,
 		HandoffTimeout:        cfg.Workflow.HandoffTimeout,
+		PersonaMaxRetries:     cfg.Workflow.PersonaMaxRetries,
+		PersonaRetryBackoff:   cfg.Workflow.PersonaRetryBackoff,
 		ImprovementsRoot:      improvementsRoot,
 	})
 
+	// Build the scheduler with the real engine.
 	sched := scheduler.New(eng, scheduler.Options{
 		Concurrency: cfg.Workflow.MaxConcurrentWorkflows,
 		RetryDelay:  5 * time.Second,
 		MaxRetries:  0,
 	}, log)
+
+	// Wire the improvement dispatcher now that both store and scheduler exist,
+	// then inject it into the engine (no chicken-and-egg problem).
+	improvementDispatcher := improvements.NewConcreteDispatcher(improvementsRoot, store, sched)
+	eng.SetImprovementDispatcher(improvementDispatcher)
 
 	// ── Build HTTP server ─────────────────────────────────────────────────────
 	router := routes.New(routes.Config{

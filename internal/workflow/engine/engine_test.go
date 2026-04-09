@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/events"
+	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 )
@@ -181,6 +182,76 @@ func TestMockStoreAppendEvents(t *testing.T) {
 	}
 	if len(ms.events) != 2 {
 		t.Errorf("events len: got %d, want 2", len(ms.events))
+	}
+}
+
+// blockingQAPersona is a QA persona that always reports one blocking issue.
+// Used to simulate QA retry exhaustion without real LLM calls.
+type blockingQAPersona struct{}
+
+func (p *blockingQAPersona) Kind() state.PersonaKind { return state.PersonaQA }
+func (p *blockingQAPersona) Name() string            { return "blocking-qa" }
+func (p *blockingQAPersona) Description() string     { return "always reports a blocking issue" }
+func (p *blockingQAPersona) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	return &state.PersonaOutput{
+		Persona:        state.PersonaQA,
+		Summary:        "found issues",
+		BlockingIssues: []string{"unresolved blocking issue"},
+	}, nil
+}
+
+// TestQAExhaustionContinuesToFinalizer verifies that when MaxQARetries is
+// exceeded the engine emits a qa.exhausted event and continues to the
+// Finalizer rather than failing the workflow.
+func TestQAExhaustionContinuesToFinalizer(t *testing.T) {
+	// Register a QA persona that always reports blocking issues.
+	persona.Register(&blockingQAPersona{})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+
+	// Register a noop Finalizer.
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ctx := context.Background()
+
+	ws := state.NewWorkflowState("t1", "s1", "qa exhaustion test")
+	// Skip Director by pre-populating its summary.
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector: "(completed)",
+	}
+	// Only run QA and Finalizer — no Architect/Implementer needed.
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaQA, state.PersonaFinalizer}
+	// Skip prompt loading from disk by providing a non-empty snapshot.
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		MaxQARetries:    1, // 2 total QA cycles before exhaustion
+	})
+
+	err := eng.Run(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("expected nil error when QA exhausted, got: %v", err)
+	}
+
+	stored, _ := ms.GetWorkflow(ctx, ws.ID)
+	if stored.Status != state.WorkflowStatusCompleted {
+		t.Errorf("expected completed status, got %q", stored.Status)
+	}
+
+	// Verify a qa.exhausted event was emitted.
+	var exhaustedEvt *events.Event
+	for _, evt := range ms.events {
+		if evt.Type == events.EventQAExhausted {
+			exhaustedEvt = evt
+			break
+		}
+	}
+	if exhaustedEvt == nil {
+		t.Fatal("expected qa.exhausted event to be emitted, got none")
 	}
 }
 

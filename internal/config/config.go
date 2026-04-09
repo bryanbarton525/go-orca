@@ -48,6 +48,14 @@ type Config struct {
 	Providers      ProvidersConfig      `mapstructure:"providers"`
 	Customizations CustomizationsConfig `mapstructure:"customizations"`
 	Workflow       WorkflowConfig       `mapstructure:"workflow"`
+	GitHub         GitHubConfig         `mapstructure:"github"`
+}
+
+// GitHubConfig holds credentials used by delivery actions that interact with
+// the GitHub API (github-pr, repo-commit-only).
+// Environment variable: GOORCA_GITHUB_TOKEN
+type GitHubConfig struct {
+	Token string `mapstructure:"token"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -157,6 +165,12 @@ type WorkflowConfig struct {
 	EventRetentionDays      int           `mapstructure:"event_retention_days"`
 	ArtifactStoragePath     string        `mapstructure:"artifact_storage_path"`
 	HandoffTimeout          time.Duration `mapstructure:"handoff_timeout"`
+	// PersonaMaxRetries is the number of additional attempts after a transient
+	// LLM failure (context deadline, connection error).  0 disables retries.
+	PersonaMaxRetries int `mapstructure:"persona_max_retries"`
+	// PersonaRetryBackoff is the base wait before the first retry.  Each
+	// subsequent retry doubles the wait (exponential backoff).
+	PersonaRetryBackoff time.Duration `mapstructure:"persona_retry_backoff"`
 }
 
 // Load reads configuration from the given file (if set) and merges with
@@ -252,6 +266,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.event_retention_days", 90)
 	v.SetDefault("workflow.artifact_storage_path", "./artifacts")
 	v.SetDefault("workflow.handoff_timeout", 5*time.Minute)
+	v.SetDefault("workflow.persona_max_retries", 3)
+	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)
+
+	// GitHub delivery
+	v.SetDefault("github.token", "")
 }
 
 // validate enforces hard constraints on the configuration.

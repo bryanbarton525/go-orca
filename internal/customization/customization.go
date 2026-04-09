@@ -51,6 +51,10 @@ type Item struct {
 	SourceName string
 	Path       string
 	Precedence int
+	// Metadata holds key/value pairs parsed from the file's YAML frontmatter
+	// (the --- ... --- block at the top of the file). The Content field has the
+	// frontmatter stripped so only the markdown body is injected into prompts.
+	Metadata map[string]string
 }
 
 // Snapshot is the resolved set of customization items for a single workflow run.
@@ -190,13 +194,26 @@ func scanSource(src Source, builtins []*Item) ([]*Item, error) {
 			return readErr
 		}
 
+		raw := string(data)
+		meta := parseFrontmatter(raw)
+		body := stripFrontmatter(raw)
+
+		// For skills, prefer the name from frontmatter if present.
+		itemName := deriveName(name, path, src.Root, kind)
+		if kind == KindSkill {
+			if fmName, ok := meta["name"]; ok && fmName != "" {
+				itemName = fmName
+			}
+		}
+
 		items = append(items, &Item{
 			Kind:       kind,
-			Name:       deriveName(name, kind),
-			Content:    string(data),
+			Name:       itemName,
+			Content:    body,
 			SourceName: src.Name,
 			Path:       path,
 			Precedence: src.Precedence,
+			Metadata:   meta,
 		})
 		return nil
 	})
@@ -216,17 +233,72 @@ func classifyFile(name string) (Kind, bool) {
 	return "", false
 }
 
-func deriveName(filename string, kind Kind) string {
-	name := strings.TrimSuffix(filename, ".md")
+func deriveName(filename, filePath, sourceRoot string, kind Kind) string {
 	switch kind {
 	case KindAgent:
-		name = strings.TrimSuffix(name, ".agent")
+		name := strings.TrimSuffix(filename, ".md")
+		return strings.TrimSuffix(name, ".agent")
 	case KindPrompt:
-		name = strings.TrimSuffix(name, ".prompt")
+		name := strings.TrimSuffix(filename, ".md")
+		return strings.TrimSuffix(name, ".prompt")
 	case KindSkill:
-		return "skill"
+		// For package-style layouts the SKILL.md lives inside a named directory:
+		//   skills/my-skill/SKILL.md  →  name "my-skill"  (parent dir)
+		// A flat SKILL.md sitting directly in the source root keeps "skill" for
+		// backward compatibility with existing configurations.
+		parentDir := filepath.Dir(filePath)
+		if parentDir == sourceRoot {
+			return "skill"
+		}
+		return filepath.Base(parentDir)
 	}
-	return name
+	return filename
+}
+
+// parseFrontmatter extracts key/value pairs from a YAML frontmatter block.
+// The block must start at position 0 and be delimited by "---\n" on both ends.
+// Only simple "key: value" lines are parsed; nested YAML is not supported.
+// Returns an empty map when no valid frontmatter is present.
+func parseFrontmatter(content string) map[string]string {
+	m := make(map[string]string)
+	if !strings.HasPrefix(content, "---\n") {
+		return m
+	}
+	rest := content[4:]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return m
+	}
+	body := rest[:end]
+	for _, line := range strings.Split(body, "\n") {
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if key != "" {
+			m[key] = val
+		}
+	}
+	return m
+}
+
+// stripFrontmatter removes a leading YAML frontmatter block from content.
+// The block must start at position 0 and be delimited by "---\n" on both ends.
+// Returns the original content unchanged when no valid frontmatter is detected.
+func stripFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---\n") {
+		return content
+	}
+	rest := content[4:]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return content
+	}
+	// skip past the closing "---" line and one trailing newline
+	after := rest[end+4:] // len("\n---") == 4
+	return strings.TrimLeft(after, "\n")
 }
 
 func kindEnabled(enabled []Kind, kind Kind) bool {

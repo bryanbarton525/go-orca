@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -299,8 +298,14 @@ func (a *WebhookAction) Execute(ctx context.Context, in Input) (*Output, error) 
 //	title        – PR title (defaults to workflow title)
 //	body         – PR body text (optional)
 //	path         – directory prefix for artifact files (default: "")
-//	token        – GitHub PAT (falls back to env GITHUB_TOKEN)
-type GitHubPRAction struct{}
+//	token        – GitHub PAT; overrides the application-level default token
+//
+// Token resolution order:
+//  1. config.token (per-workflow inline override)
+//  2. defaultToken seeded from cfg.GitHub.Token via GOORCA_GITHUB_TOKEN
+type GitHubPRAction struct {
+	defaultToken string
+}
 
 func (a *GitHubPRAction) Kind() ActionKind { return ActionGitHubPR }
 func (a *GitHubPRAction) Description() string {
@@ -332,12 +337,15 @@ func (a *GitHubPRAction) Execute(ctx context.Context, in Input) (*Output, error)
 	if cfg.Title == "" {
 		cfg.Title = in.Workflow.Title
 	}
+	if cfg.Title == "" {
+		cfg.Title = fmt.Sprintf("improvement: %s", cfg.HeadBranch)
+	}
 	token := cfg.Token
 	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+		token = a.defaultToken
 	}
 	if token == "" {
-		return nil, fmt.Errorf("actions: github-pr requires a GitHub token (config.token or GITHUB_TOKEN env)")
+		return nil, fmt.Errorf("actions: github-pr requires a GitHub token (config.token or GOORCA_GITHUB_TOKEN)")
 	}
 
 	ghDo := func(method, url string, reqBody interface{}) ([]byte, int, error) {
@@ -400,20 +408,49 @@ func (a *GitHubPRAction) Execute(ctx context.Context, in Input) (*Output, error)
 	}
 
 	// 3. Commit each artifact via Contents API.
-	var committed []string
+	// Deduplicate by resolved file path — keep the last artifact for each path
+	// (later tasks supersede earlier ones for the same file).
+	type artifactEntry struct {
+		name    string
+		content string
+	}
+	// Preserve insertion order while deduplicating.
+	pathOrder := make([]string, 0, len(in.Artifacts))
+	pathMap := make(map[string]artifactEntry, len(in.Artifacts))
 	for _, art := range in.Artifacts {
-		filePath := art.Path
-		if filePath == "" {
-			filePath = art.Name
+		fp := art.Path
+		if fp == "" {
+			fp = art.Name
 		}
 		if cfg.Path != "" {
-			filePath = strings.TrimRight(cfg.Path, "/") + "/" + filePath
+			fp = strings.TrimRight(cfg.Path, "/") + "/" + fp
 		}
-		content := base64.StdEncoding.EncodeToString([]byte(art.Content))
-		putBody := map[string]string{
-			"message": "add " + art.Name,
+		if _, exists := pathMap[fp]; !exists {
+			pathOrder = append(pathOrder, fp)
+		}
+		pathMap[fp] = artifactEntry{name: art.Name, content: art.Content}
+	}
+	var committed []string
+	for _, filePath := range pathOrder {
+		art := pathMap[filePath]
+		content := base64.StdEncoding.EncodeToString([]byte(art.content))
+		putBody := map[string]interface{}{
+			"message": "add " + art.name,
 			"content": content,
 			"branch":  cfg.HeadBranch,
+		}
+		// Check whether the file already exists on the head branch; if so, we
+		// must supply its current SHA or the Contents API returns 422.
+		existData, existStatus, err := ghDo(http.MethodGet,
+			apiBase+"/contents/"+filePath+"?ref="+cfg.HeadBranch, nil)
+		if err == nil && existStatus == http.StatusOK {
+			var existResp struct {
+				SHA string `json:"sha"`
+			}
+			if json.Unmarshal(existData, &existResp) == nil && existResp.SHA != "" {
+				putBody["sha"] = existResp.SHA
+				putBody["message"] = "update " + art.name
+			}
 		}
 		putData, putStatus, err := ghDo(http.MethodPut,
 			apiBase+"/contents/"+filePath, putBody)
@@ -465,8 +502,14 @@ func (a *GitHubPRAction) Execute(ctx context.Context, in Input) (*Output, error)
 //	repo   – "owner/repo" (required)
 //	branch – target branch name (default: "main")
 //	path   – subdirectory prefix for artifact files (default: "")
-//	token  – GitHub personal access token (required; overrides env GITHUB_TOKEN)
-type RepoCommitAction struct{}
+//	token  – GitHub PAT; overrides the application-level default token
+//
+// Token resolution order:
+//  1. config.token (per-workflow inline override)
+//  2. defaultToken seeded from cfg.GitHub.Token via GOORCA_GITHUB_TOKEN
+type RepoCommitAction struct {
+	defaultToken string
+}
 
 func (a *RepoCommitAction) Kind() ActionKind { return ActionRepoCommit }
 func (a *RepoCommitAction) Description() string {
@@ -491,10 +534,10 @@ func (a *RepoCommitAction) Execute(ctx context.Context, in Input) (*Output, erro
 	}
 	token := cfg.Token
 	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+		token = a.defaultToken
 	}
 	if token == "" {
-		return nil, fmt.Errorf("actions: repo-commit-only requires a GitHub token (config.token or GITHUB_TOKEN env)")
+		return nil, fmt.Errorf("actions: repo-commit-only requires a GitHub token (config.token or GOORCA_GITHUB_TOKEN)")
 	}
 
 	apiBase := "https://api.github.com/repos/" + cfg.Repo
@@ -570,13 +613,23 @@ func (a *RepoCommitAction) Execute(ctx context.Context, in Input) (*Output, erro
 }
 
 // Global is the process-wide action registry, pre-loaded with built-in actions.
-var Global = func() *Registry {
+// Call InitGlobal with the application GitHub token before starting the server.
+var Global = newGlobalRegistry("")
+
+// InitGlobal rebuilds the process-wide registry with the supplied GitHub token
+// as the default for the github-pr and repo-commit-only actions.  It must be
+// called once at startup after config is loaded, before the first workflow runs.
+func InitGlobal(githubToken string) {
+	Global = newGlobalRegistry(githubToken)
+}
+
+func newGlobalRegistry(githubToken string) *Registry {
 	r := NewRegistry()
 	r.Register(&MarkdownExportAction{})
 	r.Register(&ArtifactBundleAction{})
 	r.Register(&BlogDraftAction{})
 	r.Register(&WebhookAction{})
-	r.Register(&GitHubPRAction{})
-	r.Register(&RepoCommitAction{})
+	r.Register(&GitHubPRAction{defaultToken: githubToken})
+	r.Register(&RepoCommitAction{defaultToken: githubToken})
 	return r
-}()
+}

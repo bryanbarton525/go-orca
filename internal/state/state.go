@@ -91,6 +91,17 @@ type Execution struct {
 	QACycle int `json:"qa_cycle,omitempty"`
 	// RemediationAttempt is the Implementer re-run count within the current QA cycle.
 	RemediationAttempt int `json:"remediation_attempt,omitempty"`
+	// WorkflowKind distinguishes standard workflow runs from improvement workflows
+	// spawned by the self-improvement pipeline.
+	// Values: "standard" | "improvement"
+	WorkflowKind string `json:"workflow_kind,omitempty"`
+	// ParentWorkflowID is set on improvement child workflows and points to the
+	// workflow whose Refiner produced this improvement.
+	ParentWorkflowID string `json:"parent_workflow_id,omitempty"`
+	// ImprovementDepth is 0 for standard workflows and 1 for improvement child
+	// workflows.  The recursion guard prevents the dispatcher from spawning
+	// further improvement workflows when this value is >= 1.
+	ImprovementDepth int `json:"improvement_depth,omitempty"`
 }
 
 // WorkflowState is the canonical, persisted state of a single workflow run.
@@ -167,6 +178,8 @@ type WorkflowState struct {
 }
 
 // NewWorkflowState constructs an empty WorkflowState with a generated ID.
+// WorkflowKind defaults to "standard"; child improvement workflows override
+// this to "improvement" in workflow_launcher.go.
 func NewWorkflowState(tenantID, scopeID, request string) *WorkflowState {
 	now := time.Now().UTC()
 	return &WorkflowState{
@@ -176,6 +189,7 @@ func NewWorkflowState(tenantID, scopeID, request string) *WorkflowState {
 		Status:    WorkflowStatusPending,
 		Request:   request,
 		Summaries: make(map[PersonaKind]string),
+		Execution: Execution{WorkflowKind: "standard"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -266,16 +280,49 @@ type Artifact struct {
 	CreatedAt   time.Time    `json:"created_at"`
 }
 
+// ImprovementFile is a single file within a multi-file improvement bundle.
+type ImprovementFile struct {
+	// Path is the relative file path within the improvements active/ directory.
+	// e.g. "skills/my-skill/SKILL.md" or "agents/my-agent.agent.md"
+	Path string `json:"path"`
+	// Content is the verbatim file content.
+	Content string `json:"content"`
+}
+
 // RefinerImprovement is a single structured improvement proposed by the Refiner.
 type RefinerImprovement struct {
 	ComponentType string `json:"component_type"` // agent | skill | prompt | persona
 	ComponentName string `json:"component_name"`
 	Problem       string `json:"problem"`
 	ProposedFix   string `json:"proposed_fix"`
-	// Content is the verbatim file content to persist (e.g. a SKILL.md or
-	// .prompt.md body). Empty means the improvement is advisory only.
+	// ChangeType classifies whether this is a new component (create), update to
+	// an existing one (update), or advisory-only with no files (advisory).
+	ChangeType string `json:"change_type,omitempty"` // create | update | advisory
+	// ApplyMode hints at how the improvement should be applied.
+	// "direct"   → write straight to artifacts/improvements/active/ (low-risk only)
+	// "workflow" → open a GitHub PR via a child improvement workflow
+	// "advisory" → emit event only, no files written
+	ApplyMode string `json:"apply_mode,omitempty"` // direct | workflow | advisory
+	// Files is the list of file path+content pairs for multi-file improvements
+	// (e.g. a full Anthropic skill package with SKILL.md + references/).
+	// When populated the dispatcher uses this slice; it falls back to Content
+	// for single-file backward-compatible improvements.
+	Files []ImprovementFile `json:"files,omitempty"`
+	// Content is the verbatim file content to persist (legacy single-file field).
+	// Empty means the improvement is advisory only.
 	Content  string `json:"content,omitempty"`
 	Priority string `json:"priority"` // high | medium | low
+}
+
+// ImprovementApplyResult records the outcome of applying a single RefinerImprovement.
+type ImprovementApplyResult struct {
+	ComponentType string `json:"component_type"`
+	ComponentName string `json:"component_name"`
+	// Status is one of: applied | dispatched | skipped | error
+	Status          string `json:"status"`
+	AppliedPath     string `json:"applied_path,omitempty"`
+	ChildWorkflowID string `json:"child_workflow_id,omitempty"`
+	Message         string `json:"message,omitempty"`
 }
 
 // FinalizationResult holds the Finalizer's output.
@@ -286,10 +333,14 @@ type FinalizationResult struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	Suggestions []string          `json:"suggestions,omitempty"` // from Refiner pass
 	// RefinerImprovements holds the structured set of improvements from the
-	// inline Refiner retrospective.  The engine persists these as files under
-	// ImprovementsRoot so future workflow runs can incorporate them.
+	// inline Refiner retrospective.  The improvement dispatcher processes these
+	// after the Finalizer completes, routing them to direct-apply or a child PR
+	// workflow based on the routing policy.
 	RefinerImprovements []RefinerImprovement `json:"refiner_improvements,omitempty"`
-	CompletedAt         time.Time            `json:"completed_at"`
+	// ImprovementResults records the outcome of each improvement apply attempt
+	// as returned by the ImprovementDispatcher.
+	ImprovementResults []ImprovementApplyResult `json:"improvement_results,omitempty"`
+	CompletedAt        time.Time                `json:"completed_at"`
 }
 
 // ─── HandoffPacket ────────────────────────────────────────────────────────────

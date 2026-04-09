@@ -80,7 +80,7 @@ The Director selects a mode automatically from the request when not specified.
 | `task.failed` | `{ "task_id": uuid, "title": string, "error": string }` |
 | `task.created` | `{ "task_id": uuid, "title": string, "qa_cycle": integer }` |
 | `artifact.produced` | `{ "task_id": uuid, "artifact_name": string, "kind": ArtifactKind }` |
-| `refiner.suggestion` | `{ "component": string, "name": string, "suggestion": string, "applied_path": string }` |
+| `refiner.suggestion` | `{ "component": string, "name": string, "suggestion": string, "applied_path": string, "status": string, "child_workflow_id": string }` |
 
 ---
 
@@ -231,7 +231,7 @@ Retrieve a single workflow with all persisted state.
   "design": { "overview": "...", "components": [...], "decisions": [...], "tech_stack": [...], "delivery_target": "..." },
   "tasks": [ { "id": "...", "title": "...", "status": "completed", "depends_on": [], "assigned_to": "implementer", ... } ],
   "artifacts": [ { "id": "...", "kind": "code", "name": "main.go", "content": "...", "created_by": "implementer", ... } ],
-  "finalization": { "action": "markdown-export", "summary": "...", "links": [], "suggestions": [...] },
+  "finalization": { "action": "markdown-export", "summary": "...", "links": [], "suggestions": [...], "refiner_improvements": [...], "improvement_results": [...] },
   "summaries": { "director": "...", "project_manager": "..." },
   "blocking_issues": [],
   "all_suggestions": ["Consider adding rate limiting", "..."],
@@ -284,6 +284,9 @@ Retrieve a single workflow with all persisted state.
 | `active_task_title` | string | Human-readable title of the active task |
 | `qa_cycle` | int | Current QA pass number (1-based); 0 before QA starts |
 | `remediation_attempt` | int | Number of Architect-led remediation passes completed so far |
+| `workflow_kind` | string | `"standard"` for user-initiated workflows; `"improvement"` for child workflows spawned by the self-improvement pipeline |
+| `parent_workflow_id` | string | Set on improvement child workflows; ID of the parent workflow whose Refiner produced this improvement |
+| `improvement_depth` | int | `0` for standard workflows; `1` for improvement child workflows (recursion guard prevents depth > 1) |
 | `provider_name` | string | LLM provider selected by the Director |
 | `model_name` | string | Model selected by the Director |
 | `created_at` | datetime | — |

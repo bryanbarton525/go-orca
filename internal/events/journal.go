@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/go-orca/go-orca/internal/state"
+	"github.com/google/uuid"
 )
 
 // EventType classifies a workflow event.
@@ -25,6 +25,7 @@ const (
 	EventPersonaStarted   EventType = "persona.started"
 	EventPersonaCompleted EventType = "persona.completed"
 	EventPersonaFailed    EventType = "persona.failed"
+	EventPersonaRetrying  EventType = "persona.retrying"
 
 	EventTaskCreated   EventType = "task.created"
 	EventTaskStarted   EventType = "task.started"
@@ -36,6 +37,11 @@ const (
 	EventStateTransition   EventType = "state.transition"
 	EventProviderCall      EventType = "provider.call"
 	EventRefinerSuggestion EventType = "refiner.suggestion"
+
+	// EventQAExhausted is emitted when the QA remediation loop hits
+	// MaxQARetries with blocking issues still present.  The workflow
+	// continues to the Finalizer rather than failing.
+	EventQAExhausted EventType = "qa.exhausted"
 )
 
 // Event is a single immutable journal entry for a workflow.
@@ -95,6 +101,17 @@ type PersonaFailedPayload struct {
 	Error   string            `json:"error"`
 }
 
+// PersonaRetryingPayload is the payload for EventPersonaRetrying.
+// Emitted before each retry attempt so that clients can observe recovery in
+// progress without needing to poll GET /workflows/:id.
+type PersonaRetryingPayload struct {
+	Persona      state.PersonaKind `json:"persona"`
+	Attempt      int               `json:"attempt"`      // 1-based retry number
+	MaxAttempts  int               `json:"max_attempts"` // total attempts including original
+	Error        string            `json:"error"`        // error that triggered this retry
+	RetryAfterMs int64             `json:"retry_after_ms"`
+}
+
 // ProviderCallPayload is the payload for EventProviderCall.
 type ProviderCallPayload struct {
 	Provider     string `json:"provider"`
@@ -117,6 +134,20 @@ type RefinerSuggestionPayload struct {
 	Name        string `json:"name"`
 	Suggestion  string `json:"suggestion"`
 	AppliedPath string `json:"applied_path,omitempty"`
+	// Status is the outcome from the ImprovementDispatcher:
+	// "applied" | "dispatched" | "skipped" | "error" | "" (when no dispatcher)
+	Status string `json:"status,omitempty"`
+	// ChildWorkflowID is set when Status == "dispatched" and a child
+	// improvement workflow was launched to open a GitHub PR.
+	ChildWorkflowID string `json:"child_workflow_id,omitempty"`
+}
+
+// QAExhaustedPayload is the payload for EventQAExhausted.
+// It records the unresolved blocking issues so the Refiner can include them
+// in its retrospective analysis.
+type QAExhaustedPayload struct {
+	RetriesAllowed int      `json:"retries_allowed"`
+	BlockingIssues []string `json:"blocking_issues"`
 }
 
 // ─── Journal note ─────────────────────────────────────────────────────────────
