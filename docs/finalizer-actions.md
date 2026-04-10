@@ -14,7 +14,7 @@ type Action interface {
 }
 ```
 
-A global registry (`actions.Global`) is pre-populated at process startup with all six built-in actions. Custom actions can be registered with `Global.Register(a)`.
+A global registry (`actions.Global`) is pre-populated at process startup with all seven built-in actions. Custom actions can be registered with `Global.Register(a)`.
 
 ### Input
 

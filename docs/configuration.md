@@ -139,6 +139,7 @@ All providers default to `enabled: false`. Enable at least one before submitting
 | `providers.ollama.default_model` | string | `"llama3"` | Default model |
 | `providers.ollama.timeout` | duration | `"120s"` | Per-request timeout |
 | `providers.ollama.tls_skip_verify` | bool | `false` | Skip TLS certificate verification (use only for self-signed certs in dev) |
+| `providers.ollama.num_ctx` | integer | `0` | Context window size sent to Ollama (`num_ctx`). `0` = use the model's built-in default (often 2048–4096). Set to `32768` or higher for long-form generation tasks. |
 
 ### providers.copilot
 
@@ -264,6 +265,7 @@ providers:
     host: "http://localhost:11434"
     default_model: "llama3"
     timeout: "120s"
+    num_ctx: 0
   copilot:
     enabled: false
     github_token: ""

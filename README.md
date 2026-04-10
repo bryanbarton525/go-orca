@@ -15,7 +15,7 @@
 
 ---
 
-go-orca is a self-hosted backend service that runs structured AI workflows across isolated tenants and scope hierarchies. Submit a natural-language request; go-orca routes it through a six-persona pipeline — Director → Project Manager → Architect → Implementer → QA → Finalizer — producing typed artifacts that can be delivered as a GitHub PR, a markdown export, a webhook payload, or an artifact bundle.
+go-orca is a self-hosted backend service that runs structured AI workflows across isolated tenants and scope hierarchies. Submit a natural-language request; go-orca routes it through a six-persona pipeline — Director → Project Manager → Architect → Implementer → QA → Finalizer — producing typed artifacts that can be delivered as a GitHub PR, a markdown export, a blog draft, a doc draft, a webhook payload, or an artifact bundle.
 
 Every workflow is isolated by tenant and scope. Per-scope customizations (skills, prompt overlays, agent personas) let different teams within the same deployment drive different behaviour without touching shared configuration. The scope hierarchy (global → org → team) means tenant-level defaults cascade to narrower scopes automatically.
 
@@ -29,7 +29,7 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **Cross-workflow pattern detection** — standalone async Refiner persona analyses historical journal events across many runs to surface recurring issues single-run retrospectives cannot see
 - **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; Implementer executes them; QA re-validates; repeats up to `MaxQARetries` times
 - **Role contract enforcement** — engine discards and warns on any output that violates persona ownership rules (Artifacts from non-Implementer, Tasks from non-Architect, etc.)
-- **Six delivery actions** — GitHub PR, direct repo commit, artifact bundle, markdown export, blog draft, webhook dispatch; caller-provided `delivery.action` overrides LLM choice
+- **Seven delivery actions** — GitHub PR, direct repo commit, artifact bundle, markdown export, blog draft, doc draft, webhook dispatch; caller-provided `delivery.action` overrides LLM choice
 - **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE
 - **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.)
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
@@ -120,7 +120,7 @@ curl -N http://localhost:8080/workflows/<id>/stream \
 | [Configuration](docs/configuration.md) | Every config key, default, env var override |
 | [Providers](docs/providers.md) | OpenAI, Anthropic, Ollama, GitHub Copilot — setup and config |
 | [Customization](docs/customization.md) | Skills, agent personas, prompt overlays, scope resolution chain |
-| [Finalizer Actions](docs/finalizer-actions.md) | Delivery actions: GitHub PR, commit, bundle, export, webhook |
+| [Finalizer Actions](docs/finalizer-actions.md) | Delivery actions: GitHub PR, commit, bundle, export, blog draft, doc draft, webhook |
 | [Tools](docs/tools.md) | Built-in tools and the MCP remote tool protocol |
 | [Storage](docs/storage.md) | SQLite vs PostgreSQL, Store interface, migrations |
 | [Deployment](docs/deployment.md) | Binary setup, Docker, reverse proxy, shutdown behaviour |

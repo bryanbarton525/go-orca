@@ -79,6 +79,8 @@ providers:
     host: "http://localhost:11434"
     default_model: "llama3"
     timeout: "120s"
+    tls_skip_verify: false
+    num_ctx: 0            # set to 32768+ for long-form generation
 ```
 
 | Key | Required | Description |
@@ -87,6 +89,8 @@ providers:
 | `host` | No | Ollama server URL. Default: `http://localhost:11434` |
 | `default_model` | No | Model tag to use. Default: `llama3` |
 | `timeout` | No | Per-request timeout. Default: `120s` |
+| `tls_skip_verify` | No | Skip TLS certificate verification. Use only for self-signed certs in dev. Default: `false` |
+| `num_ctx` | No | Context window size (`num_ctx`) sent to Ollama. `0` = use the model's built-in default (often 2048–4096). Set to `32768` or higher for long-form generation tasks. Default: `0` |
 
 ### Starting Ollama
 
