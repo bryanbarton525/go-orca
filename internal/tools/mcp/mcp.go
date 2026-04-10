@@ -31,6 +31,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -142,6 +143,11 @@ type LoaderOptions struct {
 	// When nil a default client with HTTPTimeout is used.
 	// Ignored by [LoadCommand].
 	HTTPClient *http.Client
+
+	// TLSSkipVerify disables TLS certificate verification.
+	// Use only in development environments with self-signed certificates.
+	// Ignored by [LoadCommand] and when HTTPClient is set.
+	TLSSkipVerify bool
 }
 
 // Load connects to a remote MCP server at endpoint, discovers its tools via
@@ -215,7 +221,13 @@ func buildHTTPTransport(endpoint string, opts LoaderOptions) (sdkmcp.Transport, 
 	}
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: opts.HTTPTimeout}
+		transport := http.DefaultTransport
+		if opts.TLSSkipVerify {
+			transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional for dev
+			}
+		}
+		httpClient = &http.Client{Timeout: opts.HTTPTimeout, Transport: transport}
 	}
 
 	switch opts.HTTPTransport {

@@ -374,6 +374,10 @@ type HandoffPacket struct {
 	CustomAgentMD  string `json:"custom_agent_md,omitempty"` // loaded .agent.md
 	SkillsContext  string `json:"skills_context,omitempty"`  // loaded SKILL.md content
 	PromptsContext string `json:"prompts_context,omitempty"` // loaded .prompt.md
+	// ToolsContext is a formatted markdown description of available tools,
+	// injected into every persona's system prompt.  Populated by the engine
+	// from the global tool registry at workflow start.
+	ToolsContext string `json:"tools_context,omitempty"`
 
 	// PersonaPromptSnapshot is the workflow-start snapshot of all base persona
 	// prompt file contents.  Each persona reads its system prompt from here so

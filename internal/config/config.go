@@ -46,6 +46,7 @@ type Config struct {
 	Logging        LoggingConfig        `mapstructure:"logging"`
 	Scoping        ScopingConfig        `mapstructure:"scoping"`
 	Providers      ProvidersConfig      `mapstructure:"providers"`
+	Tools          ToolsConfig          `mapstructure:"tools"`
 	Customizations CustomizationsConfig `mapstructure:"customizations"`
 	Workflow       WorkflowConfig       `mapstructure:"workflow"`
 	GitHub         GitHubConfig         `mapstructure:"github"`
@@ -149,6 +150,34 @@ type CopilotConfig struct {
 // CustomizationsConfig controls customization discovery sources.
 type CustomizationsConfig struct {
 	Sources []CustomizationSource `mapstructure:"sources"`
+}
+
+// ToolsConfig holds external tool integration settings.
+type ToolsConfig struct {
+	MCP []MCPServerConfig `mapstructure:"mcp"`
+}
+
+// MCPServerConfig defines a single MCP server connection.
+// Transport values: "streamable" (default), "sse", "command".
+type MCPServerConfig struct {
+	// Name is a human-readable identifier used in log messages.
+	Name string `mapstructure:"name"`
+	// Transport selects the connection type: "streamable", "sse", or "command".
+	// Defaults to "streamable" for HTTP servers.
+	Transport string `mapstructure:"transport"`
+	// Endpoint is the HTTP URL for streamable / SSE transports.
+	Endpoint string `mapstructure:"endpoint"`
+	// Command is the executable for the "command" transport (e.g. "uvx", "npx").
+	Command string `mapstructure:"command"`
+	// Args are the arguments passed to Command.
+	Args []string `mapstructure:"args"`
+	// Env holds additional environment variables to pass to the subprocess.
+	// Format: KEY=VALUE   (only used with transport: command)
+	Env []string `mapstructure:"env"`
+	// HTTPTimeout overrides the default 30s timeout for HTTP transports.
+	HTTPTimeout time.Duration `mapstructure:"http_timeout"`
+	// TLSSkipVerify disables TLS certificate verification. Dev only.
+	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 }
 
 // CustomizationSource defines one resolved source for skills/agents/prompts.

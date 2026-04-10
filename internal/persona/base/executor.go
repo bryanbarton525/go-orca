@@ -89,6 +89,10 @@ func (e *Executor) buildSystemContent(systemPrompt string, packet state.HandoffP
 		sb.WriteString("\n\n---\n## Available skills\n")
 		sb.WriteString(packet.SkillsContext)
 	}
+	if packet.ToolsContext != "" {
+		sb.WriteString("\n\n---\n## Available tools\n")
+		sb.WriteString(packet.ToolsContext)
+	}
 	if packet.PromptsContext != "" {
 		sb.WriteString("\n\n---\n## Additional prompts\n")
 		sb.WriteString(packet.PromptsContext)

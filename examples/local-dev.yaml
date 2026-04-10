@@ -67,6 +67,16 @@ providers:
     max_tokens: 16384
     timeout: "120s"
 
+# ─── Tools ────────────────────────────────────────────────────────────────────
+tools:
+  mcp:
+    # Context7: up-to-date library documentation via MCP.
+    # Requires Node.js / npx. No API key needed for public docs.
+    - name: context7
+      transport: command
+      command: npx
+      args: ["-y", "@upstash/context7-mcp"]
+
 # ─── Customizations ───────────────────────────────────────────────────────────
 customizations:
   sources:

@@ -17,6 +17,8 @@ import (
 
 	"go.uber.org/zap"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/go-orca/go-orca/internal/api/routes"
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
@@ -42,6 +44,7 @@ import (
 	"github.com/go-orca/go-orca/internal/tenant"
 	"github.com/go-orca/go-orca/internal/tools"
 	"github.com/go-orca/go-orca/internal/tools/builtin"
+	mcptools "github.com/go-orca/go-orca/internal/tools/mcp"
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
 )
@@ -116,6 +119,14 @@ func main() {
 	builtin.RegisterAll(toolReg)
 	log.Info("builtin tools registered", zap.Int("count", len(toolReg.All())))
 
+	// ── Load MCP tools from config ────────────────────────────────────────────
+	mcpSessions := loadMCPTools(ctx, cfg, toolReg, log)
+	defer func() {
+		for _, s := range mcpSessions {
+			_ = s.Close()
+		}
+	}()
+
 	// ── Build customization registry ──────────────────────────────────────────
 	customReg := buildCustomizationRegistry(cfg, log)
 
@@ -142,6 +153,7 @@ func main() {
 		PersonaMaxRetries:     cfg.Workflow.PersonaMaxRetries,
 		PersonaRetryBackoff:   cfg.Workflow.PersonaRetryBackoff,
 		ImprovementsRoot:      improvementsRoot,
+		ToolRegistry:          toolReg,
 	})
 
 	// Build the scheduler with the real engine.
@@ -349,4 +361,51 @@ func buildCustomizationRegistry(cfg *config.Config, log *zap.Logger) *customizat
 	log.Info("customization registry built",
 		zap.Int("sources", len(cfg.Customizations.Sources)))
 	return reg
+}
+
+// loadMCPTools connects to each configured MCP server, registers its tools
+// into reg, and returns the live sessions.  Sessions must be closed at
+// shutdown.  Failures are logged as warnings and do not prevent startup.
+func loadMCPTools(ctx context.Context, cfg *config.Config, reg *tools.Registry, log *zap.Logger) []*sdkmcp.ClientSession {
+	sessions := make([]*sdkmcp.ClientSession, 0, len(cfg.Tools.MCP))
+	for _, srv := range cfg.Tools.MCP {
+		opts := mcptools.LoaderOptions{
+			HTTPTimeout:   srv.HTTPTimeout,
+			TLSSkipVerify: srv.TLSSkipVerify,
+		}
+
+		var (
+			session *sdkmcp.ClientSession
+			err     error
+		)
+		switch srv.Transport {
+		case "sse":
+			opts.HTTPTransport = mcptools.TransportSSE
+			session, err = mcptools.Load(ctx, reg, srv.Endpoint, opts)
+		case "command", "stdio":
+			session, err = mcptools.LoadCommand(ctx, reg, srv.Command, srv.Args, opts)
+		default: // "streamable" or ""
+			session, err = mcptools.Load(ctx, reg, srv.Endpoint, opts)
+		}
+
+		if err != nil {
+			log.Warn("mcp server load failed — tools from this server are unavailable",
+				zap.String("name", srv.Name),
+				zap.Error(err),
+			)
+			continue
+		}
+		log.Info("mcp server loaded",
+			zap.String("name", srv.Name),
+			zap.String("transport", srv.Transport),
+		)
+		sessions = append(sessions, session)
+	}
+	if len(cfg.Tools.MCP) > 0 {
+		log.Info("mcp tools registered",
+			zap.Int("servers", len(cfg.Tools.MCP)),
+			zap.Int("total_tools", len(reg.All())),
+		)
+	}
+	return sessions
 }

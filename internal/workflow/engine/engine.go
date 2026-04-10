@@ -28,6 +28,7 @@ import (
 	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
+	"github.com/go-orca/go-orca/internal/tools"
 )
 
 // ScopeResolver resolves a scope ID to its ancestor slug chain.
@@ -126,6 +127,12 @@ type Options struct {
 	// markdown files (e.g. director.md, project_manager.md …).
 	// Defaults to prompts.DefaultRoot ("prompts/personas") when empty.
 	PersonaPromptRoot string
+
+	// ToolRegistry, when set, provides the set of registered tools whose
+	// specs are injected into every persona's system prompt as a
+	// ## Available tools section.
+	// When nil, no tool context is injected.
+	ToolRegistry *tools.Registry
 }
 
 func (o *Options) applyDefaults() {
@@ -919,7 +926,25 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		packet.PromptsContext = snap.PromptsContext()
 	}
 
+	// Populate tool context from the registry.
+	if e.opts.ToolRegistry != nil {
+		packet.ToolsContext = formatToolSpecs(e.opts.ToolRegistry.Specs())
+	}
+
 	return packet
+}
+
+// formatToolSpecs renders a list of tool specs as a markdown section for
+// injection into persona system prompts.
+func formatToolSpecs(specs []tools.ToolSpec) string {
+	if len(specs) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, s := range specs {
+		sb.WriteString(fmt.Sprintf("### %s\n%s\n\n**Parameters:**\n```json\n%s\n```\n\n", s.Name, s.Description, s.Parameters))
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // transition updates workflow status, appends a transition event, and saves.
