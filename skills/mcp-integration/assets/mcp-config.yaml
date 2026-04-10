@@ -1,0 +1,32 @@
+# Example MCP Configuration
+
+# Full annotated go-orca.yaml tools section showing MCP server connectivity.
+
+tools:
+  mcp:
+    # ── Streamable HTTP server (2025-03-26 spec, default) ──────────────────────
+    - name: my-api-tools
+      endpoint: "http://localhost:3000/mcp"
+      transport: streamable        # default; can be omitted
+
+    # ── Legacy SSE server (2024-11-05 spec) ────────────────────────────────────
+    - name: legacy-tools
+      endpoint: "http://localhost:4000/sse"
+      transport: sse
+
+    # ── Local subprocess via stdio (command transport) ─────────────────────────
+    - name: fetch
+      transport: command
+      command: uvx
+      args: ["mcp-server-fetch"]
+
+    - name: filesystem
+      transport: command
+      command: uvx
+      args: ["mcp-server-filesystem", "/workspace"]
+
+    # ── Self-signed TLS (dev only — never in production) ──────────────────────
+    - name: dev-local
+      endpoint: "https://mcp.local/mcp"
+      transport: streamable
+      tls_skip_verify: true        # remove in production

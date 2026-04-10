@@ -20,7 +20,14 @@ Tools are registered at startup:
 ```go
 toolReg := tools.NewRegistry()
 builtin.RegisterAll(toolReg)
-// optional: mcp.Load(toolReg, "http://mcp-server/manifest", mcp.LoaderOptions{})
+
+// HTTP MCP server (Streamable transport, 2025-03-26 spec):
+session, err := mcp.Load(ctx, toolReg, "http://localhost:3000/mcp", mcp.LoaderOptions{})
+defer session.Close()
+
+// Local stdio MCP server:
+session, err := mcp.LoadCommand(ctx, toolReg, "uvx", []string{"mcp-server-fetch"}, mcp.LoaderOptions{})
+defer session.Close()
 ```
 
 ---
@@ -149,94 +156,98 @@ File permissions: `0644`. Parent directory permissions: `0755`.
 
 Package: `internal/tools/mcp`
 
-go-orca can load additional tools from any HTTP server that exposes an MCP manifest. This lets you extend the tool set without modifying the binary.
+go-orca integrates with MCP servers using the official [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk). On startup, go-orca calls `ListTools` on each configured MCP server and registers the discovered tools so personas can invoke them by name.
 
-### Manifest Format
+### Transport Types
 
-Your MCP server must expose a JSON manifest at a URL (e.g. `http://localhost:8181/manifest`):
+| Transport | Config value | Protocol spec | When to use |
+|-----------|-------------|---------------|-------------|
+| Streamable HTTP | `streamable` (default) | 2025-03-26 | Modern HTTP-based MCP servers |
+| SSE | `sse` | 2024-11-05 | Legacy servers using Server-Sent Events |
+| Command (stdio) | `command` | any | Local subprocess MCP servers |
 
-```json
-{
-  "name": "my-mcp-server",
-  "version": "1.0.0",
-  "tools": [
-    {
-      "name": "search_web",
-      "description": "Searches the web and returns top results.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": { "type": "string" }
-        },
-        "required": ["query"]
-      },
-      "endpoint": "/tools/search_web"
-    }
-  ]
-}
+### Configuration
+
+Add MCP servers to the `tools.mcp` section of your config file:
+
+```yaml
+tools:
+  mcp:
+    # Modern HTTP server (Streamable transport):
+    - name: my-tools
+      endpoint: "http://localhost:3000/mcp"
+      transport: streamable      # default; can be omitted
+
+    # Legacy SSE server:
+    - name: legacy-tools
+      endpoint: "http://localhost:4000/sse"
+      transport: sse
+
+    # Local subprocess (stdio):
+    - name: fetch
+      transport: command
+      command: uvx
+      args: ["mcp-server-fetch"]
+
+    # Self-signed TLS (dev only):
+    - name: dev-local
+      endpoint: "https://mcp.local/mcp"
+      tls_skip_verify: true
 ```
 
-| Field | Description |
-|---|---|
-| `name` | Server display name |
-| `version` | Server version string |
-| `tools[].name` | Tool name (must be unique across all registered tools) |
-| `tools[].description` | Description exposed to personas |
-| `tools[].parameters` | JSON Schema for arguments |
-| `tools[].endpoint` | Path relative to manifest base URL to POST JSON-RPC calls to |
-
-### JSON-RPC Call Protocol
-
-go-orca calls each MCP tool via HTTP POST to its endpoint using JSON-RPC 2.0:
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "method": "search_web",
-  "params": { "query": "Go generics tutorial" }
-}
-```
-
-**Success response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "result": { "results": [...] }
-}
-```
-
-**Error response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "error": { "code": -1, "message": "search failed: rate limited" }
-}
-```
-
-### Loading MCP Tools
-
-MCP loading is currently wired manually in `main.go` (not yet exposed via config). To add an MCP server:
+### Go API
 
 ```go
-err := mcp.Load(toolReg, "http://localhost:8181/manifest", mcp.LoaderOptions{
-    HTTPTimeout: 30 * time.Second,
-})
+// HTTP server (Streamable or SSE based on LoaderOptions.Transport):
+session, err := mcp.Load(ctx, toolReg, "http://localhost:3000/mcp", mcp.LoaderOptions{})
+defer session.Close()
+
+// Stdio subprocess:
+session, err := mcp.LoadCommand(ctx, toolReg, "uvx", []string{"mcp-server-fetch"}, mcp.LoaderOptions{})
+defer session.Close()
+
+// In-process (testing):
+serverT, clientT := sdkmcp.NewInMemoryTransports()
+session, err := mcp.LoadTransport(ctx, toolReg, clientT)
+defer session.Close()
 ```
 
-- Endpoint paths are resolved relative to the manifest base URL (scheme + host).
-- Absolute endpoint URLs in the manifest are used as-is.
-- All tools from the manifest are registered under their `name` field.
-- Duplicate names cause a panic at registration time.
+`Load`, `LoadCommand`, and `LoadTransport` all:
+1. Connect to the MCP server.
+2. Call `ListTools` to discover available tools.
+3. Register each discovered tool into `reg` as an `MCPTool`.
+4. Return the live `*ClientSession` — the caller must keep it open while tools are in use and call `Close()` when done.
 
 ### Loader Options
 
-| Option | Default | Description |
-|---|---|---|
-| `HTTPTimeout` | 30s | Timeout for both the manifest fetch and individual tool calls |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `Transport` | `TransportStreamable` | HTTP transport variant (`TransportStreamable` or `TransportSSE`) |
+| `HTTPTimeout` | 30s | Timeout for the initial connection and `ListTools` call |
+| `TLSSkipVerify` | false | Skip TLS certificate verification — **dev only** |
+
+### Error Handling
+
+- If a tool's handler returns an error, the SDK sets `isError: true` on the result. go-orca surfaces this as a Go error with the tool name and the message from the first text content block.
+- Connection failures during `Load` are returned immediately; the workflow does not start.
+- Call timeouts are governed by the `context.Context` passed to `tool.Call`.
+
+### Session Lifecycle
+
+Each call to `Load` / `LoadCommand` / `LoadTransport` returns a `*ClientSession`. The session must remain open for as long as its registered tools may be called. Typical patterns:
+
+```go
+// Workflow-scoped: open before the workflow, close after.
+session, err := mcp.Load(ctx, toolReg, endpoint, opts)
+if err != nil { ... }
+defer session.Close()
+runWorkflow(ctx, toolReg)
+
+// Application-scoped: open once at startup, close on shutdown.
+appSession, _ = mcp.Load(appCtx, globalReg, endpoint, opts)
+// ... server loop ...
+appSession.Close()
+```
 
 ---
 

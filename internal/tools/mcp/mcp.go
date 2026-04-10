@@ -1,227 +1,247 @@
-// Package mcp provides an adapter that loads external tools via the
-// Model Context Protocol (MCP) manifest format and bridges them into the
+// Package mcp provides an adapter that connects to remote MCP servers using
+// the official Model Context Protocol Go SDK and bridges their tools into the
 // gorca tool registry.
 //
-// # Manifest format
+// # Transport support
 //
-// An MCP server exposes a JSON manifest at a well-known URL (e.g.
-// http://localhost:8181/manifest).  gorca expects the following shape:
+// Two HTTP transports are supported, matching the two MCP HTTP specs:
 //
-//	{
-//	  "name":    "my-mcp-server",
-//	  "version": "1.0.0",
-//	  "tools": [
-//	    {
-//	      "name":        "search_web",
-//	      "description": "Searches the web and returns top results.",
-//	      "parameters":  { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
-//	      "endpoint":    "/tools/search_web"   // relative to manifest base URL
-//	    }
-//	  ]
-//	}
+//   - [TransportStreamable] (default) — 2025-03-26 Streamable HTTP transport.
+//     Connect to servers that expose a single HTTP endpoint (e.g. /mcp).
 //
-// # JSON-RPC call protocol
+//   - [TransportSSE] — 2024-11-05 SSE transport.
+//     Connect to legacy servers that use a GET+SSE handshake.
 //
-// Each tool is invoked via HTTP POST to its endpoint with a JSON-RPC 2.0
-// request body:
+// # Usage
 //
-//	{ "jsonrpc": "2.0", "id": "<uuid>", "method": "<tool_name>", "params": <args> }
+//	reg := tools.NewRegistry()
+//	session, err := mcp.Load(ctx, reg, "http://localhost:3000/mcp", mcp.LoaderOptions{})
+//	if err != nil { ... }
+//	defer session.Close()
 //
-// The server must respond with either:
+// The returned [*mcp.ClientSession] must be kept alive as long as the tools
+// are in use; closing it prevents further tool calls.
 //
-//	{ "jsonrpc": "2.0", "id": "<uuid>", "result": <json_value> }
-//	{ "jsonrpc": "2.0", "id": "<uuid>", "error": { "code": -1, "message": "..." } }
+// # Stdio servers
+//
+// For command-based MCP servers use [LoadCommand]:
+//
+//	session, err := mcp.LoadCommand(ctx, reg, "uvx", []string{"mcp-server-fetch"}, mcp.LoaderOptions{})
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
+	"os/exec"
 	"time"
 
-	"github.com/google/uuid"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/go-orca/go-orca/internal/tools"
 )
 
-// ─── Manifest types ───────────────────────────────────────────────────────────
+// Transport selects the HTTP transport variant used when connecting to a
+// remote MCP server over HTTP/HTTPS.
+type Transport int
 
-// Manifest is the top-level MCP server manifest returned by the /manifest
-// endpoint (or equivalent).
-type Manifest struct {
-	Name    string    `json:"name"`
-	Version string    `json:"version"`
-	Tools   []ToolDef `json:"tools"`
-}
+const (
+	// TransportStreamable uses the 2025-03-26 Streamable HTTP transport
+	// (single endpoint, POST + optional SSE stream).  This is the default.
+	TransportStreamable Transport = iota
 
-// ToolDef describes a single callable tool exposed by the MCP server.
-type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-	// Endpoint is the path (relative to the manifest base URL) to POST JSON-RPC calls to.
-	Endpoint string `json:"endpoint"`
-}
-
-// ─── JSON-RPC wire types ──────────────────────────────────────────────────────
-
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      string          `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      string          `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
+	// TransportSSE uses the 2024-11-05 SSE transport
+	// (GET handshake + persistent SSE connection + POST messages endpoint).
+	// Use this for servers that have not yet migrated to the streamable spec.
+	TransportSSE
+)
 
 // ─── MCPTool ──────────────────────────────────────────────────────────────────
 
-// MCPTool is a tools.Tool implementation backed by a remote MCP endpoint.
+// MCPTool is a tools.Tool implementation that delegates calls to a live
+// MCP ClientSession.
 type MCPTool struct {
-	def        ToolDef
-	callURL    string // fully resolved URL for JSON-RPC calls
-	httpClient *http.Client
+	sdkTool    sdkmcp.Tool
+	parameters json.RawMessage // cached JSON-Schema for Parameters()
+	session    *sdkmcp.ClientSession
 }
 
 var _ tools.Tool = (*MCPTool)(nil)
 
 // Name implements tools.Tool.
-func (t *MCPTool) Name() string { return t.def.Name }
+func (t *MCPTool) Name() string { return t.sdkTool.Name }
 
 // Description implements tools.Tool.
-func (t *MCPTool) Description() string { return t.def.Description }
+func (t *MCPTool) Description() string { return t.sdkTool.Description }
 
-// Parameters implements tools.Tool.
-func (t *MCPTool) Parameters() json.RawMessage { return t.def.Parameters }
+// Parameters implements tools.Tool — returns the tool's JSON input schema.
+func (t *MCPTool) Parameters() json.RawMessage { return t.parameters }
 
-// Call implements tools.Tool — sends a JSON-RPC 2.0 request and returns the result.
+// Call implements tools.Tool.
+// args must be a valid JSON object matching the tool's input schema.
+// The first non-error text content from the MCP response is returned as JSON.
 func (t *MCPTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	req := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      uuid.New().String(),
-		Method:  t.def.Name,
-		Params:  args,
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: marshal request: %w", err)
+	// Unmarshal the args into a map so we can pass them to the SDK.
+	var argsMap map[string]any
+	if len(args) > 0 && string(args) != "null" {
+		if err := json.Unmarshal(args, &argsMap); err != nil {
+			return nil, fmt.Errorf("mcp: unmarshal args: %w", err)
+		}
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.callURL,
-		bytes.NewReader(body))
+	res, err := t.session.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name:      t.sdkTool.Name,
+		Arguments: argsMap,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("mcp: build request: %w", err)
+		return nil, fmt.Errorf("mcp: call tool %q: %w", t.sdkTool.Name, err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	resp, err := t.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: http: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: read body: %w", err)
+	if res.IsError {
+		// Collect the error message from text content, if any.
+		msg := t.sdkTool.Name + ": tool reported an error"
+		for _, c := range res.Content {
+			if tc, ok := c.(*sdkmcp.TextContent); ok {
+				msg = tc.Text
+				break
+			}
+		}
+		return nil, fmt.Errorf("mcp: %s", msg)
 	}
 
-	var rpcResp rpcResponse
-	if err := json.Unmarshal(raw, &rpcResp); err != nil {
-		return nil, fmt.Errorf("mcp: parse response: %w", err)
+	// Collect text content from the result.  If the response contains
+	// structured content, it takes precedence over plain text.
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdkmcp.TextContent); ok {
+			// Attempt to return as JSON; fall back to a JSON string if not valid JSON.
+			raw := json.RawMessage(tc.Text)
+			if json.Valid(raw) {
+				return raw, nil
+			}
+			quoted, _ := json.Marshal(tc.Text)
+			return quoted, nil
+		}
 	}
-	if rpcResp.Error != nil {
-		return nil, fmt.Errorf("mcp: rpc error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
-	}
-	return rpcResp.Result, nil
+	return json.RawMessage(`null`), nil
 }
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
-// LoaderOptions configures the MCP manifest loader.
+// LoaderOptions configures the MCP server connection.
 type LoaderOptions struct {
-	// HTTPTimeout is the timeout for both manifest fetch and tool calls.
+	// HTTPTimeout is the timeout applied to the HTTP client used for transport.
+	// It controls individual request timeouts, not the session lifetime.
 	// Defaults to 30 seconds.
 	HTTPTimeout time.Duration
+
+	// HTTPTransport selects the HTTP transport variant.  Defaults to [TransportStreamable].
+	// Ignored by [LoadCommand].
+	HTTPTransport Transport
+
+	// HTTPClient overrides the HTTP client used for the transport.
+	// When nil a default client with HTTPTimeout is used.
+	// Ignored by [LoadCommand].
+	HTTPClient *http.Client
 }
 
-// Load fetches the MCP manifest from manifestURL, constructs an MCPTool for
-// each tool defined in the manifest, and registers them all into reg.
+// Load connects to a remote MCP server at endpoint, discovers its tools via
+// ListTools, registers each as an MCPTool in reg, and returns the live session.
 //
-// The manifestURL must be an absolute HTTP/HTTPS URL. Tool endpoint paths are
-// resolved relative to the manifest base URL (scheme + host).
-func Load(reg *tools.Registry, manifestURL string, opts LoaderOptions) error {
+// The caller must keep the returned session open for as long as the tools are
+// needed, and close it when done.
+func Load(ctx context.Context, reg *tools.Registry, endpoint string, opts LoaderOptions) (*sdkmcp.ClientSession, error) {
+	transport, err := buildHTTPTransport(endpoint, opts)
+	if err != nil {
+		return nil, err
+	}
+	return connect(ctx, reg, transport)
+}
+
+// LoadTransport connects to an MCP server using an already-constructed
+// Transport, discovers tools, and registers them into reg.
+// This is the preferred entry point for testing (use NewInMemoryTransports).
+func LoadTransport(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transport) (*sdkmcp.ClientSession, error) {
+	return connect(ctx, reg, transport)
+}
+
+// LoadCommand launches a local MCP server subprocess and connects to it over
+// stdio.  command is the executable and args are its arguments.
+//
+// The session must be kept open; closing it terminates the subprocess.
+func LoadCommand(ctx context.Context, reg *tools.Registry, command string, args []string, opts LoaderOptions) (*sdkmcp.ClientSession, error) {
+	transport := &sdkmcp.CommandTransport{Command: exec.Command(command, args...)}
+	return connect(ctx, reg, transport)
+}
+
+// connect creates an MCP client, connects it via transport, lists tools, and
+// registers each as an MCPTool.
+func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transport) (*sdkmcp.ClientSession, error) {
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{
+		Name:    "go-orca",
+		Version: "1.0.0",
+	}, nil)
+
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: connect: %w", err)
+	}
+
+	result, err := session.ListTools(ctx, nil)
+	if err != nil {
+		_ = session.Close()
+		return nil, fmt.Errorf("mcp: list tools: %w", err)
+	}
+
+	for _, sdkTool := range result.Tools {
+		t := sdkTool // capture loop variable
+		params, err := marshalSchema(t.InputSchema)
+		if err != nil {
+			_ = session.Close()
+			return nil, fmt.Errorf("mcp: marshal schema for tool %q: %w", t.Name, err)
+		}
+		reg.Register(&MCPTool{
+			sdkTool:    *t,
+			parameters: params,
+			session:    session,
+		})
+	}
+	return session, nil
+}
+
+// buildHTTPTransport constructs the appropriate HTTP transport based on opts.
+func buildHTTPTransport(endpoint string, opts LoaderOptions) (sdkmcp.Transport, error) {
 	if opts.HTTPTimeout <= 0 {
 		opts.HTTPTimeout = 30 * time.Second
 	}
-	client := &http.Client{Timeout: opts.HTTPTimeout}
-
-	// Fetch manifest.
-	resp, err := client.Get(manifestURL) //nolint:noctx
-	if err != nil {
-		return fmt.Errorf("mcp: fetch manifest %s: %w", manifestURL, err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("mcp: manifest %s returned HTTP %d", manifestURL, resp.StatusCode)
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: opts.HTTPTimeout}
 	}
 
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("mcp: read manifest: %w", err)
+	switch opts.HTTPTransport {
+	case TransportSSE:
+		return &sdkmcp.SSEClientTransport{
+			Endpoint:   endpoint,
+			HTTPClient: httpClient,
+		}, nil
+	default: // TransportStreamable
+		return &sdkmcp.StreamableClientTransport{
+			Endpoint:             endpoint,
+			HTTPClient:           httpClient,
+			DisableStandaloneSSE: true, // tool-call only; no server-initiated messages needed
+		}, nil
 	}
-
-	var manifest Manifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return fmt.Errorf("mcp: parse manifest: %w", err)
-	}
-
-	// Resolve base URL (scheme + host) for relative endpoint paths.
-	base, err := url.Parse(manifestURL)
-	if err != nil {
-		return fmt.Errorf("mcp: parse manifest url: %w", err)
-	}
-	baseURL := fmt.Sprintf("%s://%s", base.Scheme, base.Host)
-
-	for _, def := range manifest.Tools {
-		callURL := resolveEndpoint(baseURL, def.Endpoint)
-		t := &MCPTool{
-			def:        def,
-			callURL:    callURL,
-			httpClient: client,
-		}
-		reg.Register(t)
-	}
-	return nil
 }
 
-// resolveEndpoint resolves a possibly-relative endpoint path against a base URL.
-func resolveEndpoint(baseURL, endpoint string) string {
-	if endpoint == "" {
-		return baseURL
+// marshalSchema converts the InputSchema (any) returned by the SDK into a
+// json.RawMessage suitable for tools.Tool.Parameters().
+func marshalSchema(schema any) (json.RawMessage, error) {
+	if schema == nil {
+		return json.RawMessage(`{}`), nil
 	}
-	// If endpoint is already absolute, use it directly.
-	if u, err := url.Parse(endpoint); err == nil && u.IsAbs() {
-		return endpoint
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return nil, err
 	}
-	// Ensure exactly one slash between base and path.
-	if len(endpoint) > 0 && endpoint[0] != '/' {
-		endpoint = "/" + endpoint
-	}
-	return baseURL + endpoint
+	return b, nil
 }

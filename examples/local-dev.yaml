@@ -69,17 +69,32 @@ providers:
 
 # ─── Customizations ───────────────────────────────────────────────────────────
 customizations:
-  sources: []
-  # Uncomment to load skills from a local directory:
-  # - name: "local-skills"
-  #   type: "filesystem"
-  #   root: "./customizations"
-  #   precedence: 10
-  #   enabled_types:
-  #     - "skill"
-  #     - "prompt"
-  #   scope_slug: "global"
-  #   refresh_seconds: 60
+  sources:
+    # Skill packages — enable built-in skills shipped with the repo.
+    - name: "built-in-skills"
+      type: "filesystem"
+      root: "./skills"
+      precedence: 20
+      enabled_types:
+        - "skill"
+
+    # Agent overlays — persona-specific instructions and active-skill declarations.
+    - name: "agent-overlays"
+      type: "filesystem"
+      root: "./customization/agents"
+      precedence: 10
+      enabled_types:
+        - "agent"
+
+    # Uncomment to load additional skills from a local customization directory:
+    # - name: "local-customizations"
+    #   type: "filesystem"
+    #   root: "./customizations"
+    #   precedence: 5
+    #   enabled_types:
+    #     - "skill"
+    #     - "prompt"
+    #   scope_slug: "global"
 
 # ─── Workflow engine ──────────────────────────────────────────────────────────
 workflow:

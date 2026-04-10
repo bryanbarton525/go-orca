@@ -65,17 +65,32 @@ providers:
 # Each source is scanned for SKILL.md, .agent.md, and .prompt.md files.
 # Higher precedence wins when the same name exists in multiple sources.
 customizations:
-  sources: []
-  # Example filesystem source:
-  # - name: "local-skills"
-  #   type: "filesystem"        # filesystem | repo | git-mirror | builtin
-  #   root: "./customizations"
-  #   precedence: 10
-  #   enabled_types:            # skills | agents | prompts
-  #     - "skills"
-  #     - "prompts"
-  #   scope_slug: "global"
-  #   refresh_seconds: 60
+  sources:
+    # Skill packages shipped with the repo.
+    - name: "built-in-skills"
+      type: "filesystem"
+      root: "./skills"
+      precedence: 20
+      enabled_types:
+        - "skill"
+
+    # Per-persona agent overlays.
+    - name: "agent-overlays"
+      type: "filesystem"
+      root: "./customization/agents"
+      precedence: 10
+      enabled_types:
+        - "agent"
+
+    # Uncomment to load organisation or team-specific overrides:
+    # - name: "org-customizations"
+    #   type: "filesystem"
+    #   root: "./customizations"
+    #   precedence: 5
+    #   enabled_types:
+    #     - "skill"
+    #     - "prompt"
+    #   scope_slug: "global"
 
 # ─── Workflow engine ──────────────────────────────────────────────────────────
 workflow:
