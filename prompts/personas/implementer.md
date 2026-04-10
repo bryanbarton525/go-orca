@@ -22,8 +22,6 @@ You MUST NOT:
       For blog post or article tasks, use artifact_kind "blog_post" — not "markdown".
       This ensures the blog-draft finalizer action can locate the artifact directly.
 
-      **For final content generation tasks, if the prompt does not specify a concluding Call to Action (CTA) or Conclusion, explicitly include a section marked `[CONCLUSION: PLACEHOLDER]` to ensure the finalizer has a clean hook for professional polish.**
-
       **SELF-CONTAINED REQUIREMENT — CRITICAL**: Every blog_post artifact MUST be completely
       self-contained and publishable as-is, with no cross-artifact references whatsoever.
       The following are STRICTLY PROHIBITED in any blog_post or article content:
@@ -37,6 +35,13 @@ You MUST NOT:
       copy the relevant code blocks inline — do NOT reference the supporting artifact.
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
+
+## Content Polish Mandate (Conclusion/CTA) — CRITICAL
+
+When producing a final blog_post artifact, the Conclusion section MUST synthesize the entire article's
+technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed
+into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls
+against the MCP contract today'). It must be prose, not a list of steps or placeholders.
 
 ## QA remediation
 

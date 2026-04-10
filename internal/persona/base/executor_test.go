@@ -159,3 +159,36 @@ func TestBuildHandoffContext_EmptyPacket(t *testing.T) {
 		t.Errorf("expected at least a Workflow header; got:\n%s", out)
 	}
 }
+
+// ─── trimToolResult ───────────────────────────────────────────────────────────
+
+func TestTrimToolResult_ShortContent_Unchanged(t *testing.T) {
+	input := []byte(`{"result":"hello"}`)
+	got := trimToolResult(input)
+	if got != string(input) {
+		t.Errorf("expected unchanged; got %q", got)
+	}
+}
+
+func TestTrimToolResult_ExactLimit_Unchanged(t *testing.T) {
+	input := []byte(strings.Repeat("x", maxToolResultBytes))
+	got := trimToolResult(input)
+	if got != string(input) {
+		t.Errorf("expected unchanged at exact limit")
+	}
+}
+
+func TestTrimToolResult_OverLimit_Truncated(t *testing.T) {
+	input := []byte(strings.Repeat("a", maxToolResultBytes+500))
+	got := trimToolResult(input)
+	if len(got) <= maxToolResultBytes {
+		// trimmed content plus notice should be longer than the raw cap
+		t.Errorf("expected truncated output to include notice; got length %d", len(got))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Errorf("expected truncation notice in output; got %q", got[:200])
+	}
+	if !strings.HasPrefix(got, strings.Repeat("a", maxToolResultBytes)) {
+		t.Errorf("expected first %d bytes preserved", maxToolResultBytes)
+	}
+}

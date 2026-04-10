@@ -10,8 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
+	"github.com/go-orca/go-orca/internal/logger"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
+	"github.com/go-orca/go-orca/internal/tools"
 )
 
 // Executor is the shared execution engine embedded in every built-in persona.
@@ -40,6 +44,10 @@ func NewExecutor(schemaName string, schema map[string]any) Executor {
 // systemPrompt is the base persona system prompt loaded from the workflow's
 // PersonaPromptSnapshot. It is layered with customization overlays from the
 // packet before being sent to the model.
+//
+// If the packet carries a ToolRegistry and the provider supports tool-calling,
+// Run first runs a tool-call loop (Phase A) to collect live tool results, then
+// makes a final structured-JSON call (Phase B) with that enriched context.
 func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPrompt, userPrompt string) (string, error) {
 	provider, ok := common.Get(packet.ProviderName)
 	if !ok {
@@ -53,6 +61,68 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		{Role: common.RoleUser, Content: userPrompt},
 	}
 
+	// ── Phase A: tool-call loop ───────────────────────────────────────────────
+	// If tools are available and the provider claims tool-calling capability,
+	// give the model up to maxToolRounds to gather live context before the
+	// final structured response.
+	if packet.ToolRegistry != nil && len(packet.ToolRegistry.All()) > 0 &&
+		provider.HasCapability(common.CapabilityToolCalling) {
+
+		toolDefs := specsToDefinitions(packet.ToolRegistry.Specs())
+		const maxToolRounds = 5
+		for range maxToolRounds {
+			toolResp, err := provider.Chat(ctx, common.ChatRequest{
+				Model:    packet.ModelName,
+				Messages: msgs,
+				Tools:    toolDefs,
+			})
+			if err != nil {
+				return "", fmt.Errorf("executor: tool-call chat error: %w", err)
+			}
+			if len(toolResp.Message.ToolCalls) == 0 {
+				// Model chose not to call any tools — skip to Phase B.
+				break
+			}
+
+			// Append the assistant turn that requested the tool calls.
+			msgs = append(msgs, toolResp.Message)
+
+			// Execute each requested tool and append its result.
+			for _, tc := range toolResp.Message.ToolCalls {
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				logger.Debug("executor: dispatching tool call",
+					zap.String("workflow_id", packet.WorkflowID),
+					zap.String("persona", string(packet.CurrentPersona)),
+					zap.String("tool", tc.Name),
+					zap.String("args", string(argsJSON)),
+				)
+				result := packet.ToolRegistry.Call(ctx, tc.Name, argsJSON)
+				var content string
+				if result.Error != "" {
+					logger.Warn("executor: tool call error",
+						zap.String("tool", tc.Name),
+						zap.String("error", result.Error),
+					)
+					content = fmt.Sprintf(`{"error":%q}`, result.Error)
+				} else {
+					logger.Debug("executor: tool call succeeded",
+						zap.String("tool", tc.Name),
+						zap.Int("result_bytes", len(result.Output)),
+					)
+					content = trimToolResult(result.Output)
+				}
+				msgs = append(msgs, common.Message{
+					Role:       common.RoleTool,
+					Content:    content,
+					ToolCallID: tc.ID,
+				})
+			}
+		}
+	}
+
+	// ── Phase B: structured JSON response ────────────────────────────────────
+	// No tools in this call — the model now has full context and must produce
+	// the structured JSON output its persona schema requires.
 	resp, err := provider.Chat(ctx, common.ChatRequest{
 		Model:        packet.ModelName,
 		Messages:     msgs,
@@ -73,6 +143,38 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	}
 
 	return resp.Message.Content, nil
+}
+
+// specsToDefinitions converts tool specs from the registry into the canonical
+// ToolDefinition type the provider Chat API accepts.
+func specsToDefinitions(specs []tools.ToolSpec) []common.ToolDefinition {
+	defs := make([]common.ToolDefinition, 0, len(specs))
+	for _, s := range specs {
+		var params map[string]interface{}
+		_ = json.Unmarshal(s.Parameters, &params)
+		defs = append(defs, common.ToolDefinition{
+			Name:        s.Name,
+			Description: s.Description,
+			Parameters:  params,
+		})
+	}
+	return defs
+}
+
+// maxToolResultBytes is the maximum number of bytes kept from a single tool
+// result before it is truncated. Context window budget on small local models
+// is tight; Context7 and HTTP responses can easily exceed 10 KB per call.
+const maxToolResultBytes = 6000
+
+// trimToolResult ensures a tool result fits within the context window budget.
+// If the raw bytes exceed maxToolResultBytes the content is truncated and a
+// notice appended so the model knows the response was cut short.
+func trimToolResult(raw []byte) string {
+	if len(raw) <= maxToolResultBytes {
+		return string(raw)
+	}
+	return string(raw[:maxToolResultBytes]) +
+		fmt.Sprintf("\n\n[... truncated: %d bytes omitted to stay within context budget ...]", len(raw)-maxToolResultBytes)
 }
 
 // buildSystemContent layers the base system prompt with any skill/agent

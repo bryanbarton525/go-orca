@@ -929,6 +929,7 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	// Populate tool context from the registry.
 	if e.opts.ToolRegistry != nil {
 		packet.ToolsContext = formatToolSpecs(e.opts.ToolRegistry.Specs())
+		packet.ToolRegistry = e.opts.ToolRegistry
 	}
 
 	return packet

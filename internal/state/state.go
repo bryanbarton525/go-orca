@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/go-orca/go-orca/internal/tools"
 	"github.com/google/uuid"
 )
 
@@ -383,6 +384,11 @@ type HandoffPacket struct {
 	// prompt file contents.  Each persona reads its system prompt from here so
 	// prompt changes on disk do not affect in-flight workflows.
 	PersonaPromptSnapshot map[string]string `json:"persona_prompt_snapshot,omitempty"`
+
+	// ToolRegistry is the live tool registry available for this workflow run.
+	// It is set by the engine at packet-build time and is intentionally
+	// excluded from JSON serialisation (HandoffPacket is never persisted as-is).
+	ToolRegistry *tools.Registry `json:"-"`
 
 	// FinalizerAction is the delivery action chosen by the Director, forwarded
 	// to the Finalizer so it can be enforced in code rather than inferred by

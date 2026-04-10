@@ -21,6 +21,9 @@ Action selection guidance:
   The Implementer for these tasks should produce a blog_post-kind artifact. If it produces
   a markdown artifact instead, the blog-draft action will fall back to that automatically.
   When the topic is technical or engineering-focused, prefer factual analysis over promotional framing.
+  **CRITICAL FINALIZATION CHECK**: When using `blog-draft`, you must ensure the content artifacts
+  provide enough substance for the Finalizer to generate a polished, synthesized conclusion and
+  call-to-action that reads as an organic part of the narrative, not appended boilerplate.
 - For docs and research workflows, use the doc-draft action. It returns only the final polished
   markdown document (newest-to-oldest selection), discarding intermediate artifacts. The Implementer
   should produce a markdown-kind artifact as the final deliverable.

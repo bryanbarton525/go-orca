@@ -75,10 +75,24 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 
 	msgs := make([]ollamaapi.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		msgs = append(msgs, ollamaapi.Message{
-			Role:    string(m.Role),
-			Content: m.Content,
-		})
+		om := ollamaapi.Message{
+			Role:       string(m.Role),
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+		}
+		for _, tc := range m.ToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			var args ollamaapi.ToolCallFunctionArguments
+			_ = json.Unmarshal(argsJSON, &args)
+			om.ToolCalls = append(om.ToolCalls, ollamaapi.ToolCall{
+				ID: tc.ID,
+				Function: ollamaapi.ToolCallFunction{
+					Name:      tc.Name,
+					Arguments: args,
+				},
+			})
+		}
+		msgs = append(msgs, om)
 	}
 
 	model := req.Model
@@ -108,16 +122,23 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		Options:  opts,
 	}
 
-	// Use the strongest structured-output mode available.
-	// Schema-constrained format is strictly better than plain "json" — the model
-	// is constrained to the exact field names and types we expect.
-	if req.OutputSchema != nil {
-		schemaBytes, err := json.Marshal(req.OutputSchema)
-		if err == nil {
-			ollamaReq.Format = json.RawMessage(schemaBytes)
+	// Attach tool definitions when the caller has provided them.
+	// When tools are present we skip format constraints: the model must be free
+	// to return a tool_calls message rather than a JSON-formatted text reply.
+	if len(req.Tools) > 0 {
+		ollamaReq.Tools = convertToOllamaTools(req.Tools)
+	} else {
+		// Use the strongest structured-output mode available.
+		// Schema-constrained format is strictly better than plain "json" — the model
+		// is constrained to the exact field names and types we expect.
+		if req.OutputSchema != nil {
+			schemaBytes, err := json.Marshal(req.OutputSchema)
+			if err == nil {
+				ollamaReq.Format = json.RawMessage(schemaBytes)
+			}
+		} else if req.JSONMode {
+			ollamaReq.Format = json.RawMessage(`"json"`)
 		}
-	} else if req.JSONMode {
-		ollamaReq.Format = json.RawMessage(`"json"`)
 	}
 
 	var finalResp *ollamaapi.ChatResponse
@@ -134,16 +155,50 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 
 	truncated := finalResp.DoneReason == "length"
 
+	// Map Ollama tool calls back to the canonical type.
+	var toolCalls []common.ToolCall
+	for _, tc := range finalResp.Message.ToolCalls {
+		toolCalls = append(toolCalls, common.ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments.ToMap(),
+		})
+	}
+
 	return &common.ChatResponse{
-		ID:           fmt.Sprintf("ollama-%d", finalResp.CreatedAt.UnixMilli()),
-		Model:        finalResp.Model,
-		Message:      common.Message{Role: common.RoleAssistant, Content: finalResp.Message.Content},
+		ID:    fmt.Sprintf("ollama-%d", finalResp.CreatedAt.UnixMilli()),
+		Model: finalResp.Model,
+		Message: common.Message{
+			Role:      common.RoleAssistant,
+			Content:   finalResp.Message.Content,
+			ToolCalls: toolCalls,
+		},
 		FinishReason: finalResp.DoneReason,
 		InputTokens:  finalResp.PromptEvalCount,
 		OutputTokens: finalResp.EvalCount,
 		Latency:      time.Since(start),
 		Truncated:    truncated,
 	}, nil
+}
+
+// convertToOllamaTools converts canonical ToolDefinitions to the Ollama SDK
+// tool type, marshaling the parameters JSON-Schema map through the SDK type.
+func convertToOllamaTools(defs []common.ToolDefinition) ollamaapi.Tools {
+	out := make(ollamaapi.Tools, 0, len(defs))
+	for _, d := range defs {
+		paramsJSON, _ := json.Marshal(d.Parameters)
+		var params ollamaapi.ToolFunctionParameters
+		_ = json.Unmarshal(paramsJSON, &params)
+		out = append(out, ollamaapi.Tool{
+			Type: "function",
+			Function: ollamaapi.ToolFunction{
+				Name:        d.Name,
+				Description: d.Description,
+				Parameters:  params,
+			},
+		})
+	}
+	return out
 }
 
 // Stream implements Provider.

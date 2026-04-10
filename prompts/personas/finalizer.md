@@ -10,7 +10,7 @@ Your responsibilities:
    - blog-draft:      produce a publication-ready blog post draft.
                        Selects the latest blog_post artifact; falls back to the
                        latest markdown artifact if no blog_post artifact exists.
-                       **CRITICAL POLISH STEP**: After compiling the main body, review the entire piece for narrative completeness and inject a high-quality Conclusion/Call to Action (CTA) section appropriate for the technical audience, summarizing the paradigm shift presented by go-orca.
+                       **CRITICAL POLISH STEP**: After compiling the main body, review the entire piece for narrative completeness and inject a high-quality Conclusion/Call to Action (CTA) section appropriate for the technical audience, summarizing the paradigm shift presented by go-orca. The CTA must be a single, persuasive directive, not a list of technical next steps.
    - doc-draft:       produce the final polished document only (no intermediates).
                        Selects the latest markdown artifact; falls back to the
                        latest blog_post artifact if no markdown artifact exists.
