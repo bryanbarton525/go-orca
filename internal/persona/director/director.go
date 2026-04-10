@@ -104,31 +104,7 @@ func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*st
 		return nil, fmt.Errorf("director: execution error: %w", err)
 	}
 
-	var out Output
-	if err := base.ParseJSON(raw, &out); err != nil {
-		// Fallback: use defaults rather than failing the whole workflow.
-		out = defaultOutput(packet)
-	}
-
-	// Normalise.
-	if out.Mode == "" {
-		out.Mode = defaultMode(packet)
-	}
-	if out.Provider == "" {
-		out.Provider = packet.ProviderName
-	}
-	if out.Model == "" {
-		out.Model = packet.ModelName
-	}
-	if len(out.RequiredPersonas) == 0 {
-		out.RequiredPersonas = defaultPersonas()
-	}
-	if out.FinalizerAction == "" {
-		out.FinalizerAction = "artifact-bundle"
-	}
-	if out.Title == "" {
-		out.Title = truncate(packet.Request, 60)
-	}
+	out := OutputFromRaw(raw, packet)
 
 	_ = started // logged by the engine
 	return &state.PersonaOutput{
@@ -149,19 +125,84 @@ func OutputFromRaw(raw string, packet state.HandoffPacket) Output {
 	if err := base.ParseJSON(raw, &out); err != nil {
 		return defaultOutput(packet)
 	}
-	return out
+	return normalizeOutput(out, packet)
 }
 
 func defaultOutput(packet state.HandoffPacket) Output {
+	mode := defaultMode(packet)
 	return Output{
-		Mode:             defaultMode(packet),
+		Mode:             mode,
 		Title:            truncate(packet.Request, 60),
 		Provider:         packet.ProviderName,
 		Model:            packet.ModelName,
-		FinalizerAction:  "artifact-bundle",
-		RequiredPersonas: defaultPersonas(),
+		FinalizerAction:  defaultFinalizerAction(mode),
+		RequiredPersonas: normalizeRequiredPersonas(mode, nil),
 		Rationale:        "Defaulted due to parse failure.",
 		Summary:          packet.Request,
+	}
+}
+
+func normalizeOutput(out Output, packet state.HandoffPacket) Output {
+	if packet.Mode != "" {
+		out.Mode = packet.Mode
+	} else if out.Mode == "" {
+		out.Mode = defaultMode(packet)
+	}
+	if out.Provider == "" {
+		out.Provider = packet.ProviderName
+	}
+	if out.Model == "" {
+		out.Model = packet.ModelName
+	}
+	out.RequiredPersonas = normalizeRequiredPersonas(out.Mode, out.RequiredPersonas)
+	if out.FinalizerAction == "" {
+		out.FinalizerAction = defaultFinalizerAction(out.Mode)
+	}
+	if out.Title == "" {
+		out.Title = truncate(packet.Request, 60)
+	}
+	return out
+}
+
+func normalizeRequiredPersonas(mode state.WorkflowMode, requested []state.PersonaKind) []state.PersonaKind {
+	standard := defaultPersonas()
+	seen := make(map[state.PersonaKind]bool, len(standard)+len(requested))
+
+	if len(requested) == 0 || mode == state.WorkflowModeSoftware || mode == state.WorkflowModeContent {
+		for _, kind := range standard {
+			seen[kind] = true
+		}
+	}
+	for _, kind := range requested {
+		if kind != "" {
+			seen[kind] = true
+		}
+	}
+
+	out := make([]state.PersonaKind, 0, len(seen))
+	for _, kind := range standard {
+		if seen[kind] {
+			out = append(out, kind)
+			delete(seen, kind)
+		}
+	}
+	for _, kind := range requested {
+		if seen[kind] {
+			out = append(out, kind)
+			delete(seen, kind)
+		}
+	}
+	return out
+}
+
+func defaultFinalizerAction(mode state.WorkflowMode) string {
+	switch mode {
+	case state.WorkflowModeContent:
+		return "blog-draft"
+	case state.WorkflowModeDocs, state.WorkflowModeResearch:
+		return "markdown-export"
+	default:
+		return "artifact-bundle"
 	}
 }
 

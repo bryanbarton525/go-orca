@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -111,6 +112,19 @@ type CreateWorkflowRequest struct {
 	Delivery DeliveryRequest `json:"delivery"` // optional delivery action + config
 }
 
+func normalizeWorkflowMode(raw string) state.WorkflowMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "content-creation", "content_creation", "content-pipeline", "blog", "article", "post":
+		return state.WorkflowModeContent
+	case "software-creation", "software_creation", "software-generation", "software_generation", "code", "coding":
+		return state.WorkflowModeSoftware
+	case "documentation", "docs-generation", "docs_generation":
+		return state.WorkflowModeDocs
+	default:
+		return state.WorkflowMode(raw)
+	}
+}
+
 // CreateWorkflow handles POST /workflows.
 func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -130,7 +144,7 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		ws := state.NewWorkflowState(tid, sid, req.Request)
 		ws.Title = req.Title
 		if req.Mode != "" {
-			ws.Mode = state.WorkflowMode(req.Mode)
+			ws.Mode = normalizeWorkflowMode(req.Mode)
 		}
 		ws.ProviderName = req.Provider
 		ws.ModelName = req.Model

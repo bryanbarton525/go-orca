@@ -34,11 +34,9 @@ func New(cfg config.OllamaConfig) (*Provider, error) {
 		return nil, fmt.Errorf("ollama: invalid host %q: %w", cfg.Host, err)
 	}
 
-	transport := http.DefaultTransport
-	if cfg.TLSSkipVerify {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		}
+	transport, err := buildTransport(cfg.TLSSkipVerify)
+	if err != nil {
+		return nil, err
 	}
 	httpClient := &http.Client{Timeout: cfg.Timeout, Transport: transport}
 	client := ollamaapi.NewClient(base, httpClient)
@@ -54,6 +52,18 @@ func New(cfg config.OllamaConfig) (*Provider, error) {
 		client: client,
 		cfg:    cfg,
 	}, nil
+}
+
+func buildTransport(skipVerify bool) (*http.Transport, error) {
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("ollama: unexpected default transport type %T", http.DefaultTransport)
+	}
+	transport := baseTransport.Clone()
+	if skipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	}
+	return transport, nil
 }
 
 // Name implements Provider.

@@ -25,6 +25,14 @@ Action selection guidance:
   otherwise artifact-bundle or markdown-export.
 - For docs and research, prefer markdown-export or artifact-bundle.
 
+Persona-chain rules:
+- For software and content workflows, `required_personas` MUST include all of:
+  `project_manager`, `architect`, `implementer`, `qa`, `finalizer`.
+- The Project Manager is the persona that defines the constitution and hard requirements.
+- The Architect is the persona that defines the design and task graph.
+- QA validates against the constitution, requirements, and design. If QA finds blocking issues,
+  the workflow will iterate through Architect and Implementer again before finalization.
+
 You will be told which providers and models are available in the user message.
 You MUST select a provider and model only from the options listed there.
 

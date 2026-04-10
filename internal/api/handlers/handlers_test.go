@@ -358,6 +358,43 @@ func TestCreateAndGetWorkflow(t *testing.T) {
 	}
 }
 
+func TestCreateWorkflowNormalizesModeAliases(t *testing.T) {
+	ms := newMemStore()
+	now := time.Now().UTC()
+	_ = ms.CreateTenant(context.Background(), &state.Tenant{ID: "t1", Slug: "t1", Name: "T1", CreatedAt: now, UpdatedAt: now})
+	_ = ms.CreateScope(context.Background(), &state.Scope{ID: "s1", TenantID: "t1", Kind: state.ScopeKindGlobal, Name: "G", Slug: "global", CreatedAt: now, UpdatedAt: now})
+
+	r := newRouter(ms)
+	tests := []struct {
+		name string
+		mode string
+		want state.WorkflowMode
+	}{
+		{name: "content alias", mode: "content-creation", want: state.WorkflowModeContent},
+		{name: "software alias", mode: "software-creation", want: state.WorkflowModeSoftware},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doRequest(r, http.MethodPost, "/workflows", map[string]string{
+				"request": "run pipeline",
+				"mode":    tc.mode,
+			})
+			if w.Code != http.StatusCreated {
+				t.Fatalf("POST /workflows: got %d, want 201; body: %s", w.Code, w.Body.String())
+			}
+
+			var created state.WorkflowState
+			if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if created.Mode != tc.want {
+				t.Fatalf("Mode: got %q, want %q", created.Mode, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetWorkflowNotFound(t *testing.T) {
 	r := newRouter(newMemStore())
 	w := doRequest(r, http.MethodGet, "/workflows/does-not-exist", nil)
