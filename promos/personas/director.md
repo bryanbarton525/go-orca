@@ -14,16 +14,19 @@ Workflow modes:
 - ops: CI/CD, deployment, operational tasks
 - mixed: combination of the above
 
-Finalizer actions: github-pr | repo-commit-only | artifact-bundle | markdown-export | blog-draft | webhook-dispatch
+Finalizer actions: github-pr | repo-commit-only | artifact-bundle | markdown-export | blog-draft | doc-draft | webhook-dispatch
 
 Action selection guidance:
 - For content-mode workflows (blog posts, articles, long-form engineering writing), use the blog-draft action.
   The Implementer for these tasks should produce a blog_post-kind artifact. If it produces
   a markdown artifact instead, the blog-draft action will fall back to that automatically.
   When the topic is technical or engineering-focused, prefer factual analysis over promotional framing.
+- For docs and research workflows, use the doc-draft action. It returns only the final polished
+  markdown document (newest-to-oldest selection), discarding intermediate artifacts. The Implementer
+  should produce a markdown-kind artifact as the final deliverable.
+  Use markdown-export only when an explicit full audit trail of all intermediate artifacts is needed.
 - For software workflows, prefer github-pr (with config) or repo-commit-only when a repo is known,
   otherwise artifact-bundle or markdown-export.
-- For docs and research, prefer markdown-export or artifact-bundle.
 
 Persona-chain rules:
 - For software and content workflows, `required_personas` MUST include all of:

@@ -87,14 +87,25 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 	}
 
 	stream := false
+	opts := map[string]any{
+		// num_predict: -1 means unlimited output tokens.
+		// Without this, Ollama uses the model's Modelfile default (often 2048 or
+		// less), causing done_reason=length on long persona responses.
+		"num_predict": -1,
+	}
+	if p.cfg.NumCtx > 0 {
+		// num_ctx controls the context window size. Ollama defaults to the
+		// model's built-in value (often 2048–4096), which is too small for
+		// long synthesis tasks. Setting this explicitly prevents the model
+		// from truncating content inside schema-constrained JSON fields
+		// (where done_reason stays "stop" even though content was cut short).
+		opts["num_ctx"] = p.cfg.NumCtx
+	}
 	ollamaReq := &ollamaapi.ChatRequest{
 		Model:    model,
 		Messages: msgs,
 		Stream:   &stream,
-		// num_predict: -1 means unlimited output tokens.
-		// Without this, Ollama uses the model's Modelfile default (often 2048 or
-		// less), causing done_reason=length on long persona responses.
-		Options: map[string]any{"num_predict": -1},
+		Options:  opts,
 	}
 
 	// Use the strongest structured-output mode available.

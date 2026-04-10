@@ -200,7 +200,7 @@ func defaultFinalizerAction(mode state.WorkflowMode) string {
 	case state.WorkflowModeContent:
 		return "blog-draft"
 	case state.WorkflowModeDocs, state.WorkflowModeResearch:
-		return "markdown-export"
+		return "doc-draft"
 	default:
 		return "artifact-bundle"
 	}

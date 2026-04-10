@@ -160,6 +160,28 @@ If neither kind is present, returns `success: false`.
 
 **Output metadata key (fallback only):** `fallback` — `"true"` when a markdown artifact was used instead of blog_post
 
+**Default for modes:** `content`
+
+---
+
+### doc-draft
+
+Extracts only the final polished document from the workflow artifacts—no intermediates, no audit trail. Intended for `docs` and `research` workflows where the caller wants only the finished deliverable.
+
+**Artifact selection (in order):**
+1. Latest artifact with kind `markdown` — preferred for docs/research workflows. Scanning newest-to-oldest ensures a later remediation or synthesis task wins over an earlier draft.
+2. Latest artifact with kind `blog_post` — fallback when no markdown artifact is present. `Output.Metadata["fallback"]` is set to `"true"` in this case.
+
+If neither kind is present, returns `success: false`.
+
+**Config fields:** None required.
+
+**Output metadata key:** `draft` — the final document content
+
+**Output metadata key (fallback only):** `fallback` — `"true"` when a blog_post artifact was used instead of markdown
+
+**Default for modes:** `docs`, `research`
+
 ---
 
 ### webhook-dispatch

@@ -131,6 +131,11 @@ type OllamaConfig struct {
 	DefaultModel  string        `mapstructure:"default_model"`
 	Timeout       time.Duration `mapstructure:"timeout"`
 	TLSSkipVerify bool          `mapstructure:"tls_skip_verify"`
+	// NumCtx sets the context window size (num_ctx) sent to Ollama.
+	// Defaults to 0, which lets Ollama use the model's built-in default
+	// (often 2048–4096). For long-form generation set this to 16384 or higher
+	// to prevent the model from truncating output mid-content.
+	NumCtx int `mapstructure:"num_ctx"`
 }
 
 // CopilotConfig holds GitHub Copilot SDK settings.

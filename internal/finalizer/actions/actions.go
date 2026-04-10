@@ -33,6 +33,7 @@ const (
 	ActionArtifactBundle ActionKind = "artifact-bundle"
 	ActionMarkdownExport ActionKind = "markdown-export"
 	ActionBlogDraft      ActionKind = "blog-draft"
+	ActionDocDraft       ActionKind = "doc-draft"
 	ActionWebhook        ActionKind = "webhook-dispatch"
 )
 
@@ -204,6 +205,56 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 		Action:  ActionBlogDraft,
 		Success: false,
 		Error:   "no blog_post or markdown artifact found",
+	}, nil
+}
+
+// DocDraftAction extracts the final polished document from the workflow artifacts.
+//
+// Selection rule (newest-to-oldest):
+//  1. Latest artifact with kind markdown — preferred for docs/research workflows.
+//  2. Latest artifact with kind blog_post — fallback when only a blog_post artifact exists.
+//
+// Scanning newest-to-oldest ensures that a later remediation or synthesis
+// task wins over an earlier draft of the same kind.
+type DocDraftAction struct{}
+
+func (a *DocDraftAction) Kind() ActionKind    { return ActionDocDraft }
+func (a *DocDraftAction) Description() string { return "Produce a final polished document draft." }
+
+func (a *DocDraftAction) Execute(_ context.Context, in Input) (*Output, error) {
+	// Scan newest-to-oldest so a later remediation or synthesis task wins.
+	for i := len(in.Artifacts) - 1; i >= 0; i-- {
+		art := in.Artifacts[i]
+		if art.Kind == state.ArtifactKindMarkdown {
+			return &Output{
+				Action:  ActionDocDraft,
+				Success: true,
+				Message: fmt.Sprintf("Doc draft: %s", art.Name),
+				Metadata: map[string]string{
+					"draft": art.Content,
+				},
+			}, nil
+		}
+	}
+	// Fall back to the latest blog_post artifact when no markdown is present.
+	for i := len(in.Artifacts) - 1; i >= 0; i-- {
+		art := in.Artifacts[i]
+		if art.Kind == state.ArtifactKindBlogPost {
+			return &Output{
+				Action:  ActionDocDraft,
+				Success: true,
+				Message: fmt.Sprintf("Doc draft (blog_post fallback): %s", art.Name),
+				Metadata: map[string]string{
+					"draft":    art.Content,
+					"fallback": "true",
+				},
+			}, nil
+		}
+	}
+	return &Output{
+		Action:  ActionDocDraft,
+		Success: false,
+		Error:   "no markdown or blog_post artifact found",
 	}, nil
 }
 
@@ -628,6 +679,7 @@ func newGlobalRegistry(githubToken string) *Registry {
 	r.Register(&MarkdownExportAction{})
 	r.Register(&ArtifactBundleAction{})
 	r.Register(&BlogDraftAction{})
+	r.Register(&DocDraftAction{})
 	r.Register(&WebhookAction{})
 	r.Register(&GitHubPRAction{defaultToken: githubToken})
 	r.Register(&RepoCommitAction{defaultToken: githubToken})
