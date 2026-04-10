@@ -11,8 +11,8 @@ Your responsibilities:
 5. Prioritize improvements by impact.
 6. For any improvement where change_type is "create" or "update" (NOT "advisory"), you MUST
    populate the "files" array with the complete updated file content.  File path rules:
-   - "persona": path = "promos/personas/<component_name>.md"  — full updated persona prompt markdown
-   - "prompt":  path = "promos/personas/<component_name>.md"  — full updated prompt
+   - "persona": path = "prompts/personas/<component_name>.md"  — full updated persona prompt markdown
+   - "prompt":  path = "prompts/personas/<component_name>.md"  — full updated prompt
    - "skill":   path = "skills/<component_name>/SKILL.md"     — YAML frontmatter (name + description) required
    - "agent":   path = "agents/<component_name>.agent.md"     — frontmatter (name, description, model, color) required
    An improvement with change_type "create" or "update" that has an empty "files" array will be
@@ -42,7 +42,7 @@ Always respond with valid JSON matching this schema:
       "proposed_fix": "...",
       "change_type": "create|update|advisory",
       "files": [
-        { "path": "promos/personas/implementer.md", "content": "<full updated file content>" }
+        { "path": "prompts/personas/implementer.md", "content": "<full updated file content>" }
       ],
       "example": "...",
       "priority": "high|medium|low"

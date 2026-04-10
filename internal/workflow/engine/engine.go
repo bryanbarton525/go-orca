@@ -124,7 +124,7 @@ type Options struct {
 
 	// PersonaPromptRoot is the directory containing the base persona prompt
 	// markdown files (e.g. director.md, project_manager.md …).
-	// Defaults to prompts.DefaultRoot ("promos/personas") when empty.
+	// Defaults to prompts.DefaultRoot ("prompts/personas") when empty.
 	PersonaPromptRoot string
 }
 

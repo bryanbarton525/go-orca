@@ -247,7 +247,7 @@ func TestNormalizeImprovements_KeepsPersonaWithAllowedPath(t *testing.T) {
 	imps := []state.RefinerImprovement{
 		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "high",
 			ChangeType: "update",
-			Files:      []state.ImprovementFile{{Path: "promos/personas/implementer.md", Content: "# impl"}}},
+			Files:      []state.ImprovementFile{{Path: "prompts/personas/implementer.md", Content: "# impl"}}},
 	}
 	result := normalizeImprovements(imps)
 	if len(result) != 1 {

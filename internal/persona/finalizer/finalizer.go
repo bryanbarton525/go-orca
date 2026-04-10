@@ -267,7 +267,7 @@ func buildPersonaPromptContext(snapshot map[string]string) string {
 		if !ok || content == "" {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("### promos/personas/%s\n```\n%s\n```\n\n", entry.file, content))
+		sb.WriteString(fmt.Sprintf("### prompts/personas/%s\n```\n%s\n```\n\n", entry.file, content))
 	}
 	if sb.Len() == 0 {
 		return "(no persona prompt files available)"

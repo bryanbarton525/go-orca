@@ -1,7 +1,7 @@
 // Package prompts provides the persona prompt catalog — a runtime loader that
 // reads all required base persona system prompts from markdown files on disk.
 //
-// Prompt files live under the root directory (default "promos/personas").
+// Prompt files live under the root directory (default "prompts/personas").
 // Each built-in persona maps to exactly one file. Missing files are a hard
 // error: the system fails clearly rather than silently degrading.
 //
@@ -21,7 +21,7 @@ import (
 
 // DefaultRoot is the default directory for persona prompt markdown files,
 // relative to the process working directory.
-const DefaultRoot = "promos/personas"
+const DefaultRoot = "prompts/personas"
 
 // Prompt key constants — one per required markdown file.
 // These are the keys used in WorkflowState.PersonaPromptSnapshot and

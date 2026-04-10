@@ -18,7 +18,7 @@ import (
 // Allowed component types: "persona", "prompt", "skill"
 //
 // Allowed file path prefixes (relative):
-//   - promos/personas/    ← base persona prompt markdown files
+//   - prompts/personas/    ← base persona prompt markdown files
 //   - skills/<name>/      ← skill package: SKILL.md + references/ + scripts/
 //
 // Explicitly blocked:
@@ -40,7 +40,7 @@ var AllowedComponentTypes = map[string]bool{
 // allowedPathPrefixes are the relative path prefixes that an improvement file
 // may live under.  Order matters: the first match wins for descriptive errors.
 var allowedPathPrefixes = []string{
-	"promos/personas/",
+	"prompts/personas/",
 	"skills/",
 }
 

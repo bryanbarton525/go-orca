@@ -18,7 +18,7 @@ func validPersonaImp() state.RefinerImprovement {
 		Priority:      "high",
 		ChangeType:    "update",
 		Files: []state.ImprovementFile{
-			{Path: "promos/personas/implementer.md", Content: "# impl"},
+			{Path: "prompts/personas/implementer.md", Content: "# impl"},
 		},
 	}
 }
@@ -78,7 +78,7 @@ func TestValidateSurface_AllowsPromptType(t *testing.T) {
 		Priority:      "low",
 		ChangeType:    "update",
 		Files: []state.ImprovementFile{
-			{Path: "promos/personas/delivery.md", Content: "# delivery"},
+			{Path: "prompts/personas/delivery.md", Content: "# delivery"},
 		},
 	}
 	if err := improvements.ValidateSurface(imp); err != nil {
@@ -179,9 +179,9 @@ func TestValidateSurface_LegacyContentPersona(t *testing.T) {
 		Content:       "# impl",
 	}
 	// legacyRelPath derives "personas/implementer.md" — that does NOT start
-	// with "promos/personas/", so it should be rejected.
+	// with "prompts/personas/", so it should be rejected.
 	if err := improvements.ValidateSurface(imp); err == nil {
-		t.Error("expected error for legacy persona path (personas/ not promos/personas/), got nil")
+		t.Error("expected error for legacy persona path (personas/ not prompts/personas/), got nil")
 	}
 }
 

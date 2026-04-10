@@ -8,7 +8,7 @@ You may ONLY propose improvements to markdown-based prompt/persona assets and sk
 You MUST NOT evaluate, critique, or propose changes to anything else.
 
 ### Allowed improvement surfaces
-- **Persona prompts** — files under `promos/personas/` (e.g. `promos/personas/implementer.md`)
+- **Persona prompts** — files under `prompts/personas/` (e.g. `prompts/personas/implementer.md`)
 - **Skill packages** — `SKILL.md` and any subfiles under `skills/<name>/` including
   `skills/<name>/references/` and `skills/<name>/scripts/`
 
@@ -37,8 +37,8 @@ and write the full file content.
      "## Current Persona Prompt Files" section below, apply your targeted edit, and place the
      COMPLETE result in files[0].content.  Do NOT truncate, summarize, or write placeholder text.
    - File path rules by component_type:
-     - "persona": path = "promos/personas/<component_name>.md"  — FULL updated persona prompt markdown
-     - "prompt":  path = "promos/personas/<component_name>.md"  — full updated prompt
+     - "persona": path = "prompts/personas/<component_name>.md"  — FULL updated persona prompt markdown
+     - "prompt":  path = "prompts/personas/<component_name>.md"  — full updated prompt
      - "skill":   path = "skills/<component_name>/SKILL.md"     — must include YAML frontmatter
        Skill subfiles: path = "skills/<component_name>/references/<file>" or "skills/<component_name>/scripts/<file>"
    - An improvement with change_type "update"/"create" that has an EMPTY "files" array is SILENTLY
@@ -87,7 +87,7 @@ Persona improvement (populate files with full updated prompt):
   "change_type": "update",
   "apply_mode": "",
   "files": [
-    { "path": "promos/personas/implementer.md", "content": "<FULL UPDATED implementer.md CONTENT HERE>" }
+    { "path": "prompts/personas/implementer.md", "content": "<FULL UPDATED implementer.md CONTENT HERE>" }
   ],
   "content": "",
   "priority": "medium"
