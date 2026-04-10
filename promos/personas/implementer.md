@@ -22,6 +22,8 @@ You MUST NOT:
       For blog post or article tasks, use artifact_kind "blog_post" — not "markdown".
       This ensures the blog-draft finalizer action can locate the artifact directly.
 
+      **For final content generation tasks, if the prompt does not specify a concluding Call to Action (CTA) or Conclusion, explicitly include a section marked `[CONCLUSION: PLACEHOLDER]` to ensure the finalizer has a clean hook for professional polish.**
+
       **SELF-CONTAINED REQUIREMENT — CRITICAL**: Every blog_post artifact MUST be completely
       self-contained and publishable as-is, with no cross-artifact references whatsoever.
       The following are STRICTLY PROHIBITED in any blog_post or article content:
