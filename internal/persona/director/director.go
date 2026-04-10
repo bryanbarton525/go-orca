@@ -6,41 +6,46 @@ package director
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
-	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 )
 
 // Output is the Director's typed JSON output.
 type Output struct {
-	Mode             state.WorkflowMode  `json:"mode"`
-	Title            string              `json:"title"`
-	Provider         string              `json:"provider"`
-	Model            string              `json:"model"`
-	FinalizerAction  string              `json:"finalizer_action"`
-	RequiredPersonas []state.PersonaKind `json:"required_personas"`
-	Rationale        string              `json:"rationale"`
-	Summary          string              `json:"summary"`
+	Mode             state.WorkflowMode            `json:"mode"`
+	Title            string                        `json:"title"`
+	Provider         string                        `json:"provider"`
+	Model            string                        `json:"model"`
+	PersonaModels    state.PersonaModelAssignments `json:"persona_models"`
+	FinalizerAction  string                        `json:"finalizer_action"`
+	RequiredPersonas []state.PersonaKind           `json:"required_personas"`
+	Rationale        string                        `json:"rationale"`
+	Summary          string                        `json:"summary"`
 }
 
 // outputSchema defines the structured JSON shape for Director responses.
 var outputSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"mode":              map[string]any{"type": "string"},
-		"title":             map[string]any{"type": "string"},
-		"provider":          map[string]any{"type": "string"},
-		"model":             map[string]any{"type": "string"},
+		"mode":     map[string]any{"type": "string"},
+		"title":    map[string]any{"type": "string"},
+		"provider": map[string]any{"type": "string"},
+		"model":    map[string]any{"type": "string"},
+		"persona_models": map[string]any{
+			"type":                 "object",
+			"additionalProperties": map[string]any{"type": "string"},
+		},
 		"finalizer_action":  map[string]any{"type": "string"},
 		"required_personas": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"rationale":         map[string]any{"type": "string"},
 		"summary":           map[string]any{"type": "string"},
 	},
-	"required": []string{"mode", "title", "provider", "model", "finalizer_action", "required_personas", "rationale", "summary"},
+	"required": []string{"mode", "title", "provider", "model", "persona_models", "finalizer_action", "required_personas", "rationale", "summary"},
 }
 
 // Director implements persona.Persona.
@@ -70,16 +75,14 @@ func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*st
 
 	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyDirector]
 
-	// Build a dynamic list of available providers and their default models from
-	// the live registry so the LLM cannot choose a provider that isn't running.
-	providers := common.All()
-	providerLines := make([]string, 0, len(providers))
-	for _, p := range providers {
-		providerLines = append(providerLines, fmt.Sprintf("  - %s (default model: %s)", p.Name(), packet.ModelName))
+	providerHint := buildProviderHint(packet.ProviderCatalogs)
+	if providerHint == "" {
+		providerHint = fmt.Sprintf("  - %s\n    default model: %s\n    allowed models:\n      - %s",
+			packet.ProviderName,
+			packet.ModelName,
+			packet.ModelName,
+		)
 	}
-	// Use the packet's provider/model as the single source of truth for the
-	// default; the per-provider model hint is the engine-resolved default.
-	providerHint := strings.Join(providerLines, "\n")
 
 	modeHint := ""
 	if packet.Mode != "" {
@@ -91,7 +94,7 @@ func (d *Director) Execute(ctx context.Context, packet state.HandoffPacket) (*st
 	}
 
 	userPrompt := fmt.Sprintf(
-		"Analyse this request and produce your JSON plan.\n\nAvailable providers:\n%s\n\nYou MUST use one of the provider names exactly as listed above.\nDefault provider: %s\nDefault model: %s\n%s\nRequest:\n%s",
+		"Analyse this request and produce your JSON plan.\n\nAvailable providers and allowed models:\n%s\n\nYou are currently running on the bootstrap/default model shown below. Select the best provider for the workflow and choose downstream models for these personas only: project_manager, architect, implementer, qa, finalizer.\nYou MUST use one of the provider names exactly as listed above.\nEvery model you choose MUST exactly match an allowed model listed for that provider. Models not listed are unavailable or excluded by policy and MUST NOT be selected.\nUse the selected provider's default model as the fallback when a persona does not need a specialized model.\nBootstrap provider: %s\nBootstrap model: %s\n%s\nRequest:\n%s",
 		providerHint,
 		packet.ProviderName,
 		packet.ModelName,
@@ -135,6 +138,7 @@ func defaultOutput(packet state.HandoffPacket) Output {
 		Title:            truncate(packet.Request, 60),
 		Provider:         packet.ProviderName,
 		Model:            packet.ModelName,
+		PersonaModels:    make(state.PersonaModelAssignments),
 		FinalizerAction:  defaultFinalizerAction(mode),
 		RequiredPersonas: normalizeRequiredPersonas(mode, nil),
 		Rationale:        "Defaulted due to parse failure.",
@@ -154,6 +158,7 @@ func normalizeOutput(out Output, packet state.HandoffPacket) Output {
 	if out.Model == "" {
 		out.Model = packet.ModelName
 	}
+	out.PersonaModels = normalizePersonaModels(out.PersonaModels)
 	out.RequiredPersonas = normalizeRequiredPersonas(out.Mode, out.RequiredPersonas)
 	if out.FinalizerAction == "" {
 		out.FinalizerAction = defaultFinalizerAction(out.Mode)
@@ -229,4 +234,61 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func buildProviderHint(catalogs map[string]state.ProviderModelCatalog) string {
+	if len(catalogs) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(catalogs))
+	for name, catalog := range catalogs {
+		if catalog.DefaultModel == "" && len(catalog.Models) == 0 {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var lines []string
+	for _, name := range names {
+		catalog := catalogs[name]
+		lines = append(lines, fmt.Sprintf("  - %s", name))
+		lines = append(lines, fmt.Sprintf("    default model: %s", catalog.DefaultModel))
+		lines = append(lines, "    allowed models:")
+		for _, model := range catalog.Models {
+			lines = append(lines, fmt.Sprintf("      - %s", formatModelHint(model)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatModelHint(model state.ProviderModelInfo) string {
+	label := model.ID
+	if name := strings.TrimSpace(model.Name); name != "" && name != model.ID {
+		label = fmt.Sprintf("%s (%s)", model.ID, name)
+	}
+	var extras []string
+	if family := strings.TrimSpace(model.Metadata["family"]); family != "" {
+		extras = append(extras, "family="+family)
+	}
+	if size := strings.TrimSpace(model.Metadata["size"]); size != "" {
+		extras = append(extras, "size="+size)
+	}
+	if len(extras) == 0 {
+		return label
+	}
+	return fmt.Sprintf("%s [%s]", label, strings.Join(extras, ", "))
+}
+
+func normalizePersonaModels(in state.PersonaModelAssignments) state.PersonaModelAssignments {
+	out := make(state.PersonaModelAssignments)
+	if in == nil {
+		return out
+	}
+	for _, kind := range state.DownstreamPersonaKinds() {
+		if model := strings.TrimSpace(in[kind]); model != "" {
+			out[kind] = model
+		}
+	}
+	return out
 }

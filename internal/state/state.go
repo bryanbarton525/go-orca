@@ -62,6 +62,18 @@ const (
 	PersonaRefiner     PersonaKind = "refiner"
 )
 
+// DownstreamPersonaKinds returns the personas whose models are selected by the
+// Director after its own bootstrap execution has completed.
+func DownstreamPersonaKinds() []PersonaKind {
+	return []PersonaKind{
+		PersonaProjectMgr,
+		PersonaArchitect,
+		PersonaImplementer,
+		PersonaQA,
+		PersonaFinalizer,
+	}
+}
+
 // ArtifactKind classifies a produced artifact.
 type ArtifactKind string
 
@@ -75,6 +87,28 @@ const (
 	ArtifactKindBlogPost  ArtifactKind = "blog_post"
 	ArtifactKindBundleRef ArtifactKind = "bundle_ref" // reference to exported bundle
 )
+
+// PersonaModelAssignments stores the resolved model per persona.
+type PersonaModelAssignments map[PersonaKind]string
+
+// ProviderModelInfo is a provider-advertised model that was allowed by policy
+// at workflow start.
+type ProviderModelInfo struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// ProviderModelCatalog is the filtered model catalog captured for one provider
+// at workflow start so retries/resume do not depend on live provider state.
+type ProviderModelCatalog struct {
+	ProviderName   string              `json:"provider_name"`
+	DefaultModel   string              `json:"default_model,omitempty"`
+	Models         []ProviderModelInfo `json:"models,omitempty"`
+	Degraded       bool                `json:"degraded,omitempty"`
+	DiscoveryError string              `json:"discovery_error,omitempty"`
+}
 
 // ─── Core models ─────────────────────────────────────────────────────────────
 
@@ -131,6 +165,13 @@ type WorkflowState struct {
 	// Provider/model selected by Director.
 	ProviderName string `json:"provider_name,omitempty"`
 	ModelName    string `json:"model_name,omitempty"`
+
+	// ProviderCatalogs is the filtered provider model inventory snapshot shown
+	// to the Director at workflow start.
+	ProviderCatalogs map[string]ProviderModelCatalog `json:"provider_catalogs,omitempty"`
+
+	// PersonaModels stores the Director-selected downstream model per persona.
+	PersonaModels PersonaModelAssignments `json:"persona_models,omitempty"`
 
 	// Blocking issues raised during QA.
 	BlockingIssues []string `json:"blocking_issues,omitempty"`
@@ -367,9 +408,11 @@ type HandoffPacket struct {
 	Summaries map[PersonaKind]string `json:"summaries,omitempty"`
 
 	// Active context.
-	CurrentPersona PersonaKind `json:"current_persona"`
-	ProviderName   string      `json:"provider_name"`
-	ModelName      string      `json:"model_name"`
+	CurrentPersona   PersonaKind                     `json:"current_persona"`
+	ProviderName     string                          `json:"provider_name"`
+	ModelName        string                          `json:"model_name"`
+	ProviderCatalogs map[string]ProviderModelCatalog `json:"provider_catalogs,omitempty"`
+	PersonaModels    PersonaModelAssignments         `json:"persona_models,omitempty"`
 
 	// Snapshot of resolved customizations for this run.
 	CustomAgentMD  string `json:"custom_agent_md,omitempty"` // loaded .agent.md

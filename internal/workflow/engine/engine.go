@@ -26,7 +26,6 @@ import (
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
-	"github.com/go-orca/go-orca/internal/provider/common"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
 )
@@ -79,6 +78,15 @@ type Options struct {
 	DefaultProvider string
 	// DefaultModel is used when the Director does not select one.
 	DefaultModel string
+	// ProviderDefaults stores the configured default model per provider so the
+	// engine can resolve safe fallbacks after live model discovery.
+	ProviderDefaults map[string]string
+	// ExcludedModels stores the deny-list per provider. Keys are provider names;
+	// nested keys are canonicalized model IDs.
+	ExcludedModels map[string]map[string]struct{}
+	// ModelDiscoveryTimeout bounds a single provider Models() call when the
+	// engine snapshots the available model catalog at workflow start.
+	ModelDiscoveryTimeout time.Duration
 
 	// HandoffTimeout is the per-persona execution timeout.
 	// Defaults to 5 minutes.
@@ -147,6 +155,9 @@ func (o *Options) applyDefaults() {
 	}
 	if o.PersonaRetryBackoff <= 0 {
 		o.PersonaRetryBackoff = 10 * time.Second
+	}
+	if o.ModelDiscoveryTimeout <= 0 {
+		o.ModelDiscoveryTimeout = defaultModelDiscoveryTimeout
 	}
 }
 
@@ -233,6 +244,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 			return fmt.Errorf("engine: save prompt snapshot: %w", err)
 		}
+	}
+	if err := e.ensureProviderCatalogs(ctx, ws); err != nil {
+		return fmt.Errorf("engine: snapshot provider catalogs: %w", err)
 	}
 
 	// Snapshot customizations once at workflow start so live changes don't
@@ -420,6 +434,12 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	}
 
 	packet := e.buildPacket(ws, kind, snap)
+	if packet.ProviderName == "" {
+		return fmt.Errorf("engine: no provider resolved for persona %q", kind)
+	}
+	if packet.ModelName == "" {
+		return fmt.Errorf("engine: no allowed model resolved for provider %q", packet.ProviderName)
+	}
 
 	startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 		events.EventPersonaStarted, kind,
@@ -838,29 +858,23 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 		explicitModel := ws.ModelName != ""
 
 		// Parse the raw JSON output from the Director to extract its decisions.
-		dirOut := director.OutputFromRaw(out.RawContent, state.HandoffPacket{
-			ProviderName: ws.ProviderName,
-			ModelName:    ws.ModelName,
-			Mode:         ws.Mode,
-			Request:      ws.Request,
-		})
-		if !explicitProvider && dirOut.Provider != "" {
-			// Normalize to lowercase and validate the provider is registered.
-			// If the LLM chose an unregistered provider, fall back to the
-			// engine default and reset the model too so they stay consistent.
-			normalized := strings.ToLower(dirOut.Provider)
-			if _, ok := common.Get(normalized); ok {
-				ws.ProviderName = normalized
-			} else {
-				ws.ProviderName = e.opts.DefaultProvider
-				if !explicitModel {
-					ws.ModelName = e.opts.DefaultModel
-				}
-			}
+		directorPacket := e.buildPacket(ws, state.PersonaDirector, nil)
+		dirOut := director.OutputFromRaw(out.RawContent, directorPacket)
+
+		provider := directorPacket.ProviderName
+		if !explicitProvider {
+			provider = e.normalizeProviderSelection(dirOut.Provider, directorPacket.ProviderName, ws.ProviderCatalogs)
 		}
-		if !explicitModel && dirOut.Model != "" {
-			ws.ModelName = dirOut.Model
+		ws.ProviderName = provider
+
+		fallbackModel := e.providerFallbackModel(provider, ws.ProviderCatalogs)
+		if explicitModel {
+			ws.ModelName = e.normalizeModelSelection(provider, ws.ModelName, fallbackModel, ws.ProviderCatalogs)
+		} else {
+			ws.ModelName = e.normalizeModelSelection(provider, dirOut.Model, fallbackModel, ws.ProviderCatalogs)
 		}
+		ws.PersonaModels = e.normalizePersonaModels(provider, dirOut.PersonaModels, ws.ModelName, ws.ProviderCatalogs)
+
 		if !explicitMode && dirOut.Mode != "" {
 			ws.Mode = dirOut.Mode
 		}
@@ -884,14 +898,8 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 // buildPacket constructs the HandoffPacket for the given persona from the
 // current WorkflowState snapshot.
 func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) state.HandoffPacket {
-	provider := ws.ProviderName
-	if provider == "" {
-		provider = e.opts.DefaultProvider
-	}
-	model := ws.ModelName
-	if model == "" {
-		model = e.opts.DefaultModel
-	}
+	provider := e.resolveProviderName(ws)
+	model := e.resolvePersonaModel(ws, kind, provider)
 
 	packet := state.HandoffPacket{
 		WorkflowID:            ws.ID,
@@ -908,6 +916,8 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		CurrentPersona:        kind,
 		ProviderName:          provider,
 		ModelName:             model,
+		ProviderCatalogs:      ws.ProviderCatalogs,
+		PersonaModels:         ws.PersonaModels,
 		BlockingIssues:        ws.BlockingIssues,
 		AllSuggestions:        ws.AllSuggestions,
 		ImprovementsPath:      e.opts.ImprovementsRoot,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -148,6 +149,8 @@ func main() {
 		MaxQARetries:          2,
 		DefaultProvider:       resolveDefaultProvider(cfg),
 		DefaultModel:          resolveDefaultModel(cfg),
+		ProviderDefaults:      buildProviderDefaults(cfg),
+		ExcludedModels:        buildExcludedModels(cfg),
 		CustomizationRegistry: customReg,
 		HandoffTimeout:        cfg.Workflow.HandoffTimeout,
 		PersonaMaxRetries:     cfg.Workflow.PersonaMaxRetries,
@@ -339,6 +342,46 @@ func resolveDefaultModel(cfg *config.Config) string {
 		return cfg.Providers.Copilot.DefaultModel
 	}
 	return ""
+}
+
+func buildProviderDefaults(cfg *config.Config) map[string]string {
+	defaults := make(map[string]string)
+	if cfg.Providers.OpenAI.Enabled && strings.TrimSpace(cfg.Providers.OpenAI.DefaultModel) != "" {
+		defaults["openai"] = strings.TrimSpace(cfg.Providers.OpenAI.DefaultModel)
+	}
+	if cfg.Providers.Ollama.Enabled && strings.TrimSpace(cfg.Providers.Ollama.DefaultModel) != "" {
+		defaults["ollama"] = strings.TrimSpace(cfg.Providers.Ollama.DefaultModel)
+	}
+	if cfg.Providers.Copilot.Enabled && strings.TrimSpace(cfg.Providers.Copilot.DefaultModel) != "" {
+		defaults["copilot"] = strings.TrimSpace(cfg.Providers.Copilot.DefaultModel)
+	}
+	if cfg.Providers.Anthropic.Enabled && strings.TrimSpace(cfg.Providers.Anthropic.DefaultModel) != "" {
+		defaults["anthropic"] = strings.TrimSpace(cfg.Providers.Anthropic.DefaultModel)
+	}
+	return defaults
+}
+
+func buildExcludedModels(cfg *config.Config) map[string]map[string]struct{} {
+	out := make(map[string]map[string]struct{})
+	add := func(provider string, models []string) {
+		blocked := make(map[string]struct{})
+		for _, model := range models {
+			key := strings.ToLower(strings.TrimSpace(model))
+			if key == "" {
+				continue
+			}
+			blocked[key] = struct{}{}
+		}
+		if len(blocked) > 0 {
+			out[provider] = blocked
+		}
+	}
+
+	add("openai", cfg.Providers.OpenAI.ExcludedModels)
+	add("ollama", cfg.Providers.Ollama.ExcludedModels)
+	add("copilot", cfg.Providers.Copilot.ExcludedModels)
+	add("anthropic", cfg.Providers.Anthropic.ExcludedModels)
+	return out
 }
 
 // buildCustomizationRegistry converts config-defined sources into a live Registry.

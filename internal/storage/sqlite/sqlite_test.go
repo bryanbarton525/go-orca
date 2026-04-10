@@ -24,6 +24,25 @@ func newTestStore(t *testing.T) *sqStore.Store {
 	return s
 }
 
+// TestMigrateIdempotent verifies that calling Migrate() twice on the same
+// database does not return an error.  SQLite's ALTER TABLE does not support
+// IF NOT EXISTS, so the implementation must silently ignore duplicate-column
+// errors on a second run.
+func TestMigrateIdempotent(t *testing.T) {
+	s, err := sqStore.New(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("second Migrate (idempotency check): %v", err)
+	}
+}
+
 func TestPing(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Ping(context.Background()); err != nil {

@@ -108,30 +108,33 @@ type ProvidersConfig struct {
 
 // AnthropicConfig holds Anthropic Claude API settings.
 type AnthropicConfig struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	APIKey       string        `mapstructure:"api_key"`
-	BaseURL      string        `mapstructure:"base_url"`
-	DefaultModel string        `mapstructure:"default_model"`
-	MaxTokens    int           `mapstructure:"max_tokens"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	Enabled        bool          `mapstructure:"enabled"`
+	APIKey         string        `mapstructure:"api_key"`
+	BaseURL        string        `mapstructure:"base_url"`
+	DefaultModel   string        `mapstructure:"default_model"`
+	ExcludedModels []string      `mapstructure:"excluded_models"`
+	MaxTokens      int           `mapstructure:"max_tokens"`
+	Timeout        time.Duration `mapstructure:"timeout"`
 }
 
 // OpenAIConfig holds OpenAI / Codex settings.
 type OpenAIConfig struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	APIKey       string        `mapstructure:"api_key"`
-	BaseURL      string        `mapstructure:"base_url"`
-	DefaultModel string        `mapstructure:"default_model"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	Enabled        bool          `mapstructure:"enabled"`
+	APIKey         string        `mapstructure:"api_key"`
+	BaseURL        string        `mapstructure:"base_url"`
+	DefaultModel   string        `mapstructure:"default_model"`
+	ExcludedModels []string      `mapstructure:"excluded_models"`
+	Timeout        time.Duration `mapstructure:"timeout"`
 }
 
 // OllamaConfig holds Ollama settings.
 type OllamaConfig struct {
-	Enabled       bool          `mapstructure:"enabled"`
-	Host          string        `mapstructure:"host"`
-	DefaultModel  string        `mapstructure:"default_model"`
-	Timeout       time.Duration `mapstructure:"timeout"`
-	TLSSkipVerify bool          `mapstructure:"tls_skip_verify"`
+	Enabled        bool          `mapstructure:"enabled"`
+	Host           string        `mapstructure:"host"`
+	DefaultModel   string        `mapstructure:"default_model"`
+	ExcludedModels []string      `mapstructure:"excluded_models"`
+	Timeout        time.Duration `mapstructure:"timeout"`
+	TLSSkipVerify  bool          `mapstructure:"tls_skip_verify"`
 	// NumCtx sets the context window size (num_ctx) sent to Ollama.
 	// Defaults to 0, which lets Ollama use the model's built-in default
 	// (often 2048–4096). For long-form generation set this to 16384 or higher
@@ -141,10 +144,11 @@ type OllamaConfig struct {
 
 // CopilotConfig holds GitHub Copilot SDK settings.
 type CopilotConfig struct {
-	Enabled      bool   `mapstructure:"enabled"`
-	GitHubToken  string `mapstructure:"github_token"`
-	CLIPath      string `mapstructure:"cli_path"`
-	DefaultModel string `mapstructure:"default_model"`
+	Enabled        bool     `mapstructure:"enabled"`
+	GitHubToken    string   `mapstructure:"github_token"`
+	CLIPath        string   `mapstructure:"cli_path"`
+	DefaultModel   string   `mapstructure:"default_model"`
+	ExcludedModels []string `mapstructure:"excluded_models"`
 }
 
 // CustomizationsConfig controls customization discovery sources.

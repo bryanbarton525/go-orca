@@ -52,7 +52,8 @@ providers:
   ollama:
     enabled: true
     host: "https://ollama.barton.local"
-    default_model: "gemma4:e4b"
+    default_model: "qwen3.5:9b"
+    excluded_models: []    # optional deny-list; excluded models are hidden from Director routing
     timeout: "600s"        # local models can be slow; QA receives large artifact context
     tls_skip_verify: true  # homelab CA not trusted on this machine
     num_ctx: 32768         # explicit context window — default (2048-4096) causes mid-content truncation on synthesis tasks
@@ -64,6 +65,7 @@ providers:
     enabled: false
     # api_key: "sk-ant-..."       # or set GOORCA_PROVIDERS_ANTHROPIC_API_KEY
     default_model: "claude-sonnet-4-5"
+    # excluded_models: ["claude-opus-4-5"]
     max_tokens: 16384
     timeout: "120s"
 

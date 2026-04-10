@@ -255,6 +255,149 @@ func TestQAExhaustionContinuesToFinalizer(t *testing.T) {
 	}
 }
 
+// trackingPersona is a noop persona that records whether Execute was called.
+type trackingPersona struct {
+	kind   state.PersonaKind
+	called bool
+	// capturedAction captures the FinalizerAction field from the HandoffPacket.
+	capturedAction string
+}
+
+func (p *trackingPersona) Kind() state.PersonaKind { return p.kind }
+func (p *trackingPersona) Name() string            { return string(p.kind) }
+func (p *trackingPersona) Description() string     { return "" }
+func (p *trackingPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.called = true
+	p.capturedAction = packet.FinalizerAction
+	return &state.PersonaOutput{Persona: p.kind, Summary: "tracked"}, nil
+}
+
+// TestPersonaInclusionSkipping verifies that phases excluded from
+// RequiredPersonas (set by the Director) are never executed.
+func TestPersonaInclusionSkipping(t *testing.T) {
+	// Register only the personas we want to observe.
+	archPersona := &trackingPersona{kind: state.PersonaArchitect}
+	persona.Register(archPersona)
+	t.Cleanup(func() { persona.Unregister(state.PersonaArchitect) })
+
+	finPersona := &trackingPersona{kind: state.PersonaFinalizer}
+	persona.Register(finPersona)
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ctx := context.Background()
+
+	ws := state.NewWorkflowState("t1", "s1", "skipping test")
+	// Skip Director and ProjectMgr by pre-populating their summaries.
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector:   "(completed)",
+		state.PersonaProjectMgr: "(completed)",
+	}
+	// Director selected only Finalizer — Architect must be skipped.
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaFinalizer}
+	// Skip prompt loading: pre-populated snapshot satisfies the guard.
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+	})
+
+	if err := eng.Run(ctx, ws.ID); err != nil {
+		t.Fatalf("unexpected engine error: %v", err)
+	}
+
+	if archPersona.called {
+		t.Error("Architect persona was called but should have been skipped by RequiredPersonas filter")
+	}
+	if !finPersona.called {
+		t.Error("Finalizer persona was NOT called but should have been included")
+	}
+}
+
+// TestFinalizerActionForwardedInPacket verifies that ws.FinalizerAction is
+// propagated into the HandoffPacket received by the Finalizer persona.
+func TestFinalizerActionForwardedInPacket(t *testing.T) {
+	finPersona := &trackingPersona{kind: state.PersonaFinalizer}
+	persona.Register(finPersona)
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ctx := context.Background()
+
+	ws := state.NewWorkflowState("t1", "s1", "finalizer action test")
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector:   "(completed)",
+		state.PersonaProjectMgr: "(completed)",
+		state.PersonaArchitect:  "(completed)",
+		state.PersonaQA:         "(completed)",
+	}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaFinalizer}
+	ws.FinalizerAction = "github-pr"
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+	})
+
+	if err := eng.Run(ctx, ws.ID); err != nil {
+		t.Fatalf("unexpected engine error: %v", err)
+	}
+
+	if !finPersona.called {
+		t.Fatal("Finalizer persona was not called")
+	}
+	if finPersona.capturedAction != "github-pr" {
+		t.Errorf("FinalizerAction in packet: got %q, want %q", finPersona.capturedAction, "github-pr")
+	}
+}
+
+// TestPromptSnapshotReusedOnResume verifies that a workflow with a
+// pre-populated PersonaPromptSnapshot does not attempt to re-load prompt
+// files from disk (which would fail in the test environment).
+func TestPromptSnapshotReusedOnResume(t *testing.T) {
+	finPersona := &trackingPersona{kind: state.PersonaFinalizer}
+	persona.Register(finPersona)
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ctx := context.Background()
+
+	ws := state.NewWorkflowState("t1", "s1", "snapshot reuse test")
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector:   "(completed)",
+		state.PersonaProjectMgr: "(completed)",
+		state.PersonaArchitect:  "(completed)",
+		state.PersonaQA:         "(completed)",
+	}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaFinalizer}
+	// Pre-populate the snapshot — engine must reuse it, not reload from disk.
+	// A non-existent PersonaPromptRoot ensures the test fails if the engine
+	// tries to load prompts from disk instead of reusing the snapshot.
+	ws.PersonaPromptSnapshot = map[string]string{
+		"director":  "You are the Director.",
+		"finalizer": "You are the Finalizer.",
+	}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider:   "mock",
+		DefaultModel:      "mock-model",
+		PersonaPromptRoot: "/nonexistent/path/that/must/not/be/loaded",
+	})
+
+	if err := eng.Run(ctx, ws.ID); err != nil {
+		t.Fatalf("engine must not reload prompts when snapshot is pre-populated; got error: %v", err)
+	}
+
+	if !finPersona.called {
+		t.Error("Finalizer persona was not called")
+	}
+}
+
 // TestWorkflowStateNewHelpers verifies the state constructor sets expected
 // defaults.
 func TestWorkflowStateNewHelpers(t *testing.T) {
