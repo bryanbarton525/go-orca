@@ -60,6 +60,17 @@ func (p *routingProvider) Models(context.Context) ([]common.ModelInfo, error) {
 
 func (p *routingProvider) HealthCheck(context.Context) error { return nil }
 
+// trackingSaveStore wraps routingStore and records SaveWorkflow calls.
+type trackingSaveStore struct {
+	routingStore
+	saveCalls int
+}
+
+func (s *trackingSaveStore) SaveWorkflow(_ context.Context, _ *state.WorkflowState) error {
+	s.saveCalls++
+	return nil
+}
+
 var registerCatalogMockProvider sync.Once
 
 func ensureCatalogMockProviderRegistered() {
@@ -196,5 +207,93 @@ func TestApplyOutputNormalizesDirectorPersonaSelections(t *testing.T) {
 	}
 	if ws.Title != "Route models" {
 		t.Fatalf("Title: got %q", ws.Title)
+	}
+}
+
+func TestEnsureProviderCatalogsIsIdempotentWhenAlreadySet(t *testing.T) {
+	store := &trackingSaveStore{}
+	eng := New(store, Options{
+		DefaultProvider:  "catalog-mock",
+		DefaultModel:     "bootstrap-model",
+		ProviderDefaults: map[string]string{"catalog-mock": "bootstrap-model"},
+	})
+
+	ws := state.NewWorkflowState("t1", "s1", "check idempotency")
+	ws.ProviderCatalogs = map[string]state.ProviderModelCatalog{
+		"catalog-mock": {ProviderName: "catalog-mock", DefaultModel: "bootstrap-model"},
+	}
+
+	if err := eng.ensureProviderCatalogs(context.Background(), ws); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("SaveWorkflow called %d times; want 0 (catalogs already snapshotted)", store.saveCalls)
+	}
+}
+
+func TestBuildPacketForwardsFinalizerAction(t *testing.T) {
+	eng := New(routingStore{}, Options{
+		DefaultProvider:  "catalog-mock",
+		DefaultModel:     "bootstrap-model",
+		ProviderDefaults: map[string]string{"catalog-mock": "bootstrap-model"},
+	})
+
+	ws := state.NewWorkflowState("t1", "s1", "write a blog post")
+	ws.ProviderName = "catalog-mock"
+	ws.ModelName = "bootstrap-model"
+	ws.FinalizerAction = "blog-draft"
+
+	packet := eng.buildPacket(ws, state.PersonaFinalizer, nil)
+	if packet.FinalizerAction != "blog-draft" {
+		t.Fatalf("FinalizerAction: got %q, want %q", packet.FinalizerAction, "blog-draft")
+	}
+}
+
+func TestApplyOutputSetsRequiredPersonasAndFinalizerAction(t *testing.T) {
+	ensureCatalogMockProviderRegistered()
+
+	eng := New(routingStore{}, Options{
+		DefaultProvider:  "catalog-mock",
+		DefaultModel:     "bootstrap-model",
+		ProviderDefaults: map[string]string{"catalog-mock": "bootstrap-model"},
+	})
+
+	ws := state.NewWorkflowState("t1", "s1", "write a blog post")
+	ws.ProviderCatalogs = map[string]state.ProviderModelCatalog{
+		"catalog-mock": {
+			ProviderName: "catalog-mock",
+			DefaultModel: "bootstrap-model",
+			Models:       []state.ProviderModelInfo{{ID: "bootstrap-model"}},
+		},
+	}
+
+	eng.applyOutput(ws, &state.PersonaOutput{
+		Persona:    state.PersonaDirector,
+		Summary:    "ops workflow",
+		RawContent: `{"mode":"ops","title":"Deploy","provider":"catalog-mock","model":"bootstrap-model","persona_models":{},"finalizer_action":"doc-draft","required_personas":["project_manager","finalizer"],"rationale":"Simple ops task.","summary":"Deploy to prod."}`,
+	})
+
+	if ws.FinalizerAction != "doc-draft" {
+		t.Fatalf("FinalizerAction: got %q, want %q", ws.FinalizerAction, "doc-draft")
+	}
+
+	hasPersona := func(kind state.PersonaKind) bool {
+		for _, k := range ws.RequiredPersonas {
+			if k == kind {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasPersona(state.PersonaProjectMgr) {
+		t.Fatalf("RequiredPersonas missing project_manager: %v", ws.RequiredPersonas)
+	}
+	if !hasPersona(state.PersonaFinalizer) {
+		t.Fatalf("RequiredPersonas missing finalizer: %v", ws.RequiredPersonas)
+	}
+	// Architect was not requested — must be absent.
+	if hasPersona(state.PersonaArchitect) {
+		t.Fatalf("RequiredPersonas unexpectedly contains architect: %v", ws.RequiredPersonas)
 	}
 }
