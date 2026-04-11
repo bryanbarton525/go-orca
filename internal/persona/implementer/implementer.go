@@ -5,6 +5,7 @@ package implementer
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -73,7 +74,7 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 
 	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyImplementer]
 
-	ctx_ := base.BuildHandoffContext(packet)
+	ctx_ := buildContext(packet)
 	userPrompt := fmt.Sprintf(
 		"%s\n\n## Current Task\nTitle: %s\nDescription: %s\n\nImplement this task and produce your JSON output.",
 		ctx_, task.Title, task.Description,
@@ -110,4 +111,86 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 		Suggestions: out.Issues,
 		CompletedAt: now,
 	}, nil
+}
+
+// maxSourceArtifactChars is the maximum number of characters of a source
+// artifact (e.g. the current blog post) included in the implementer's context.
+// Content beyond this limit is truncated; the truncation notice tells the model
+// the document continues so it does not hallucinate missing sections.
+const maxSourceArtifactChars = 8000
+
+// buildContext constructs a focused prompt context for the implementer.
+//
+// Unlike the shared BuildHandoffContext used by planning personas, this omits
+// the accumulated persona summaries, Requirements JSON, and Design JSON — none
+// of which help the implementer execute a single atomic task.  That material
+// was already distilled into the task descriptions by the Architect.
+//
+// For content-mode workflows we additionally inject the most recent synthesis
+// artifact (blog_post or, absent that, markdown) as source material.  Without
+// this, a synthesis or fix task forces the model to regenerate the entire
+// document from memory rather than patching the existing one.
+func buildContext(packet state.HandoffPacket) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Workflow\nMode: %s\nRequest: %s\n",
+		packet.Mode, packet.Request))
+
+	if len(packet.Tasks) > 0 {
+		sb.WriteString("\n## Task Plan\n")
+		for _, t := range packet.Tasks {
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", t.Status, t.Title))
+		}
+	}
+
+	if len(packet.BlockingIssues) > 0 {
+		sb.WriteString("\n## QA Blocking Issues\nThe following issues were raised by QA and MUST be resolved:\n")
+		for _, issue := range packet.BlockingIssues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+	}
+
+	if packet.IsRemediation {
+		sb.WriteString(fmt.Sprintf(
+			"\n## Remediation Context\nThis is a targeted remediation pass (QA cycle %d). "+
+				"Resolve ONLY the blocking issues listed above. Do NOT re-plan the entire project.\n",
+			packet.QACycle))
+	}
+
+	// For content-mode workflows, inject the most recent synthesis artifact as
+	// source material.  This lets synthesis and fix tasks patch an existing
+	// document instead of generating a complete new one from scratch, which
+	// both improves quality and keeps output tokens manageable.
+	if packet.Mode == state.WorkflowModeContent {
+		if src := latestSynthesisArtifact(packet.Artifacts); src != nil {
+			content := src.Content
+			truncated := false
+			if len(content) > maxSourceArtifactChars {
+				content = content[:maxSourceArtifactChars]
+				truncated = true
+			}
+			sb.WriteString(fmt.Sprintf(
+				"\n## Current Document (most recent synthesis — reference or patch this)\nArtifact: %s\nKind: %s\n\n```\n%s\n```\n",
+				src.Name, src.Kind, content))
+			if truncated {
+				sb.WriteString(fmt.Sprintf(
+					"[... content truncated at %d chars; the full document continues beyond this point ...]\n",
+					maxSourceArtifactChars))
+			}
+		}
+	}
+
+	return sb.String()
+}
+
+// latestSynthesisArtifact returns the most recently produced blog_post
+// artifact from the list, or the most recent markdown artifact if no blog_post
+// exists yet.  Returns nil when the list is empty.
+func latestSynthesisArtifact(artifacts []state.Artifact) *state.Artifact {
+	for i := len(artifacts) - 1; i >= 0; i-- {
+		if artifacts[i].Kind == state.ArtifactKindBlogPost {
+			return &artifacts[i]
+		}
+	}
+	// No synthesized document yet — no source material to inject.
+	return nil
 }

@@ -207,7 +207,10 @@ func defaultFinalizerAction(mode state.WorkflowMode) string {
 	case state.WorkflowModeDocs, state.WorkflowModeResearch:
 		return "doc-draft"
 	default:
-		return "artifact-bundle"
+		// api-response requires no external config and returns all artifacts
+		// inline — safe default for software/ops/mixed when no delivery target
+		// has been explicitly configured.
+		return "api-response"
 	}
 }
 
@@ -271,8 +274,11 @@ func formatModelHint(model state.ProviderModelInfo) string {
 	if family := strings.TrimSpace(model.Metadata["family"]); family != "" {
 		extras = append(extras, "family="+family)
 	}
-	if size := strings.TrimSpace(model.Metadata["size"]); size != "" {
-		extras = append(extras, "size="+size)
+	if paramSize := strings.TrimSpace(model.Metadata["parameter_size"]); paramSize != "" {
+		extras = append(extras, "params="+paramSize)
+	}
+	if toolsVal := strings.TrimSpace(model.Metadata["tools"]); toolsVal != "" {
+		extras = append(extras, "tools="+toolsVal)
 	}
 	if len(extras) == 0 {
 		return label

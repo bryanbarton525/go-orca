@@ -369,10 +369,10 @@ type ImprovementApplyResult struct {
 
 // FinalizationResult holds the Finalizer's output.
 type FinalizationResult struct {
-	Action      string            `json:"action"` // github-pr | markdown-export | etc.
-	Summary     string            `json:"summary"`
-	Links       []string          `json:"links,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Action      string         `json:"action"` // github-pr | markdown-export | etc.
+	Summary     string         `json:"summary"`
+	Links       []string       `json:"links,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 	Suggestions []string          `json:"suggestions,omitempty"` // from Refiner pass
 	// RefinerImprovements holds the structured set of improvements from the
 	// inline Refiner retrospective.  The improvement dispatcher processes these

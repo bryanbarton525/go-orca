@@ -34,6 +34,7 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.)
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
 - **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), GitHub Copilot
+- **Per-persona model routing** — the Director selects both a workflow-level model and an optional per-persona override for every downstream phase; the engine validates all selections against a live catalog snapshot, silently falling back to the configured default for excluded or unavailable models; override `model` on `POST /workflows` to pin a specific model
 - **Built-in tools + MCP** — `http_get`, `read_file`, `write_file`, plus remote tools via Model Context Protocol
 - **SQLite or PostgreSQL** — swap backends with a single config line; auto-migration included
 - **Structured logging** — JSON or console output via zap
@@ -115,7 +116,7 @@ curl -N http://localhost:8080/workflows/<id>/stream \
 | Document | Description |
 |---|---|
 | [Architecture](docs/architecture.md) | System overview, component map, trust boundaries, data flow |
-| [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, QA remediation loop, role enforcement, execution progress, pause/resume |
+| [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, model routing, QA remediation loop, role enforcement, execution progress, pause/resume |
 | [API Reference](docs/api.md) | All HTTP endpoints, request/response schemas, headers, event types |
 | [Configuration](docs/configuration.md) | Every config key, default, env var override |
 | [Providers](docs/providers.md) | OpenAI, Anthropic, Ollama, GitHub Copilot — setup and config |

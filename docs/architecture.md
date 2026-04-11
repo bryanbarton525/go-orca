@@ -54,7 +54,7 @@ go-orca is a **multi-tenant AI orchestration engine** — a single Go binary tha
 | `internal/tenant` | `EnsureDefault`, tenant CRUD helpers |
 | `internal/scope` | Scope CRUD, hierarchy validation, `ResolveChain` |
 | `internal/customization` | Source scanning, snapshot creation, dedup |
-| `internal/finalizer/actions` | Delivery action registry and six built-in actions |
+| `internal/finalizer/actions` | Delivery action registry and eight built-in actions |
 | `internal/tools` | `Tool` interface and `Registry` |
 | `internal/tools/builtin` | `http_get`, `read_file`, `write_file` |
 | `internal/tools/mcp` | MCP manifest loader; JSON-RPC bridge |

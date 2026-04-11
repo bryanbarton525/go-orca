@@ -204,3 +204,51 @@ func TestBlogDraftAction_BlogPostWinsOverNewerMarkdown(t *testing.T) {
 		t.Error("fallback must not be set when blog_post is found")
 	}
 }
+
+// ─── APIResponseAction ────────────────────────────────────────────────────────
+
+func TestAPIResponseAction_NoConfig(t *testing.T) {
+	a := &APIResponseAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKindCode, "main.go", "package main"),
+			makeArtifact(state.ArtifactKindMarkdown, "notes.md", "# Notes"),
+		},
+	}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success, got: %s", out.Error)
+	}
+	if out.Action != ActionAPIResponse {
+		t.Errorf("action kind: got %q, want %q", out.Action, ActionAPIResponse)
+	}
+	if out.Metadata["artifacts"] == "" {
+		t.Error("expected artifacts JSON in metadata")
+	}
+}
+
+func TestAPIResponseAction_EmptyArtifacts(t *testing.T) {
+	a := &APIResponseAction{}
+	in := Input{Workflow: makeWorkflow(), Artifacts: nil}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success even with no artifacts: %s", out.Error)
+	}
+	if out.Metadata["artifacts"] != "[]" {
+		t.Errorf("expected empty JSON array; got: %q", out.Metadata["artifacts"])
+	}
+}
+
+func TestAPIResponseAction_Kind(t *testing.T) {
+	a := &APIResponseAction{}
+	if a.Kind() != ActionAPIResponse {
+		t.Errorf("Kind: got %q, want %q", a.Kind(), ActionAPIResponse)
+	}
+}

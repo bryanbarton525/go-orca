@@ -71,8 +71,8 @@ func TestApplyOutputDirectorEnforcesSoftwarePipeline(t *testing.T) {
 			t.Fatalf("RequiredPersonas[%d]: got %q, want %q", i, ws.RequiredPersonas[i], kind)
 		}
 	}
-	if ws.FinalizerAction != "artifact-bundle" {
-		t.Fatalf("FinalizerAction: got %q, want %q", ws.FinalizerAction, "artifact-bundle")
+	if ws.FinalizerAction != "api-response" {
+		t.Fatalf("FinalizerAction: got %q, want %q", ws.FinalizerAction, "api-response")
 	}
 }
 

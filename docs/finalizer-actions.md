@@ -14,7 +14,7 @@ type Action interface {
 }
 ```
 
-A global registry (`actions.Global`) is pre-populated at process startup with all seven built-in actions. Custom actions can be registered with `Global.Register(a)`.
+A global registry (`actions.Global`) is pre-populated at process startup with all eight built-in actions. Custom actions can be registered with `Global.Register(a)`.
 
 ### Input
 
@@ -42,6 +42,25 @@ type Output struct {
 ---
 
 ## Built-in Actions
+
+### api-response
+
+Returns all workflow artifacts inline in the finalization metadata. **No config required.** This is the zero-config default for `software`, `ops`, and `mixed` workflows — the artifacts are immediately accessible from `GET /workflows/:id` without configuring any external delivery target.
+
+**Config fields:** None.
+
+**Output metadata key:** `artifacts` — a JSON array of all artifacts with `name`, `kind`, and `content` fields:
+
+```json
+[
+  { "name": "main.go",  "kind": "code",     "content": "package main\n..." },
+  { "name": "notes.md", "kind": "markdown", "content": "# Notes\n..." }
+]
+```
+
+**Default for modes:** `software`, `ops`, `mixed`
+
+---
 
 ### github-pr
 

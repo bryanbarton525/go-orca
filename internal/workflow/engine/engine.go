@@ -615,7 +615,7 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 			if ws.Finalization != nil {
 				ws.Finalization.Links = append(ws.Finalization.Links, actionOut.Links...)
 				if ws.Finalization.Metadata == nil {
-					ws.Finalization.Metadata = make(map[string]string)
+					ws.Finalization.Metadata = make(map[string]any)
 				}
 				for k, v := range actionOut.Metadata {
 					ws.Finalization.Metadata[k] = v

@@ -15,12 +15,12 @@ import (
 
 // finalizerOutput is the expected JSON shape from the Finalizer.
 type finalizerOutput struct {
-	DeliveryAction string            `json:"delivery_action"`
-	Summary        string            `json:"summary"`
-	Links          []string          `json:"links"`
-	Metadata       map[string]string `json:"metadata"`
-	Suggestions    []string          `json:"suggestions"`
-	DeliveryNotes  string            `json:"delivery_notes"`
+	DeliveryAction string         `json:"delivery_action"`
+	Summary        string         `json:"summary"`
+	Links          []string       `json:"links"`
+	Metadata       map[string]any `json:"metadata"`
+	Suggestions    []string       `json:"suggestions"`
+	DeliveryNotes  string         `json:"delivery_notes"`
 }
 
 // refinerOutput is the expected JSON shape from the Refiner retrospective.

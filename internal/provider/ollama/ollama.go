@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	ollamaapi "github.com/ollama/ollama/api"
+	ollamamodel "github.com/ollama/ollama/types/model"
 
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/provider/common"
@@ -240,24 +242,56 @@ func (p *Provider) Stream(ctx context.Context, req common.ChatRequest) (<-chan c
 }
 
 // Models implements Provider.
+// It calls Show for each model (in parallel) to discover whether the model
+// supports Ollama's tool-calling API. The result is stored in
+// ModelInfo.Metadata["tools"] ("yes" or "no") and reflected in Capabilities.
 func (p *Provider) Models(ctx context.Context) ([]common.ModelInfo, error) {
 	list, err := p.client.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: list models error: %w", err)
 	}
 
+	// Check tool-calling support for each model via Show API (parallel).
+	toolSupport := make([]bool, len(list.Models))
+	var wg sync.WaitGroup
+	for i, m := range list.Models {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			showResp, showErr := p.client.Show(ctx, &ollamaapi.ShowRequest{Model: name})
+			if showErr != nil {
+				return // default: tools=no (safe fallback)
+			}
+			for _, cap := range showResp.Capabilities {
+				if cap == ollamamodel.CapabilityTools {
+					toolSupport[i] = true
+					return
+				}
+			}
+		}(i, m.Name)
+	}
+	wg.Wait()
+
 	out := make([]common.ModelInfo, 0, len(list.Models))
-	for _, m := range list.Models {
+	for i, m := range list.Models {
+		capabilities := []common.Capability{
+			common.CapabilityChat,
+			common.CapabilityStreaming,
+		}
+		toolsVal := "no"
+		if toolSupport[i] {
+			capabilities = append(capabilities, common.CapabilityToolCalling)
+			toolsVal = "yes"
+		}
 		out = append(out, common.ModelInfo{
-			ID:   m.Name,
-			Name: m.Name,
-			Capabilities: []common.Capability{
-				common.CapabilityChat,
-				common.CapabilityStreaming,
-			},
+			ID:           m.Name,
+			Name:         m.Name,
+			Capabilities: capabilities,
 			Metadata: map[string]string{
-				"size":   fmt.Sprintf("%d", m.Size),
-				"family": strings.ToLower(m.Details.Family),
+				"size":           fmt.Sprintf("%d", m.Size),
+				"family":         strings.ToLower(m.Details.Family),
+				"parameter_size": m.Details.ParameterSize,
+				"tools":          toolsVal,
 			},
 		})
 	}

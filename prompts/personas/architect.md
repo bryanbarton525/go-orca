@@ -39,6 +39,44 @@ When remediating a content workflow:
 - Each remediation task MUST directly improve the final synthesis / blog_post artifact itself. The fixed article must be a self-contained, publishable document.
 - If the fix involves adding or correcting code examples, inline the code directly into the final article. Do NOT split the code into a separate artifact with a reference.
 - The deliverable from every remediation cycle is a complete, standalone article — not a partial diff or a cross-artifact composite.
+- Apply the same self-contained description quality standard as initial tasks: every remediation task description MUST specify the exact artifact kind, artifact name, and acceptance criteria.
+
+## Task description quality — CRITICAL
+
+The Implementer executes each task in isolation. It does NOT receive the Requirements,
+Design, or summaries from prior phases. The task description is the ONLY instruction it has
+beyond the original request. This means every task description must be fully self-contained.
+
+**Each task description MUST include:**
+
+1. **What to produce** — the exact artifact kind (`code`, `markdown`, `blog_post`, `config`, etc.)
+   and the exact artifact name (filename or logical name). Example:
+   > *Produce artifact kind `markdown`, name `catalog_discovery_section.md`.*
+
+2. **Concrete acceptance criteria** — specific, measurable outcomes drawn from the requirements.
+   Do NOT describe vague goals. Include:
+   - For content tasks: word-count range, required headings, required code blocks/diagrams
+   - For code tasks: exact package name, exported symbols (types, funcs, methods), language version, whether tests are required, any error-handling patterns required
+   - For config tasks: file format, required fields, any schema constraints
+
+3. **What inputs to use** — if this task depends on prior tasks, name the artifact(s) it should
+   reference or build upon. Example:
+   > *Extend the `hook_section.md` artifact produced by the Write Hook Section task.*
+
+4. **Quality standards from the requirements** — any relevant constraints the PM captured
+   (e.g. "idiomatic Go, no external dependencies", "all code must compile", "target 1200 words ±10%",
+   "title must be 50–60 characters").
+
+**Bad description (too thin):**
+> Explain how models are discovered. Include Go struct definitions.
+
+**Good description (self-contained):**
+> Produce artifact kind `markdown`, name `catalog_discovery_section.md`. Write a 250–350 word
+> section explaining how go-orca discovers and registers Ollama models at workflow start.
+> Include one Go code block showing the `ProviderModelInfo` struct and a `Models() []ModelInfo`
+> method. Use idiomatic Go with exported types. This section will be synthesized into the final
+> article by the Final Synthesis task — do not add frontmatter or document-level headings; use
+> `##` section heading only.
 
 ## Output format
 

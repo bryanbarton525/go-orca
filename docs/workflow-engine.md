@@ -39,6 +39,83 @@ Finalizer
 
 The `refiner` persona exists in the registry but is invoked by the Finalizer internally for a retrospective pass — it is not a separate top-level phase.
 
+## Model Routing
+
+Model routing runs in four steps at the start of every workflow and again after the Director completes.
+
+### 1. Catalog Discovery
+
+Before the Director runs, `ensureProviderCatalogs` calls `provider.Models()` on every registered provider and snapshots the result into `WorkflowState.ProviderCatalogs`. The snapshot is persisted immediately so resumed workflows use the same catalog that was in place when they started.
+
+If `provider.Models()` fails or times out (default: 10 s, configurable via `ModelDiscoveryTimeout`), the engine falls back to a synthetic single-model catalog built from the configured `default_model`. The catalog is marked `Degraded: true` and workflow execution continues — discovery failure is never fatal.
+
+Models listed in `excluded_models` config are filtered out during discovery and never appear in the catalog. Any routing decision that selects an excluded model is silently replaced.
+
+### 2. Director Routing
+
+Before the Director runs, every model in the provider catalog is surfaced to it as a hint line:
+
+```
+qwen3.5:9b [family=qwen3, params=9.4B]
+qwen3:1.7b [family=qwen3, params=1.7B]
+qwen2.5-coder:14b [family=qwen2.5-coder, params=14.8B]
+```
+
+The `params` value comes directly from the provider's metadata (`parameter_size` on Ollama). The Director uses this to make capacity-aware routing decisions:
+
+- Synthesis-heavy personas (`implementer`, `finalizer`) are steered toward larger-parameter models so they have enough context to produce complete, untruncated artifacts.
+- Classification and planning personas (`director`, `project_manager`) can use smaller models where output is compact.
+
+The Director returns a JSON object with three routing fields:
+
+```json
+{
+  "provider":       "ollama",
+  "model":          "qwen3.5:9b",
+  "persona_models": {
+    "project_manager": "qwen3.5:9b",
+    "architect":       "qwen3.5:9b",
+    "implementer":     "qwen2.5-coder:14b",
+    "qa":              "qwen3.5:9b",
+    "finalizer":       "qwen2.5-coder:14b"
+  }
+}
+```
+
+The engine normalizes all three against the live catalog:
+
+- **`provider`** — validated against the registered provider registry; falls back to the engine `DefaultProvider` if the name is unknown or the catalog is empty.
+- **`model`** — validated against that provider's catalog; falls back to the catalog's `DefaultModel` if the requested model is absent or excluded.
+- **`persona_models`** — each entry validated individually; any missing or excluded entry falls back to the workflow-level `model`.
+
+### 3. Workflow-Level Override
+
+Setting `model` on `POST /workflows` pins `WorkflowState.ModelName` regardless of what the Director returns. The Director still runs on that pinned model. The Director **can** still suggest different per-persona models via `persona_models` — those are normalized against the catalog and may differ from the pinned model.
+
+Setting `provider` on `POST /workflows` pins `WorkflowState.ProviderName` and the Director cannot override it.
+
+### 4. Per-Persona Resolution
+
+`buildPacket` calls `resolvePersonaModel(ws, kind, provider)` for every persona before calling `Execute`:
+
+1. For downstream personas (`project_manager`, `architect`, `implementer`, `qa`, `finalizer`), check `ws.PersonaModels[kind]` — use it if it passes the catalog allow-list.
+2. Fall back to `ws.ModelName` (the workflow-level model).
+3. If that is also absent or excluded, fall back to the catalog's `DefaultModel`.
+
+The Director always receives `ws.ModelName` directly (step 2), not a persona-model assignment.
+
+### Routing Behaviour Summary
+
+| Scenario | Director model | Downstream persona models |
+|---|---|---|
+| No override | `DefaultModel` from config | Director's `persona_models`, each falling back to `DefaultModel` |
+| `model` on POST | The requested model (catalog-validated) | Director's `persona_models`, falling back to the requested model |
+| `provider` on POST | `DefaultModel` for that provider | Same |
+| Both `provider` + `model` | Requested model on requested provider | Same |
+| Requested model excluded | `DefaultModel` | Same |
+
+`persona.started` SSE events carry `provider_name` and `model_name` so you can observe per-persona routing in real time.
+
 ## QA / Remediation Loop
 
 The QA phase runs inside a loop capped at `MaxQARetries` (default: 2). When QA raises blocking issues, the **Architect** leads remediation — not the Implementer directly:

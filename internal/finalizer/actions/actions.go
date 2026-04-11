@@ -2,11 +2,13 @@
 // and a registry of built-in actions.
 //
 // Supported delivery actions:
+//   - api-response:     return all artifacts inline in the workflow state (no config required)
 //   - github-pr:        open a GitHub pull request
 //   - repo-commit-only: commit artifacts without opening a PR
 //   - artifact-bundle:  package artifacts into an archive
 //   - markdown-export:  render a single markdown document
 //   - blog-draft:       produce a blog post draft artifact
+//   - doc-draft:        produce a final polished document draft
 //   - webhook-dispatch: POST artifacts and metadata to a webhook URL
 package actions
 
@@ -28,6 +30,7 @@ import (
 type ActionKind string
 
 const (
+	ActionAPIResponse    ActionKind = "api-response"
 	ActionGitHubPR       ActionKind = "github-pr"
 	ActionRepoCommit     ActionKind = "repo-commit-only"
 	ActionArtifactBundle ActionKind = "artifact-bundle"
@@ -103,6 +106,45 @@ func (r *Registry) Execute(ctx context.Context, kind ActionKind, in Input) (*Out
 // ─── Built-in stub actions ────────────────────────────────────────────────────
 // These stubs produce informational output and are replaced by real
 // implementations as the project matures.
+
+// APIResponseAction returns all workflow artifacts inline in the finalization
+// metadata with no external config required.  This is the zero-config default
+// for workflows that do not specify a delivery target — the caller reads the
+// result directly from GET /workflows/:id.
+type APIResponseAction struct{}
+
+func (a *APIResponseAction) Kind() ActionKind { return ActionAPIResponse }
+func (a *APIResponseAction) Description() string {
+	return "Return all artifacts inline in the API response. No config required."
+}
+
+func (a *APIResponseAction) Execute(_ context.Context, in Input) (*Output, error) {
+	type artifactSummary struct {
+		Name    string `json:"name"`
+		Kind    string `json:"kind"`
+		Content string `json:"content"`
+	}
+	arts := make([]artifactSummary, 0, len(in.Artifacts))
+	for _, art := range in.Artifacts {
+		arts = append(arts, artifactSummary{
+			Name:    art.Name,
+			Kind:    string(art.Kind),
+			Content: art.Content,
+		})
+	}
+	artsJSON, err := json.Marshal(arts)
+	if err != nil {
+		return nil, fmt.Errorf("actions: api-response marshal: %w", err)
+	}
+	return &Output{
+		Action:  ActionAPIResponse,
+		Success: true,
+		Message: fmt.Sprintf("%d artifact(s) returned inline.", len(in.Artifacts)),
+		Metadata: map[string]string{
+			"artifacts": string(artsJSON),
+		},
+	}, nil
+}
 
 // MarkdownExportAction bundles all artifact content into a single markdown doc.
 type MarkdownExportAction struct{}
@@ -676,6 +718,7 @@ func InitGlobal(githubToken string) {
 
 func newGlobalRegistry(githubToken string) *Registry {
 	r := NewRegistry()
+	r.Register(&APIResponseAction{})
 	r.Register(&MarkdownExportAction{})
 	r.Register(&ArtifactBundleAction{})
 	r.Register(&BlogDraftAction{})
