@@ -19,7 +19,7 @@ go-orca is a self-hosted backend service that runs structured AI workflows acros
 
 Every workflow is isolated by tenant and scope. Per-scope customizations (skills, prompt overlays, agent personas) let different teams within the same deployment drive different behaviour without touching shared configuration. The scope hierarchy (global → org → team) means tenant-level defaults cascade to narrower scopes automatically.
 
-After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration — and emits `refiner.suggestion` SSE events with structured improvement proposals. The engine enforces strict role contracts: only the Architect may produce tasks, only the Implementer may produce artifacts, QA is validation-only. Violations are discarded and recorded rather than silently corrupting state.
+After every workflow the Finalizer runs an inline **Refiner** retrospective — automatically, with no extra configuration — and emits `refiner.suggestion` SSE events with structured improvement proposals. The engine enforces strict role contracts: only the Architect may produce tasks, only the Implementer may produce artifacts, QA is validation-only. Violations are discarded and recorded rather than silently corrupting state. During QA remediation, the engine keeps the full artifact history for audit and delivery, but QA itself validates only the latest revision of each logical file against the original request so stale drafts do not create false conflicts.
 
 ## Features
 
@@ -27,14 +27,14 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **Scope hierarchy** — global → org → team customization chain; narrower scopes inherit and override broader ones
 - **Automatic self-improvement** — inline Refiner retrospective runs after every workflow, producing structured proposals with component name, problem, proposed fix, priority, and health score (0–100)
 - **Cross-workflow pattern detection** — standalone async Refiner persona analyses historical journal events across many runs to surface recurring issues single-run retrospectives cannot see
-- **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; Implementer executes them; QA re-validates; repeats up to `MaxQARetries` times
+- **Architect-led QA remediation** — when QA raises blocking issues, the Architect re-plans with targeted new tasks; Implementer executes them; QA re-validates the latest revision of each logical artifact against the original request; repeats up to `MaxQARetries` times
 - **Role contract enforcement** — engine discards and warns on any output that violates persona ownership rules (Artifacts from non-Implementer, Tasks from non-Architect, etc.)
 - **Seven delivery actions** — GitHub PR, direct repo commit, artifact bundle, markdown export, blog draft, doc draft, webhook dispatch; caller-provided `delivery.action` overrides LLM choice
-- **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE
+- **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE; repeated `current_persona` values across polls are normal while a persona call is still running
 - **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.)
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
 - **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), GitHub Copilot
-- **Per-persona model routing** — the Director selects both a workflow-level model and an optional per-persona override for every downstream phase; the engine validates all selections against a live catalog snapshot, silently falling back to the configured default for excluded or unavailable models; override `model` on `POST /workflows` to pin a specific model
+- **Per-persona model routing** — the Director selects both a workflow-level model and an optional per-persona override for every downstream phase; the engine validates all selections against a live catalog snapshot, normalizes either `model` or `provider/model` override forms, and silently falls back to the configured default for excluded or unavailable models; override `model` on `POST /workflows` to pin a specific model
 - **Built-in tools + MCP** — `http_get`, `read_file`, `write_file`, plus remote tools via Model Context Protocol
 - **SQLite or PostgreSQL** — swap backends with a single config line; auto-migration included
 - **Structured logging** — JSON or console output via zap

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "go-orca API",
-    "description": "Complete API collection for go-orca — a self-hosted AI workflow orchestration server.\n\n## Setup\n\n1. Set the `baseUrl` collection variable to your server address (default: `http://localhost:8080`).\n2. Run **Health → GET /readyz** to confirm the server is up.\n3. Run **Tenants → List Tenants** — this auto-captures `tenantId` and `scopeId` from the default tenant.\n4. Run **Workflows → Create Workflow (Software)** to kick off your first workflow. `workflowId` is captured automatically.\n\n## Variables\n\n| Variable | Set by |\n|---|---|\n| `baseUrl` | You — set once at collection level |\n| `tenantId` | Auto-set by List Tenants or Create Tenant |\n| `scopeId` | Auto-set by List Tenants or Create Scope |\n| `workflowId` | Auto-set by Create Workflow requests |\n| `createdTenantId` | Auto-set by Create Tenant |\n| `createdScopeId` | Auto-set by Create Scope |",
+    "description": "Complete API collection for go-orca — a self-hosted AI workflow orchestration server.\n\n## Setup\n\n1. Set the `baseUrl` collection variable to your server address (default: `http://localhost:8080`).\n2. Run **Health → GET /readyz** to confirm the server is up.\n3. Run **Tenants → List Tenants** — this auto-captures `tenantId` from the first tenant in the response envelope.\n4. Run **Scopes → List Scopes for Tenant** — this auto-captures `scopeId` from the first scope in the response envelope.\n5. Run **Workflows → Create Workflow (Software)** to kick off your first workflow. `workflowId` is captured automatically.\n\n## Variables\n\n| Variable | Set by |\n|---|---|\n| `baseUrl` | You — set once at collection level |\n| `tenantId` | Auto-set by List Tenants or Create Tenant |\n| `scopeId` | Auto-set by List Scopes for Tenant or Create Scope |\n| `workflowId` | Auto-set by Create Workflow requests |\n| `createdTenantId` | Auto-set by Create Tenant |\n| `createdScopeId` | Auto-set by Create Scope |\n\n## Notes\n\n- Workflow creation requires both tenant and scope context. If your server does not inject defaults, make sure `tenantId` and `scopeId` are populated before running workflow requests.\n- Several list endpoints return response envelopes such as `{ \"workflows\": [...] }`, `{ \"events\": [...] }`, `{ \"tenants\": [...] }`, `{ \"scopes\": [...] }`, and `{ \"providers\": [...] }`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -94,14 +94,19 @@
                   "pm.test('status is 200 or 503', () => {",
                   "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
                   "});",
+                  "const body = pm.response.json();",
                   "if (pm.response.code === 200) {",
                   "    pm.test('body has status ready', () => {",
-                  "        pm.expect(pm.response.json().status).to.eql('ready');",
+                  "        pm.expect(body.status).to.eql('ready');",
                   "    });",
                   "} else {",
-                  "    pm.test('body has error detail', () => {",
-                  "        pm.expect(pm.response.json()).to.have.property('error');",
+                  "    pm.test('body has status not ready', () => {",
+                  "        pm.expect(body.status).to.eql('not ready');",
                   "    });",
+                  "    pm.test('body has error detail', () => {",
+                  "        pm.expect(body).to.have.property('error');",
+                  "    });",
+                  "    if (body.provider) console.log('failing provider:', body.provider);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -128,7 +133,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["workflows"],
               "query": [
-                { "key": "limit", "value": "20", "description": "Max results (max 200)" },
+                { "key": "limit", "value": "20", "description": "Max results (max 100)" },
                 { "key": "offset", "value": "0", "description": "Pagination offset" }
               ]
             },
@@ -140,11 +145,12 @@
               "script": {
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('response is an array', () => {",
-                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "const body = pm.response.json();",
+                  "pm.test('response has workflows array', () => {",
+                  "    pm.expect(body.workflows).to.be.an('array');",
                   "});",
                   "// Auto-capture the most recent workflow ID if present",
-                  "const workflows = pm.response.json();",
+                  "const workflows = body.workflows;",
                   "if (workflows.length > 0) {",
                   "    pm.collectionVariables.set('workflowId', workflows[0].id);",
                   "    console.log('workflowId set to', workflows[0].id);",
@@ -174,15 +180,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["workflows"]
             },
-            "description": "Create a software workflow. The Director will classify the request and select a provider/model if not specified. Returns 202 with status `pending`."
+            "description": "Create a software workflow. The Director will classify the request and select a provider/model if not specified. Requires tenant and scope context unless the server injects defaults. Returns 201 with status `pending`."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201 or 202', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
                   "});",
                   "const body = pm.response.json();",
                   "pm.test('has workflow id', () => pm.expect(body).to.have.property('id'));",
@@ -221,8 +227,8 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201 or 202', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
                   "});",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('workflowId', body.id);",
@@ -259,8 +265,8 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201 or 202', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
                   "});",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('workflowId', body.id);",
@@ -297,8 +303,85 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201 or 202', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Explicit Model Override",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Required unless the server injects a default tenant" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Required unless the server injects a default scope" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Build a Go CLI that prints the sum of even numbers in a slice and includes unit tests\",\n  \"title\": \"Sum Even CLI\",\n  \"mode\": \"software\",\n  \"provider\": \"ollama\",\n  \"model\": \"qwen3:1.7b\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a workflow with explicit provider/model overrides. Use this to test workflow-level routing overrides. If the selected model is unavailable or excluded, the engine normalizes and falls back internally."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('workflowId', body.id);",
+                  "console.log('workflowId set to', body.id);",
+                  "console.log('requested provider/model override:', body.provider_name || '(selected later)', body.model_name || '(selected later)');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Workflow — Delivery Override",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}", "description": "Required unless the server injects a default tenant" },
+              { "key": "X-Scope-ID", "value": "{{scopeId}}", "description": "Required unless the server injects a default scope" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"Write a short technical note explaining Go interfaces versus generics with one concise code example\",\n  \"title\": \"Interfaces vs Generics\",\n  \"mode\": \"docs\",\n  \"delivery\": {\n    \"action\": \"markdown-export\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/workflows",
+              "host": ["{{baseUrl}}"],
+              "path": ["workflows"]
+            },
+            "description": "Create a workflow with an explicit delivery override. `delivery.action` is persisted on the workflow and enforced by the Finalizer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201', () => {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
                   "});",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('workflowId', body.id);",
@@ -356,7 +439,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["workflows", "{{workflowId}}", "events"]
             },
-            "description": "Return the full event journal for a workflow in chronological order. Events include state_transition, persona_started, persona_completed, persona_failed, task_started, task_completed, and refiner.suggestion."
+            "description": "Return the full event journal for a workflow in chronological order. The API returns an envelope with `events` and `count`. Event types use dotted names such as `state.transition`, `persona.started`, and `artifact.produced`."
           },
           "event": [
             {
@@ -364,11 +447,12 @@
               "script": {
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('response is an array', () => {",
-                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "const body = pm.response.json();",
+                  "pm.test('response has events array', () => {",
+                  "    pm.expect(body.events).to.be.an('array');",
                   "});",
-                  "const events = pm.response.json();",
-                  "console.log('total events:', events.length);",
+                  "const events = body.events;",
+                  "console.log('total events:', body.count);",
                   "const byType = {};",
                   "events.forEach(e => { byType[e.type] = (byType[e.type] || 0) + 1; });",
                   "console.log('event breakdown:', JSON.stringify(byType));"
@@ -440,16 +524,21 @@
               "host": ["{{baseUrl}}"],
               "path": ["workflows", "{{workflowId}}", "resume"]
             },
-            "description": "Resume a paused workflow. Returns 409 if the workflow is not in `paused` status."
+            "description": "Resume a paused or failed workflow. The server re-queues it as `pending`. Returns 409 if the workflow is in any other state, and may return 503 if the scheduler queue is unavailable."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 200 or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
-                  "});"
+                  "pm.test('status is 200, 409, or 503', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 409, 503]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('workflow moves back to pending', () => {",
+                  "        pm.expect(pm.response.json().status).to.eql('pending');",
+                  "    });",
+                  "}"
                 ],
                 "type": "text/javascript"
               }
@@ -471,7 +560,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["providers"]
             },
-            "description": "Returns all registered providers with their enabled status and default model."
+            "description": "Returns all registered providers and their advertised capabilities. The API responds with a `{ providers: [...] }` envelope."
           },
           "event": [
             {
@@ -479,12 +568,13 @@
               "script": {
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('response is an array', () => {",
-                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "const body = pm.response.json();",
+                  "pm.test('response has providers array', () => {",
+                  "    pm.expect(body.providers).to.be.an('array');",
                   "});",
-                  "const providers = pm.response.json();",
-                  "const enabled = providers.filter(p => p.enabled).map(p => p.name);",
-                  "console.log('enabled providers:', enabled.join(', ') || 'none');"
+                  "const providers = body.providers;",
+                  "console.log('providers:', providers.map(p => p.name).join(', ') || 'none');",
+                  "providers.forEach(p => console.log(p.name + ' capabilities:', (p.capabilities || []).join(', ')));"
                 ],
                 "type": "text/javascript"
               }
@@ -500,7 +590,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["providers", "ollama", "test"]
             },
-            "description": "Test Ollama connectivity. Calls HealthCheck (Heartbeat) against the configured Ollama host. Returns 200 with `ok: true` on success, 200 with `ok: false` on failure (check the `error` field), or 404 if Ollama is not registered."
+            "description": "Test Ollama connectivity. Returns 200 with `healthy: true` on success, 200 with `healthy: false` on provider health-check failure, or 404 if Ollama is not registered."
           },
           "event": [
             {
@@ -512,9 +602,8 @@
                   "});",
                   "if (pm.response.code === 200) {",
                   "    const body = pm.response.json();",
-                  "    console.log('ollama healthy:', body.ok);",
-                  "    if (!body.ok) console.log('error:', body.error);",
-                  "    else console.log('latency_ms:', body.latency_ms);",
+                  "    console.log('ollama healthy:', body.healthy);",
+                  "    if (!body.healthy) console.log('error:', body.error);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -543,9 +632,8 @@
                   "});",
                   "if (pm.response.code === 200) {",
                   "    const body = pm.response.json();",
-                  "    console.log('openai healthy:', body.ok);",
-                  "    if (!body.ok) console.log('error:', body.error);",
-                  "    else console.log('latency_ms:', body.latency_ms);",
+                  "    console.log('openai healthy:', body.healthy);",
+                  "    if (!body.healthy) console.log('error:', body.error);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -574,8 +662,8 @@
                   "});",
                   "if (pm.response.code === 200) {",
                   "    const body = pm.response.json();",
-                  "    console.log('copilot healthy:', body.ok);",
-                  "    if (!body.ok) console.log('error:', body.error);",
+                  "    console.log('copilot healthy:', body.healthy);",
+                  "    if (!body.healthy) console.log('error:', body.error);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -598,7 +686,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants"]
             },
-            "description": "Returns all tenants. Auto-captures `tenantId` and `scopeId` from the first result (typically the default tenant)."
+            "description": "Returns all tenants in a `{ tenants: [...] }` envelope. Auto-captures `tenantId` from the first result. Run Scopes → List Scopes for Tenant to capture `scopeId`."
           },
           "event": [
             {
@@ -606,10 +694,11 @@
               "script": {
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('response is an array', () => {",
-                  "    pm.expect(pm.response.json()).to.be.an('array');",
+                  "const body = pm.response.json();",
+                  "pm.test('response has tenants array', () => {",
+                  "    pm.expect(body.tenants).to.be.an('array');",
                   "});",
-                  "const tenants = pm.response.json();",
+                  "const tenants = body.tenants;",
                   "if (tenants.length > 0) {",
                   "    pm.collectionVariables.set('tenantId', tenants[0].id);",
                   "    console.log('tenantId set to', tenants[0].id, '(' + tenants[0].slug + ')');",
@@ -637,15 +726,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants"]
             },
-            "description": "Create a new tenant. The slug must be unique across all tenants. Returns 409 if the slug is already in use."
+            "description": "Create a new tenant. The slug must be unique across all tenants. The current handler returns 400 for invalid JSON/binding errors and 500 for store-layer create failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201 or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+                  "pm.test('status is 201, 400, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 500]);",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    const body = pm.response.json();",
@@ -701,15 +790,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants", "{{tenantId}}"]
             },
-            "description": "Update tenant name or slug. All fields are optional — only provided fields are updated. Returns 409 if the new slug is already in use."
+            "description": "Update tenant name or slug. All fields are optional. The current handler returns 400 for invalid JSON, 404 when the tenant is missing, and 500 for store-layer update failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 200, 404, or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]);",
+                  "pm.test('status is 200, 400, 404, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 500]);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -757,18 +846,19 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants", "{{tenantId}}", "scopes"]
             },
-            "description": "Returns all scopes for the given tenant. Auto-captures `scopeId` from the first (global) scope."
+            "description": "Returns all scopes for the given tenant in a `{ scopes: [...] }` envelope. Auto-captures `scopeId` from the first scope returned. The current handler returns 500 for store-layer list failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 200 or 404', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "pm.test('status is 200 or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 500]);",
                   "});",
                   "if (pm.response.code === 200) {",
-                  "    const scopes = pm.response.json();",
+                  "    const body = pm.response.json();",
+                  "    const scopes = body.scopes || [];",
                   "    if (scopes.length > 0) {",
                   "        pm.collectionVariables.set('scopeId', scopes[0].id);",
                   "        console.log('scopeId set to', scopes[0].id, '(' + scopes[0].slug + ')');",
@@ -797,15 +887,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants", "{{tenantId}}", "scopes"]
             },
-            "description": "Create an org-level scope. Requires `allow_org: true` in the server scoping config. The `parent_scope_id` should be the global scope ID."
+            "description": "Create an org-level scope. The `parent_scope_id` should be the global scope ID. The current handler returns 400 for hierarchy and binding errors, and 500 for other create failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201, 400, 404, or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 404, 409]);",
+                  "pm.test('status is 201, 400, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 500]);",
                   "});",
                   "if (pm.response.code === 201) {",
                   "    const body = pm.response.json();",
@@ -835,15 +925,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants", "{{tenantId}}", "scopes"]
             },
-            "description": "Create a team-level scope under an org. Requires `allow_team: true` in the server scoping config. Uses `createdScopeId` (set by Create Scope — Org) as the parent."
+            "description": "Create a team-level scope under an org. Uses `createdScopeId` (set by Create Scope — Org) as the parent. The current handler returns 400 for hierarchy and binding errors, and 500 for other create failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 201, 400, 404, or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 404, 409]);",
+                  "pm.test('status is 201, 400, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201, 400, 500]);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -868,15 +958,15 @@
               "host": ["{{baseUrl}}"],
               "path": ["tenants", "{{tenantId}}", "scopes", "{{createdScopeId}}"]
             },
-            "description": "Update a scope's name or slug. All fields are optional."
+            "description": "Update a scope's name or slug. All fields are optional. The current handler returns 400 for invalid JSON, 404 when the scope is missing, and 500 for store-layer update failures."
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 200, 404, or 409', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]);",
+                  "pm.test('status is 200, 400, 404, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 500]);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -900,8 +990,8 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('status is 204 or 404', () => {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+                  "pm.test('status is 204, 404, or 500', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([204, 404, 500]);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -921,7 +1011,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["scopes", "{{scopeId}}", "effective-config"]
             },
-            "description": "Returns the merged effective configuration for a scope. Walks the resolution chain from global → org → team and merges each level."
+            "description": "Returns the scope resolution chain for a scope. The current handler responds with `scope_id`, `resolution_chain`, and `depth`."
           },
           "event": [
             {
@@ -933,8 +1023,8 @@
                   "});",
                   "if (pm.response.code === 200) {",
                   "    const body = pm.response.json();",
-                  "    console.log('scope_kind:', body.scope_kind);",
-                  "    console.log('resolved_chain length:', (body.resolved_chain || []).length);",
+                  "    console.log('resolution_chain length:', (body.resolution_chain || []).length);",
+                  "    console.log('depth:', body.depth);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -961,7 +1051,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["customizations", "resolve"]
             },
-            "description": "Returns the resolved customization snapshot for the current scope. Shows all active skills, agent personas, and prompt overlays with their source and precedence (lower value = higher priority)."
+            "description": "Returns the resolved customization snapshot for the current scope. The current handler returns `scope_id`, `skills`, `agents`, and `prompts`, with each item including `name`, `source`, and `path`."
           },
           "event": [
             {

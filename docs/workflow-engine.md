@@ -47,6 +47,8 @@ Model routing runs in four steps at the start of every workflow and again after 
 
 Before the Director runs, `ensureProviderCatalogs` calls `provider.Models()` on every registered provider and snapshots the result into `WorkflowState.ProviderCatalogs`. The snapshot is persisted immediately so resumed workflows use the same catalog that was in place when they started.
 
+If `WorkflowState.ProviderCatalogs` is missing or empty when a workflow is loaded back from storage, the engine treats that state as uncatalogued and rebuilds the snapshot instead of assuming discovery already ran. This avoids accepting stale or invalid per-persona routes after deserialization.
+
 If `provider.Models()` fails or times out (default: 10 s, configurable via `ModelDiscoveryTimeout`), the engine falls back to a synthetic single-model catalog built from the configured `default_model`. The catalog is marked `Degraded: true` and workflow execution continues — discovery failure is never fatal.
 
 Models listed in `excluded_models` config are filtered out during discovery and never appear in the catalog. Any routing decision that selects an excluded model is silently replaced.
@@ -86,7 +88,7 @@ The engine normalizes all three against the live catalog:
 
 - **`provider`** — validated against the registered provider registry; falls back to the engine `DefaultProvider` if the name is unknown or the catalog is empty.
 - **`model`** — validated against that provider's catalog; falls back to the catalog's `DefaultModel` if the requested model is absent or excluded.
-- **`persona_models`** — each entry validated individually; any missing or excluded entry falls back to the workflow-level `model`.
+- **`persona_models`** — each entry validated individually; both `model` and `provider/model` forms are accepted, any redundant provider prefix is stripped before validation, and any missing or excluded entry falls back to the workflow-level `model`.
 
 ### 3. Workflow-Level Override
 
@@ -145,6 +147,8 @@ for qaCycle = 1 to MaxQARetries+1:
 
 Completed tasks from prior iterations are preserved for audit — only new Pending tasks from the Architect remediation pass are executed.
 
+QA validates against the original request first, then the accumulated planning context (`Constitution`, `Requirements`, `Design`) and the current artifact set. To prevent stale remediation drafts from colliding with their replacements, the QA handoff packet includes only the latest artifact per logical file (`Artifact.Path` first, otherwise `Name + Kind`), while `WorkflowState.Artifacts` retains the full history for audit, delivery, and retrospectives.
+
 If `MaxQARetries` QA cycles complete with blocking issues still present, the engine transitions the workflow to `failed`.
 
 ## Role Enforcement (applyOutput)
@@ -178,6 +182,8 @@ type Execution struct {
 ```
 
 Poll `GET /workflows/:id` to read in-flight progress without subscribing to the SSE stream.
+
+`CurrentPersona` is persisted before the persona call begins and remains unchanged until that call completes. Polling the workflow endpoint multiple times during a long-running persona invocation therefore returns the same persona name repeatedly; this reflects a single in-flight execution, not duplicated runs.
 
 ## HandoffPacket
 
@@ -233,6 +239,8 @@ type HandoffPacket struct {
 ```
 
 The packet ensures personas never need to read global state — everything they need is passed in.
+
+For most personas, `Artifacts` is the accumulated workflow artifact history. For QA specifically, `buildPacket` narrows that list to the latest artifact per logical file so review happens against the current revision set rather than every historical draft.
 
 ## PersonaOutput
 
