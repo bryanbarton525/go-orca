@@ -209,6 +209,9 @@ type WorkflowConfig struct {
 	// PersonaRetryBackoff is the base wait before the first retry.  Each
 	// subsequent retry doubles the wait (exponential backoff).
 	PersonaRetryBackoff time.Duration `mapstructure:"persona_retry_backoff"`
+	// MaxQARetries is the maximum number of times the Implementer will be
+	// re-run after QA returns blocking issues.  Defaults to 2.
+	MaxQARetries int `mapstructure:"max_qa_retries"`
 }
 
 // Load reads configuration from the given file (if set) and merges with
@@ -306,6 +309,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.handoff_timeout", 5*time.Minute)
 	v.SetDefault("workflow.persona_max_retries", 3)
 	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)
+	v.SetDefault("workflow.max_qa_retries", 2)
 
 	// GitHub delivery
 	v.SetDefault("github.token", "")

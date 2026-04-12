@@ -84,6 +84,14 @@ func (s *Store) Migrate() error {
 			}
 		}
 	}
+	// Idempotently add columns introduced in schema v007.
+	for _, stmt := range sqliteAlterV007 {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("sqlite migrate v007: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -142,8 +150,9 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		   delivery_action, delivery_config,
-		   created_at, updated_at, started_at, completed_at, execution)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		   created_at, updated_at, started_at, completed_at, execution,
+		   persona_models, provider_catalogs)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  status=excluded.status, mode=excluded.mode, title=excluded.title,
 		  provider_name=excluded.provider_name, model_name=excluded.model_name,
@@ -159,6 +168,8 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  delivery_action=excluded.delivery_action,
 		  delivery_config=excluded.delivery_config,
 		  execution=excluded.execution,
+		  persona_models=excluded.persona_models,
+		  provider_catalogs=excluded.provider_catalogs,
 		  updated_at=excluded.updated_at,
 		  started_at=excluded.started_at, completed_at=excluded.completed_at`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
@@ -169,6 +180,7 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		ws.DeliveryAction, p.deliveryConfig,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(),
 		nullableUnix(ws.StartedAt), nullableUnix(ws.CompletedAt), p.execution,
+		p.personaModels, p.providerCatalogs,
 	)
 	return err
 }
@@ -384,6 +396,12 @@ var sqliteAlterV006 = []string{
 	`ALTER TABLE workflows ADD COLUMN delivery_config TEXT NOT NULL DEFAULT 'null'`,
 }
 
+// sqliteAlterV007 adds persona routing columns to existing databases.
+var sqliteAlterV007 = []string{
+	`ALTER TABLE workflows ADD COLUMN persona_models    TEXT NOT NULL DEFAULT '{}'`,
+	`ALTER TABLE workflows ADD COLUMN provider_catalogs TEXT NOT NULL DEFAULT '{}'`,
+}
+
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
 const selectWorkflowSQL = `
@@ -393,7 +411,8 @@ const selectWorkflowSQL = `
 	       finalization, summaries, blocking_issues,
 	       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 	       delivery_action, delivery_config,
-	       created_at, updated_at, started_at, completed_at, execution
+	       created_at, updated_at, started_at, completed_at, execution,
+	       persona_models, provider_catalogs
 	FROM workflows`
 
 const selectEventSQL = `
@@ -449,6 +468,8 @@ CREATE TABLE IF NOT EXISTS workflows (
     delivery_action       TEXT    NOT NULL DEFAULT '',
     delivery_config       TEXT    NOT NULL DEFAULT 'null',
     execution             TEXT    NOT NULL DEFAULT '{}',
+    persona_models        TEXT    NOT NULL DEFAULT '{}',
+    provider_catalogs     TEXT    NOT NULL DEFAULT '{}',
     created_at            INTEGER NOT NULL,
     updated_at            INTEGER NOT NULL,
     started_at            INTEGER,
@@ -550,6 +571,8 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		deliveryConfig                     sql.NullString
 		providerName, modelName            sql.NullString
 		errorMessage                       sql.NullString
+		personaModels                      sql.NullString
+		providerCatalogs                   sql.NullString
 		createdAt, updatedAt               int64
 		startedAt, completedAt             sql.NullInt64
 	)
@@ -562,6 +585,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &finalizerAction,
 		&deliveryAction, &deliveryConfig,
 		&createdAt, &updatedAt, &startedAt, &completedAt, &execution,
+		&personaModels, &providerCatalogs,
 	)
 	if err != nil {
 		return nil, err
@@ -605,6 +629,8 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	unmarshal(personaPromptSnapshot, &ws.PersonaPromptSnapshot)
 	unmarshal(requiredPersonas, &ws.RequiredPersonas)
 	unmarshal(execution, &ws.Execution)
+	unmarshal(personaModels, &ws.PersonaModels)
+	unmarshal(providerCatalogs, &ws.ProviderCatalogs)
 
 	return ws, nil
 }
@@ -670,6 +696,8 @@ type workflowPayload struct {
 	requiredPersonas                   []byte
 	deliveryConfig                     []byte
 	execution                          []byte
+	personaModels                      []byte
+	providerCatalogs                   []byte
 }
 
 func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
@@ -720,6 +748,12 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 		p.deliveryConfig = []byte("null")
 	}
 	if p.execution, err = json.Marshal(ws.Execution); err != nil {
+		return p, err
+	}
+	if p.personaModels, err = json.Marshal(ws.PersonaModels); err != nil {
+		return p, err
+	}
+	if p.providerCatalogs, err = json.Marshal(ws.ProviderCatalogs); err != nil {
 		return p, err
 	}
 	return p, nil

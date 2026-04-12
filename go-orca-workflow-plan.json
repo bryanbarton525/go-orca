@@ -1,0 +1,10 @@
+{
+  "mode": "content",
+  "title": "Per-Persona Model Routing in go-orca",
+  "provider": "ollama",
+  "model": "qwen3.5:9b",
+  "finalizer_action": "blog-draft",
+  "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
+  "rationale": "Content workflow with all five personas per mode rules. Director uses qwen3.5:9b (bootstrap). The implementer needs a tool-capable model (qwen2.5-coder:14b) to write code examples. Finalizer gets the same for synthesis. PM, architect, and qa use qwen3.5:9b for efficient planning/validation. The content will be generated via blog-draft action which handles markdown artifact conversion to polished blog posts.",
+  "summary": "Technical blog post explaining per-persona model routing in go-orca, covering model catalog discovery, routing rationale, and configuration examples"
+}

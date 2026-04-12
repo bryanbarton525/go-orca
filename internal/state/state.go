@@ -373,7 +373,7 @@ type FinalizationResult struct {
 	Summary     string         `json:"summary"`
 	Links       []string       `json:"links,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
-	Suggestions []string          `json:"suggestions,omitempty"` // from Refiner pass
+	Suggestions []string       `json:"suggestions,omitempty"` // from Refiner pass
 	// RefinerImprovements holds the structured set of improvements from the
 	// inline Refiner retrospective.  The improvement dispatcher processes these
 	// after the Finalizer completes, routing them to direct-apply or a child PR

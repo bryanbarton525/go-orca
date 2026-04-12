@@ -77,20 +77,20 @@ func (rl *RateLimiter) refill(ctx context.Context) error {
 	now := time.Now()
 	elapsed := now.Sub(rl.lastRefill).Seconds()
 	tokensToAdd := elapsed * float64(rl.rate)
-	
+
 	rl.tokensMu.Lock()
 	defer rl.tokensMu.Unlock()
-	
+
 	rl.tokens = min(float64(rl.burst), rl.tokens+tokensToAdd)
 	rl.lastRefill = now
-	
+
 	// Check context cancellation during refill
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	
+
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/provider/common"
@@ -45,7 +46,7 @@ func (e *Engine) isModelExcluded(provider, model string) bool {
 }
 
 func (e *Engine) ensureProviderCatalogs(ctx context.Context, ws *state.WorkflowState) error {
-	if ws.ProviderCatalogs != nil {
+	if len(ws.ProviderCatalogs) > 0 {
 		return nil
 	}
 	ws.ProviderCatalogs = e.discoverProviderCatalogs(ctx)
@@ -58,11 +59,21 @@ func (e *Engine) discoverProviderCatalogs(ctx context.Context) map[string]state.
 		return canonicalProviderName(providers[i].Name()) < canonicalProviderName(providers[j].Name())
 	})
 
+	var mu sync.Mutex
 	catalogs := make(map[string]state.ProviderModelCatalog, len(providers))
-	for _, provider := range providers {
-		catalog := e.discoverProviderCatalog(ctx, provider)
-		catalogs[catalog.ProviderName] = catalog
+
+	var wg sync.WaitGroup
+	for _, p := range providers {
+		wg.Add(1)
+		go func(provider common.Provider) {
+			defer wg.Done()
+			catalog := e.discoverProviderCatalog(ctx, provider)
+			mu.Lock()
+			catalogs[catalog.ProviderName] = catalog
+			mu.Unlock()
+		}(p)
 	}
+	wg.Wait()
 	return catalogs
 }
 
@@ -266,6 +277,24 @@ func (e *Engine) normalizePersonaModels(provider string, requested state.Persona
 	out := make(state.PersonaModelAssignments, len(state.DownstreamPersonaKinds()))
 	for _, kind := range state.DownstreamPersonaKinds() {
 		model := strings.TrimSpace(requested[kind])
+		// Strip a "provider/" namespace prefix that LLMs occasionally emit
+		// (e.g. "ollama/qwen3.5:9b" → "qwen3.5:9b").
+		if idx := strings.Index(model, "/"); idx != -1 {
+			stripped := model[idx+1:]
+			if e.modelAllowed(provider, stripped, catalogs) {
+				out[kind] = stripped
+				continue
+			}
+		}
+		// Strip a "provider/" namespace prefix that LLMs occasionally emit
+		// (e.g. "ollama/qwen3.5:9b" → "qwen3.5:9b").
+		if idx := strings.Index(model, "/"); idx != -1 {
+			stripped := model[idx+1:]
+			if e.modelAllowed(provider, stripped, catalogs) {
+				out[kind] = stripped
+				continue
+			}
+		}
 		if e.modelAllowed(provider, model, catalogs) {
 			out[kind] = model
 			continue

@@ -1,0 +1,17 @@
+{
+  "delivery_action": "github-pr",
+  "summary": "Delivered consolidated Testing Guidelines to the code-generation skill. Added Consolidation Discipline section to prevent multi-cycle artifact proliferation. The update emphasizes in-place fixes for existing correct artifacts rather than creating new versions, breaking infinite remediation loops.",
+  "links": ["SKILL.md"],
+  "metadata": {
+    "workflow_id": "31f5a3bf-fe49-40b0-8d90-14eeef122bb9",
+    "skill": "code-generation",
+    "improvement_type": "consolidation-rule-addition",
+    "target_section": "Testing subsection"
+  },
+  "suggestions": [
+    "Review the Consolidation Discipline section with the team before PR merge",
+    "Ensure similar consolidation rules are added to other skills if needed",
+    "Monitor artifact creation patterns after this change for any remaining proliferation"
+  ],
+  "delivery_notes": "This skill improvement addresses the core issue of artifact bloat in QA remediation workflows. The consolidation discipline ensures that when existing correct artifacts exist, they are fixed in-place rather than duplicated. This change should significantly reduce multi-cycle artifact proliferation in the code-generation skill's testing guidelines."
+}

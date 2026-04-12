@@ -7,11 +7,11 @@ import (
 
 // TokenBucket represents a token bucket for rate limiting.
 type TokenBucket struct {
-	tokens      float64
-	maxTokens   float64
-	refillRate  float64 // tokens per second
-	lastRefill  time.Time
-	mu          sync.Mutex
+	tokens     float64
+	maxTokens  float64
+	refillRate float64 // tokens per second
+	lastRefill time.Time
+	mu         sync.Mutex
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -19,10 +19,10 @@ type TokenBucket struct {
 // burst: maximum bucket capacity
 func NewTokenBucket(rate int, burst int) *TokenBucket {
 	tb := &TokenBucket{
-		tokens:      float64(burst),
-		maxTokens:   float64(burst),
-		refillRate:  float64(rate),
-		lastRefill:  time.Now(),
+		tokens:     float64(burst),
+		maxTokens:  float64(burst),
+		refillRate: float64(rate),
+		lastRefill: time.Now(),
 	}
 	return tb
 }

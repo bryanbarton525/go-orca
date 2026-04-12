@@ -483,6 +483,7 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 					Attempt:      attempt,
 					MaxAttempts:  maxAttempts,
 					Error:        err.Error(),
+					Reason:       err.Error(),
 					RetryAfterMs: waitDur.Milliseconds(),
 				})
 			_ = e.store.AppendEvents(ctx, retryEvt)
@@ -641,6 +642,21 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		return fmt.Errorf("implementer persona not registered")
 	}
 
+	// Resolve the provider and model once for the whole phase so persona events
+	// carry accurate routing information even though tasks run serially.
+	implPacket := e.buildPacket(ws, state.PersonaImplementer, snap)
+	implPhaseStart := time.Now()
+
+	implStartEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventPersonaStarted, state.PersonaImplementer,
+		events.PersonaStartedPayload{
+			Persona:      state.PersonaImplementer,
+			ProviderName: implPacket.ProviderName,
+			ModelName:    implPacket.ModelName,
+		})
+	_ = e.store.AppendEvents(ctx, implStartEvt)
+
+	var implErr error
 	for i := range ws.Tasks {
 		t := &ws.Tasks[i]
 
@@ -671,11 +687,13 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 
 		startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventTaskStarted, state.PersonaImplementer,
-			map[string]string{"task_id": t.ID, "title": t.Title})
+			events.TaskStartedPayload{TaskID: t.ID, Title: t.Title})
 		_ = e.store.AppendEvents(ctx, startEvt)
 
+		taskStart := time.Now()
 		taskCtx, taskCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
 		out, err := p.Execute(taskCtx, packet)
+		taskElapsed := time.Since(taskStart)
 		taskCancel()
 		if err != nil {
 			t.Status = state.TaskStatusFailed
@@ -683,10 +701,11 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			ws.Execution.ActiveTaskTitle = ""
 			failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 				events.EventTaskFailed, state.PersonaImplementer,
-				map[string]string{"task_id": t.ID, "error": err.Error()})
+				events.TaskFailedPayload{TaskID: t.ID, Title: t.Title, Error: err.Error()})
 			_ = e.store.AppendEvents(ctx, failEvt)
 			_ = e.store.SaveWorkflow(ctx, ws)
-			return fmt.Errorf("implementer task %s: %w", t.ID[:8], err)
+			implErr = fmt.Errorf("implementer task %s: %w", t.ID[:8], err)
+			break
 		}
 
 		// Mark task complete and attach artifacts.
@@ -697,7 +716,12 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			ws.Artifacts = append(ws.Artifacts, art)
 			artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 				events.EventArtifactProduced, state.PersonaImplementer,
-				map[string]string{"task_id": t.ID, "artifact_name": art.Name, "kind": string(art.Kind)})
+				events.ArtifactProducedPayload{
+					TaskID:        t.ID,
+					ArtifactName:  art.Name,
+					Kind:          string(art.Kind),
+					ContentLength: len(art.Content),
+				})
 			_ = e.store.AppendEvents(ctx, artEvt)
 		}
 
@@ -713,12 +737,37 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 
 		doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventTaskCompleted, state.PersonaImplementer,
-			map[string]string{"task_id": t.ID, "summary": out.Summary})
+			events.TaskCompletedPayload{
+				TaskID:     t.ID,
+				Title:      t.Title,
+				Summary:    out.Summary,
+				DurationMs: taskElapsed.Milliseconds(),
+			})
 		_ = e.store.AppendEvents(ctx, doneEvt)
 	}
 
+	// Emit persona.completed (or persona.failed) for the implementer phase as a whole.
+	implElapsed := time.Since(implPhaseStart)
 	ws.Execution.ActiveTaskID = ""
 	ws.Execution.ActiveTaskTitle = ""
+	if implErr != nil {
+		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaFailed, state.PersonaImplementer,
+			events.PersonaFailedPayload{Persona: state.PersonaImplementer, Error: implErr.Error()})
+		_ = e.store.AppendEvents(ctx, implFailEvt)
+		_ = e.store.SaveWorkflow(ctx, ws)
+		return implErr
+	}
+
+	implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventPersonaCompleted, state.PersonaImplementer,
+		events.PersonaCompletedPayload{
+			Persona:    state.PersonaImplementer,
+			DurationMs: implElapsed.Milliseconds(),
+			Summary:    ws.Summaries[state.PersonaImplementer],
+		})
+	_ = e.store.AppendEvents(ctx, implDoneEvt)
+
 	return e.store.SaveWorkflow(ctx, ws)
 }
 

@@ -108,8 +108,38 @@ type PersonaRetryingPayload struct {
 	Persona      state.PersonaKind `json:"persona"`
 	Attempt      int               `json:"attempt"`      // 1-based retry number
 	MaxAttempts  int               `json:"max_attempts"` // total attempts including original
-	Error        string            `json:"error"`        // error that triggered this retry
+	Error        string            `json:"error"`        // error that triggered this retry (kept for compatibility)
+	Reason       string            `json:"reason"`       // human-readable reason, mirrors Error
 	RetryAfterMs int64             `json:"retry_after_ms"`
+}
+
+// TaskStartedPayload is the payload for EventTaskStarted.
+type TaskStartedPayload struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+}
+
+// TaskCompletedPayload is the payload for EventTaskCompleted.
+type TaskCompletedPayload struct {
+	TaskID     string `json:"task_id"`
+	Title      string `json:"title"`
+	Summary    string `json:"summary"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// TaskFailedPayload is the payload for EventTaskFailed.
+type TaskFailedPayload struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+	Error  string `json:"error"`
+}
+
+// ArtifactProducedPayload is the payload for EventArtifactProduced.
+type ArtifactProducedPayload struct {
+	TaskID        string `json:"task_id"`
+	ArtifactName  string `json:"artifact_name"`
+	Kind          string `json:"kind"`
+	ContentLength int    `json:"content_length"`
 }
 
 // ProviderCallPayload is the payload for EventProviderCall.

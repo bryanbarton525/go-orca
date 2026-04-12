@@ -146,7 +146,7 @@ func main() {
 
 	// Build the engine first (dispatcher is nil until after the scheduler exists).
 	eng := engine.New(store, engine.Options{
-		MaxQARetries:          2,
+		MaxQARetries:          cfg.Workflow.MaxQARetries,
 		DefaultProvider:       resolveDefaultProvider(cfg),
 		DefaultModel:          resolveDefaultModel(cfg),
 		ProviderDefaults:      buildProviderDefaults(cfg),

@@ -11,6 +11,7 @@ This overlay augments the QA persona with project-specific review standards.
 ## Active Skills
 
 - **qa-validation** — Apply the full code review and infrastructure review checklists. Flag any incomplete items.
+- **code-generation** — Reference Go idiom examples before flagging syntax patterns. Patterns documented as CORRECT in `references/go-idioms.md` must not be reported as issues.
 
 ## Scope
 

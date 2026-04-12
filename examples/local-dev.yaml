@@ -121,3 +121,4 @@ workflow:
   # trying again.  Set persona_max_retries: 0 to disable.
   persona_max_retries: 3       # 3 extra attempts = 4 total
   persona_retry_backoff: "15s" # local Ollama can be slow; use a generous backoff
+  max_qa_retries: 2            # max remediation cycles before continuing to Finalizer

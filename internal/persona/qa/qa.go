@@ -119,7 +119,14 @@ func (q *QA) Execute(ctx context.Context, packet state.HandoffPacket) (*state.Pe
 ## Artifacts to Validate
 %s
 
-Review the artifact(s) above against the constitution, requirements, and design.
+Review the artifact(s) above against ALL of the following, in priority order:
+1. **Original request** — does the output actually do what was asked for? This is the primary acceptance criterion.
+2. **Constitution** — vision, goals, constraints, and acceptance criteria.
+3. **Requirements** — functional and non-functional requirements.
+4. **Design** — architecture, components, and technical decisions.
+
+Only raise a blocking issue if it represents a genuine failure against one of the above.
+Do NOT flag syntactically valid code patterns as errors (see system prompt for Go false-positive rules).
 Identify all blocking issues, warnings, and suggestions.
 Respond with your JSON output.`,
 		handoffCtx,
