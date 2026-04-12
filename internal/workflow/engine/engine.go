@@ -521,6 +521,20 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	// Merge output back into workflow state.
 	e.applyOutput(ws, out)
 
+	// ── Finalizer post-processing ─────────────────────────────────────────────
+	if kind == state.PersonaFinalizer {
+		if err := e.postProcessFinalizer(ctx, ws); err != nil {
+			ws.Finalization = nil
+			delete(ws.Summaries, state.PersonaFinalizer)
+
+			failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventPersonaFailed, kind,
+				events.PersonaFailedPayload{Persona: kind, Error: err.Error()})
+			_ = e.store.AppendEvents(ctx, failEvt)
+			return err
+		}
+	}
+
 	doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 		events.EventPersonaCompleted, kind,
 		events.PersonaCompletedPayload{
@@ -531,102 +545,105 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		})
 	_ = e.store.AppendEvents(ctx, doneEvt)
 
-	// ── Finalizer post-processing ─────────────────────────────────────────────
-	if kind == state.PersonaFinalizer {
-		// 1. Route each improvement through the dispatcher (when configured and
-		//    not already inside an improvement workflow — recursion guard).
-		if ws.Finalization != nil && len(ws.Finalization.RefinerImprovements) > 0 {
-			recursionGuard := ws.Execution.ImprovementDepth >= 1
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return fmt.Errorf("save after persona %s: %w", kind, err)
+	}
 
-			if e.opts.ImprovementDispatcher != nil && !recursionGuard {
-				// Dispatcher path: dispatch each improvement, collect results,
-				// then emit refiner.suggestion events with actual outcomes.
-				results := make([]state.ImprovementApplyResult, 0, len(ws.Finalization.RefinerImprovements))
-				for _, imp := range ws.Finalization.RefinerImprovements {
-					result, _ := e.opts.ImprovementDispatcher.Dispatch(ctx, ws, imp)
-					results = append(results, result)
+	return nil
+}
 
-					suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-						events.EventRefinerSuggestion, state.PersonaRefiner,
-						events.RefinerSuggestionPayload{
-							Component:       imp.ComponentType,
-							Name:            imp.ComponentName,
-							Suggestion:      fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
-							AppliedPath:     result.AppliedPath,
-							Status:          result.Status,
-							ChildWorkflowID: result.ChildWorkflowID,
-						})
-					_ = e.store.AppendEvents(ctx, suggEvt)
-				}
-				ws.Finalization.ImprovementResults = results
-			} else {
-				// Fallback / recursion-guarded path: speculative applied_path
-				// construction for backward compatibility and when depth >= 1.
-				for _, imp := range ws.Finalization.RefinerImprovements {
-					appliedPath := ""
-					if e.opts.ImprovementsRoot != "" && imp.Content != "" {
-						var relPath string
-						switch imp.ComponentType {
-						case "skill":
-							relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
-						case "prompt":
-							relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
-						case "agent":
-							relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
-						default:
-							relPath = filepath.Join("personas", imp.ComponentName+".md")
-						}
-						appliedPath = filepath.Join(e.opts.ImprovementsRoot, relPath)
+func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowState) error {
+	// Route each improvement through the dispatcher (when configured and not
+	// already inside an improvement workflow — recursion guard).
+	if ws.Finalization != nil && len(ws.Finalization.RefinerImprovements) > 0 {
+		recursionGuard := ws.Execution.ImprovementDepth >= 1
+
+		if e.opts.ImprovementDispatcher != nil && !recursionGuard {
+			// Dispatcher path: dispatch each improvement, collect results,
+			// then emit refiner.suggestion events with actual outcomes.
+			results := make([]state.ImprovementApplyResult, 0, len(ws.Finalization.RefinerImprovements))
+			for _, imp := range ws.Finalization.RefinerImprovements {
+				result, _ := e.opts.ImprovementDispatcher.Dispatch(ctx, ws, imp)
+				results = append(results, result)
+
+				suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventRefinerSuggestion, state.PersonaRefiner,
+					events.RefinerSuggestionPayload{
+						Component:       imp.ComponentType,
+						Name:            imp.ComponentName,
+						Suggestion:      fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+						AppliedPath:     result.AppliedPath,
+						Status:          result.Status,
+						ChildWorkflowID: result.ChildWorkflowID,
+					})
+				_ = e.store.AppendEvents(ctx, suggEvt)
+			}
+			ws.Finalization.ImprovementResults = results
+		} else {
+			// Fallback / recursion-guarded path: speculative applied_path
+			// construction for backward compatibility and when depth >= 1.
+			for _, imp := range ws.Finalization.RefinerImprovements {
+				appliedPath := ""
+				if e.opts.ImprovementsRoot != "" && imp.Content != "" {
+					var relPath string
+					switch imp.ComponentType {
+					case "skill":
+						relPath = filepath.Join("skills", imp.ComponentName, "SKILL.md")
+					case "prompt":
+						relPath = filepath.Join("prompts", imp.ComponentName+".prompt.md")
+					case "agent":
+						relPath = filepath.Join("agents", imp.ComponentName+".agent.md")
+					default:
+						relPath = filepath.Join("personas", imp.ComponentName+".md")
 					}
-					suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-						events.EventRefinerSuggestion, state.PersonaRefiner,
-						events.RefinerSuggestionPayload{
-							Component:   imp.ComponentType,
-							Name:        imp.ComponentName,
-							Suggestion:  fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
-							AppliedPath: appliedPath,
-						})
-					_ = e.store.AppendEvents(ctx, suggEvt)
+					appliedPath = filepath.Join(e.opts.ImprovementsRoot, relPath)
 				}
-			}
-		}
-
-		// 2. Resolve the delivery action: caller-provided wins over LLM choice.
-		actionKey := ""
-		if ws.DeliveryAction != "" {
-			actionKey = ws.DeliveryAction
-		} else if ws.Finalization != nil && ws.Finalization.Action != "" {
-			actionKey = ws.Finalization.Action
-		}
-
-		if actionKey != "" {
-			actionIn := actions.Input{
-				Workflow:  ws,
-				Artifacts: ws.Artifacts,
-				Config:    ws.DeliveryConfig,
-			}
-			actionOut, actionErr := actions.Global.Execute(ctx, actions.ActionKind(actionKey), actionIn)
-			if actionErr != nil {
-				return fmt.Errorf("delivery action %q failed: %w", actionKey, actionErr)
-			}
-			if !actionOut.Success {
-				return fmt.Errorf("delivery action %q reported failure: %s", actionKey, actionOut.Error)
-			}
-			// Merge action links/metadata back into the finalization result.
-			if ws.Finalization != nil {
-				ws.Finalization.Links = append(ws.Finalization.Links, actionOut.Links...)
-				if ws.Finalization.Metadata == nil {
-					ws.Finalization.Metadata = make(map[string]any)
-				}
-				for k, v := range actionOut.Metadata {
-					ws.Finalization.Metadata[k] = v
-				}
+				suggEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventRefinerSuggestion, state.PersonaRefiner,
+					events.RefinerSuggestionPayload{
+						Component:   imp.ComponentType,
+						Name:        imp.ComponentName,
+						Suggestion:  fmt.Sprintf("[%s] %s → %s", imp.Priority, imp.Problem, imp.ProposedFix),
+						AppliedPath: appliedPath,
+					})
+				_ = e.store.AppendEvents(ctx, suggEvt)
 			}
 		}
 	}
 
-	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
-		return fmt.Errorf("save after persona %s: %w", kind, err)
+	// Resolve the delivery action: caller-provided wins over LLM choice.
+	actionKey := ""
+	if ws.DeliveryAction != "" {
+		actionKey = ws.DeliveryAction
+	} else if ws.Finalization != nil && ws.Finalization.Action != "" {
+		actionKey = ws.Finalization.Action
+	}
+
+	if actionKey == "" {
+		return nil
+	}
+
+	actionIn := actions.Input{
+		Workflow:  ws,
+		Artifacts: ws.Artifacts,
+		Config:    ws.DeliveryConfig,
+	}
+	actionOut, actionErr := actions.Global.Execute(ctx, actions.ActionKind(actionKey), actionIn)
+	if actionErr != nil {
+		return fmt.Errorf("delivery action %q failed: %w", actionKey, actionErr)
+	}
+	if !actionOut.Success {
+		return fmt.Errorf("delivery action %q reported failure: %s", actionKey, actionOut.Error)
+	}
+	// Merge action links/metadata back into the finalization result.
+	if ws.Finalization != nil {
+		ws.Finalization.Links = append(ws.Finalization.Links, actionOut.Links...)
+		if ws.Finalization.Metadata == nil {
+			ws.Finalization.Metadata = make(map[string]any)
+		}
+		for k, v := range actionOut.Metadata {
+			ws.Finalization.Metadata[k] = v
+		}
 	}
 
 	return nil

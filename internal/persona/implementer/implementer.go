@@ -95,7 +95,7 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 		ID:          uuid.New().String(),
 		WorkflowID:  packet.WorkflowID,
 		TaskID:      task.ID,
-		Kind:        state.ArtifactKind(out.ArtifactKind),
+		Kind:        normalizeArtifactKind(packet.Mode, out.ArtifactKind),
 		Name:        out.ArtifactName,
 		Description: out.ArtifactDescription,
 		Content:     out.Content,
@@ -111,6 +111,35 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 		Suggestions: out.Issues,
 		CompletedAt: now,
 	}, nil
+}
+
+func normalizeArtifactKind(mode state.WorkflowMode, raw string) state.ArtifactKind {
+	kind := state.ArtifactKind(strings.TrimSpace(strings.ToLower(raw)))
+	switch kind {
+	case state.ArtifactKindCode,
+		state.ArtifactKindDocument,
+		state.ArtifactKindDiagram,
+		state.ArtifactKindMarkdown,
+		state.ArtifactKindConfig,
+		state.ArtifactKindReport,
+		state.ArtifactKindBlogPost,
+		state.ArtifactKindBundleRef:
+		return kind
+	case "blog", "blog-post", "blogpost", "post", "article":
+		return state.ArtifactKindBlogPost
+	case "plain_text", "plaintext", "text", "txt":
+		if mode == state.WorkflowModeContent {
+			return state.ArtifactKindBlogPost
+		}
+		return state.ArtifactKindDocument
+	case "doc", "docs":
+		return state.ArtifactKindDocument
+	}
+
+	if mode == state.WorkflowModeContent {
+		return state.ArtifactKindBlogPost
+	}
+	return state.ArtifactKindDocument
 }
 
 // maxSourceArtifactChars is the maximum number of characters of a source
@@ -183,14 +212,31 @@ func buildContext(packet state.HandoffPacket) string {
 }
 
 // latestSynthesisArtifact returns the most recently produced blog_post
-// artifact from the list, or the most recent markdown artifact if no blog_post
-// exists yet.  Returns nil when the list is empty.
+// artifact from the list, or the most recent textual synthesis artifact when
+// no blog_post exists yet. Returns nil when the list is empty.
 func latestSynthesisArtifact(artifacts []state.Artifact) *state.Artifact {
 	for i := len(artifacts) - 1; i >= 0; i-- {
 		if artifacts[i].Kind == state.ArtifactKindBlogPost {
 			return &artifacts[i]
 		}
 	}
+	for i := len(artifacts) - 1; i >= 0; i-- {
+		if isTextualSynthesisArtifactKind(artifacts[i].Kind) {
+			return &artifacts[i]
+		}
+	}
 	// No synthesized document yet — no source material to inject.
 	return nil
+}
+
+func isTextualSynthesisArtifactKind(kind state.ArtifactKind) bool {
+	if kind == state.ArtifactKindMarkdown || kind == state.ArtifactKindDocument {
+		return true
+	}
+	switch strings.TrimSpace(strings.ToLower(string(kind))) {
+	case "plain_text", "plaintext", "text", "txt":
+		return true
+	default:
+		return false
+	}
 }

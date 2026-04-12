@@ -63,6 +63,32 @@ func TestBlogDraftAction_MarkdownFallback(t *testing.T) {
 	}
 }
 
+func TestBlogDraftAction_PlainTextFallback(t *testing.T) {
+	a := &BlogDraftAction{}
+	in := Input{
+		Workflow: makeWorkflow(),
+		Artifacts: []state.Artifact{
+			makeArtifact(state.ArtifactKind("plain_text"), "snippet.txt", "One concise sentence."),
+		},
+	}
+	out, err := a.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !out.Success {
+		t.Fatalf("expected success via plain_text fallback, got error: %s", out.Error)
+	}
+	if out.Metadata["draft"] != "One concise sentence." {
+		t.Errorf("unexpected draft content: %q", out.Metadata["draft"])
+	}
+	if out.Metadata["fallback_kind"] != "plain_text" {
+		t.Errorf("fallback kind = %q, want %q", out.Metadata["fallback_kind"], "plain_text")
+	}
+	if out.Metadata["fallback"] != "true" {
+		t.Error("fallback flag should be set when plain_text artifact is used")
+	}
+}
+
 func TestBlogDraftAction_BlogPostPreferredOverMarkdown(t *testing.T) {
 	a := &BlogDraftAction{}
 	in := Input{

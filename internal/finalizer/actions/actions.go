@@ -200,8 +200,9 @@ func (a *ArtifactBundleAction) Execute(_ context.Context, in Input) (*Output, er
 // Selection rule (newest-to-oldest):
 //  1. Latest artifact with kind blog_post — preferred; produced when the
 //     Implementer is mode-aware and may have been updated via remediation.
-//  2. Latest artifact with kind markdown — fallback for workflows where the
-//     Implementer produced a generic markdown artifact instead of blog_post.
+//  2. Latest textual artifact with kind markdown, document, or a plain-text
+//     alias — fallback for workflows where the Implementer produced a generic
+//     text artifact instead of explicitly tagging it as blog_post.
 //
 // Scanning newest-to-oldest ensures that a later remediation or synthesis
 // task wins over an earlier draft of the same kind.
@@ -226,19 +227,20 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 			}, nil
 		}
 	}
-	// Fall back to the latest markdown artifact when no blog_post is present.
+	// Fall back to the latest textual artifact when no blog_post is present.
 	// This handles content-mode workflows where the Implementer produced a
-	// markdown artifact instead of explicitly tagging it as blog_post.
+	// generic text artifact instead of explicitly tagging it as blog_post.
 	for i := len(in.Artifacts) - 1; i >= 0; i-- {
 		art := in.Artifacts[i]
-		if art.Kind == state.ArtifactKindMarkdown {
+		if isBlogDraftFallbackKind(art.Kind) {
 			return &Output{
 				Action:  ActionBlogDraft,
 				Success: true,
-				Message: fmt.Sprintf("Blog draft (markdown fallback): %s", art.Name),
+				Message: fmt.Sprintf("Blog draft (fallback): %s", art.Name),
 				Metadata: map[string]string{
-					"draft":    art.Content,
-					"fallback": "true",
+					"draft":         art.Content,
+					"fallback":      "true",
+					"fallback_kind": string(art.Kind),
 				},
 			}, nil
 		}
@@ -246,8 +248,20 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 	return &Output{
 		Action:  ActionBlogDraft,
 		Success: false,
-		Error:   "no blog_post or markdown artifact found",
+		Error:   "no blog_post or textual draft artifact found",
 	}, nil
+}
+
+func isBlogDraftFallbackKind(kind state.ArtifactKind) bool {
+	if kind == state.ArtifactKindMarkdown || kind == state.ArtifactKindDocument {
+		return true
+	}
+	switch strings.TrimSpace(strings.ToLower(string(kind))) {
+	case "plain_text", "plaintext", "text", "txt":
+		return true
+	default:
+		return false
+	}
 }
 
 // DocDraftAction extracts the final polished document from the workflow artifacts.
