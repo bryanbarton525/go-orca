@@ -949,6 +949,10 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) state.HandoffPacket {
 	provider := e.resolveProviderName(ws)
 	model := e.resolvePersonaModel(ws, kind, provider)
+	artifacts := ws.Artifacts
+	if kind == state.PersonaQA {
+		artifacts = latestArtifactsByLogicalFile(ws.Artifacts)
+	}
 
 	packet := state.HandoffPacket{
 		WorkflowID:            ws.ID,
@@ -960,7 +964,7 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		Requirements:          ws.Requirements,
 		Design:                ws.Design,
 		Tasks:                 ws.Tasks,
-		Artifacts:             ws.Artifacts,
+		Artifacts:             artifacts,
 		Summaries:             ws.Summaries,
 		CurrentPersona:        kind,
 		ProviderName:          provider,
@@ -992,6 +996,35 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	}
 
 	return packet
+}
+
+func latestArtifactsByLogicalFile(artifacts []state.Artifact) []state.Artifact {
+	if len(artifacts) < 2 {
+		return artifacts
+	}
+
+	order := make([]string, 0, len(artifacts))
+	latest := make(map[string]state.Artifact, len(artifacts))
+	for _, art := range artifacts {
+		key := logicalArtifactKey(art)
+		if _, exists := latest[key]; !exists {
+			order = append(order, key)
+		}
+		latest[key] = art
+	}
+
+	out := make([]state.Artifact, 0, len(latest))
+	for _, key := range order {
+		out = append(out, latest[key])
+	}
+	return out
+}
+
+func logicalArtifactKey(art state.Artifact) string {
+	if path := strings.TrimSpace(art.Path); path != "" {
+		return "path:" + path
+	}
+	return "name:" + strings.TrimSpace(art.Name) + "|kind:" + string(art.Kind)
 }
 
 // formatToolSpecs renders a list of tool specs as a markdown section for

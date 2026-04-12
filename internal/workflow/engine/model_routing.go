@@ -286,15 +286,6 @@ func (e *Engine) normalizePersonaModels(provider string, requested state.Persona
 				continue
 			}
 		}
-		// Strip a "provider/" namespace prefix that LLMs occasionally emit
-		// (e.g. "ollama/qwen3.5:9b" → "qwen3.5:9b").
-		if idx := strings.Index(model, "/"); idx != -1 {
-			stripped := model[idx+1:]
-			if e.modelAllowed(provider, stripped, catalogs) {
-				out[kind] = stripped
-				continue
-			}
-		}
 		if e.modelAllowed(provider, model, catalogs) {
 			out[kind] = model
 			continue
