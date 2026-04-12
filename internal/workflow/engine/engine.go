@@ -995,6 +995,42 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		packet.ToolRegistry = e.opts.ToolRegistry
 	}
 
+	packet.EmitPersonaStarted = func(ctx context.Context, personaKind state.PersonaKind, providerName, modelName string) {
+		evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaStarted, personaKind,
+			events.PersonaStartedPayload{
+				Persona:      personaKind,
+				ProviderName: providerName,
+				ModelName:    modelName,
+			})
+		_ = e.store.AppendEvents(ctx, evt)
+		ws.Execution.CurrentPersona = personaKind
+		_ = e.store.SaveWorkflow(ctx, ws)
+	}
+
+	packet.EmitPersonaCompleted = func(ctx context.Context, personaKind state.PersonaKind, durationMs int64, summary string, blockingIssues []string) {
+		evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaCompleted, personaKind,
+			events.PersonaCompletedPayload{
+				Persona:        personaKind,
+				DurationMs:     durationMs,
+				Summary:        summary,
+				BlockingIssues: blockingIssues,
+			})
+		_ = e.store.AppendEvents(ctx, evt)
+		ws.Execution.CurrentPersona = kind
+		_ = e.store.SaveWorkflow(ctx, ws)
+	}
+
+	packet.EmitPersonaFailed = func(ctx context.Context, personaKind state.PersonaKind, errMsg string) {
+		evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaFailed, personaKind,
+			events.PersonaFailedPayload{Persona: personaKind, Error: errMsg})
+		_ = e.store.AppendEvents(ctx, evt)
+		ws.Execution.CurrentPersona = kind
+		_ = e.store.SaveWorkflow(ctx, ws)
+	}
+
 	return packet
 }
 

@@ -337,6 +337,8 @@ Return all journal events for a workflow in insertion order. Events are immutabl
 
 Server-Sent Events stream of workflow events. Polls the event journal every second and pushes new events as they arrive. Sends periodic keepalive comments (`": keepalive"`) to prevent proxy timeouts.
 
+Nested sub-phases may emit additional persona boundary events before the parent persona completes. For example, the Finalizer's inline Refiner pass can emit `persona.started` and `persona.completed` events with `persona="refiner"` while the workflow still reports the broader Finalizer phase.
+
 The stream closes automatically when the workflow reaches a terminal state (`completed`, `failed`, `cancelled`) or when the timeout elapses.
 
 > **Reverse proxy configuration:** Set `proxy_buffering off` (nginx) or the equivalent directive to receive events without buffering delay.

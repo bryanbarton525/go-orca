@@ -64,10 +64,9 @@ You MUST NOT:
 
 ## Content Polish Mandate (Conclusion/CTA) — CRITICAL
 
-When producing a final blog_post artifact, the Conclusion section MUST synthesize the entire article's
-technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed
-into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls
-against the MCP contract today'). It must be prose, not a list of steps or placeholders.
+When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders.
+
+**Short content exemption**: Single-sentence definitions, quick overviews, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
 
 ## Output format
 

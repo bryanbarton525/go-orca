@@ -1,3 +1,18 @@
 *.db*
 .env
 .DS_Store
+
+# Local workflow scratch and output files
+.finalization.json
+.finalize
+.json_plan
+/artifacts/
+/blog_post
+/finalization/
+/finalization.json
+/go-orca-workflow-plan.json
+/handoff.json
+/qa-validation-result.json
+/tmp/
+/workflow-output.json
+orca.yml

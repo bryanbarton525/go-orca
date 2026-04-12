@@ -3,6 +3,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -432,6 +433,13 @@ type HandoffPacket struct {
 	// It is set by the engine at packet-build time and is intentionally
 	// excluded from JSON serialisation (HandoffPacket is never persisted as-is).
 	ToolRegistry *tools.Registry `json:"-"`
+	// Nested persona event hooks are runtime-only callbacks used by personas
+	// that execute internal sub-phases, such as the Finalizer's inline Refiner
+	// pass. They allow those sub-phases to surface progress in the workflow
+	// journal without coupling persona packages to the storage layer.
+	EmitPersonaStarted   func(ctx context.Context, persona PersonaKind, providerName, modelName string)                            `json:"-"`
+	EmitPersonaCompleted func(ctx context.Context, persona PersonaKind, durationMs int64, summary string, blockingIssues []string) `json:"-"`
+	EmitPersonaFailed    func(ctx context.Context, persona PersonaKind, err string)                                                `json:"-"`
 
 	// FinalizerAction is the delivery action chosen by the Director, forwarded
 	// to the Finalizer so it can be enforced in code rather than inferred by

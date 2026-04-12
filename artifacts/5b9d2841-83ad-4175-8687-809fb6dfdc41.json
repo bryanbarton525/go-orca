@@ -1,8 +1,0 @@
-{
-  "artifact_kind": "blog_post",
-  "artifact_name": "blog_post",
-  "artifact_description": "A single factual sentence defining Go programming language for quick technical reference publication",
-  "content": "Go is an open-source, compiled, statically typed, garbage-collected programming language that emphasizes simplicity, readability, and fast compilation while providing built-in support for high-performance concurrent programming through lightweight goroutines and channels for building simple, reliable, and efficient software across multiple platforms.",
-  "summary": "Single-sentence technical definition of Go verifying core characteristics: compiled, statically typed, garbage-collected, goroutine-based concurrency, cross-platform",
-  "issues": []
-}

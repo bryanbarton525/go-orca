@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-orca/go-orca/internal/improvements"
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -222,16 +223,31 @@ Analyze the above workflow history and produce your retrospective JSON output.`,
 		strings.Join(packet.AllSuggestions, "\n"),
 	)
 
+	if packet.EmitPersonaStarted != nil {
+		packet.EmitPersonaStarted(ctx, state.PersonaRefiner, refinerPacket.ProviderName, refinerPacket.ModelName)
+	}
+	start := time.Now()
+
 	raw, err := f.refinerExec.Run(ctx, refinerPacket, packet.PersonaPromptSnapshot[prompts.KeyFinalizerRefiner], refinerPrompt)
 	if err != nil {
+		if packet.EmitPersonaFailed != nil {
+			packet.EmitPersonaFailed(ctx, state.PersonaRefiner, err.Error())
+		}
 		return nil, nil, ""
 	}
 
 	var out refinerOutput
 	if err := base.ParseJSON(raw, &out); err != nil {
+		if packet.EmitPersonaFailed != nil {
+			packet.EmitPersonaFailed(ctx, state.PersonaRefiner, err.Error())
+		}
 		return nil, nil, ""
 	}
 	out.Improvements = normalizeImprovements(out.Improvements)
+
+	if packet.EmitPersonaCompleted != nil {
+		packet.EmitPersonaCompleted(ctx, state.PersonaRefiner, time.Since(start).Milliseconds(), out.Summary, nil)
+	}
 
 	suggestions := make([]string, 0, len(out.Improvements))
 	for _, imp := range out.Improvements {
