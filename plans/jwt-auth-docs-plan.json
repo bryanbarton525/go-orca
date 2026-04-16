@@ -1,0 +1,10 @@
+{
+  "mode": "docs",
+  "title": "JWT Authentication Service API Documentation",
+  "provider": "ollama",
+  "model": "qwen3.5:9b",
+  "finalizer_action": "doc-draft",
+  "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
+  "rationale": "Docs mode requires doc-draft finalizer. Implementer needs tools=yes for file writing. Using qwen3.5:9b (tools=yes) for implementer as it's capable of generating comprehensive documentation. For project_manager, architect, qa planning roles, qwen3.5:9b provides sufficient capability without unnecessary overhead. All personas use ollama provider as specified.",
+  "summary": "Generate API documentation for JWT-based user authentication service including endpoint references, authentication flow diagrams, and integration code examples"
+}
