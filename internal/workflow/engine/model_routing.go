@@ -267,6 +267,45 @@ func (e *Engine) resolvePersonaModel(ws *state.WorkflowState, kind state.Persona
 	return e.resolveWorkflowModel(ws, provider)
 }
 
+// personaRequiresTools returns true for personas that use the tool-calling
+// loop (implementer, QA) and therefore must be assigned a model that
+// advertises tool support.
+func personaRequiresTools(kind state.PersonaKind) bool {
+	return kind == state.PersonaImplementer || kind == state.PersonaQA
+}
+
+// modelHasTools checks whether a model in the catalog advertises tools=yes.
+func modelHasTools(provider string, model string, catalogs map[string]state.ProviderModelCatalog) bool {
+	provider = canonicalProviderName(provider)
+	catalog, ok := catalogs[provider]
+	if !ok {
+		return true // no catalog → assume ok (degraded mode)
+	}
+	model = strings.TrimSpace(model)
+	for _, item := range catalog.Models {
+		if canonicalModelID(item.ID) == canonicalModelID(model) {
+			return item.Metadata["tools"] == "yes"
+		}
+	}
+	return false
+}
+
+// firstToolCapableModel returns the first model in the catalog that supports
+// tool-calling, or "" if none found.
+func firstToolCapableModel(provider string, catalogs map[string]state.ProviderModelCatalog) string {
+	provider = canonicalProviderName(provider)
+	catalog, ok := catalogs[provider]
+	if !ok {
+		return ""
+	}
+	for _, item := range catalog.Models {
+		if item.Metadata["tools"] == "yes" {
+			return item.ID
+		}
+	}
+	return ""
+}
+
 func (e *Engine) normalizePersonaModels(provider string, requested state.PersonaModelAssignments, fallback string, catalogs map[string]state.ProviderModelCatalog) state.PersonaModelAssignments {
 	provider = canonicalProviderName(provider)
 	resolvedFallback := e.normalizeModelSelection(provider, "", fallback, catalogs)
@@ -282,16 +321,26 @@ func (e *Engine) normalizePersonaModels(provider string, requested state.Persona
 		if idx := strings.Index(model, "/"); idx != -1 {
 			stripped := model[idx+1:]
 			if e.modelAllowed(provider, stripped, catalogs) {
-				out[kind] = stripped
-				continue
+				model = stripped
 			}
 		}
-		if e.modelAllowed(provider, model, catalogs) {
-			out[kind] = model
-			continue
+		if !e.modelAllowed(provider, model, catalogs) {
+			model = resolvedFallback
 		}
-		if resolvedFallback != "" {
-			out[kind] = resolvedFallback
+
+		// Hard guard: personas that use the tool-call loop must be assigned
+		// a model that advertises tool support.  If the Director picked a
+		// non-tool model, swap to the first tool-capable model in the catalog.
+		if model != "" && personaRequiresTools(kind) && !modelHasTools(provider, model, catalogs) {
+			if tc := firstToolCapableModel(provider, catalogs); tc != "" {
+				model = tc
+			}
+			// If no tool-capable model exists at all, keep whatever we have
+			// and let the runtime error surface naturally.
+		}
+
+		if model != "" {
+			out[kind] = model
 		}
 	}
 	return out

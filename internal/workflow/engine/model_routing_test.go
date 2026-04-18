@@ -297,3 +297,51 @@ func TestApplyOutputSetsRequiredPersonasAndFinalizerAction(t *testing.T) {
 		t.Fatalf("RequiredPersonas unexpectedly contains architect: %v", ws.RequiredPersonas)
 	}
 }
+
+func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
+	ensureCatalogMockProviderRegistered()
+
+	eng := New(routingStore{}, Options{
+		DefaultProvider:  "catalog-mock",
+		DefaultModel:     "bootstrap-model",
+		ProviderDefaults: map[string]string{"catalog-mock": "bootstrap-model"},
+	})
+
+	catalogs := map[string]state.ProviderModelCatalog{
+		"catalog-mock": {
+			ProviderName: "catalog-mock",
+			DefaultModel: "bootstrap-model",
+			Models: []state.ProviderModelInfo{
+				{ID: "bootstrap-model", Metadata: map[string]string{"tools": "no"}},
+				{ID: "codegemma:7b", Metadata: map[string]string{"tools": "no"}},
+				{ID: "qwen2.5-coder:7b", Metadata: map[string]string{"tools": "yes"}},
+				{ID: "qwen3.5:9b", Metadata: map[string]string{"tools": "yes"}},
+			},
+		},
+	}
+
+	requested := state.PersonaModelAssignments{
+		state.PersonaImplementer: "codegemma:7b",   // no tools
+		state.PersonaQA:          "codegemma:7b",   // no tools
+		state.PersonaArchitect:   "codegemma:7b",   // no tools (architect doesn't need tools)
+		state.PersonaFinalizer:   "bootstrap-model", // no tools (finalizer doesn't need tools)
+	}
+
+	out := eng.normalizePersonaModels("catalog-mock", requested, "bootstrap-model", catalogs)
+
+	// Implementer and QA must be swapped to a tool-capable model.
+	if got := out[state.PersonaImplementer]; got != "qwen2.5-coder:7b" {
+		t.Fatalf("implementer: want qwen2.5-coder:7b, got %q", got)
+	}
+	if got := out[state.PersonaQA]; got != "qwen2.5-coder:7b" {
+		t.Fatalf("qa: want qwen2.5-coder:7b, got %q", got)
+	}
+	// Architect does not require tools — should keep the original assignment.
+	if got := out[state.PersonaArchitect]; got != "codegemma:7b" {
+		t.Fatalf("architect: want codegemma:7b, got %q", got)
+	}
+	// Finalizer does not require tools — should keep the original.
+	if got := out[state.PersonaFinalizer]; got != "bootstrap-model" {
+		t.Fatalf("finalizer: want bootstrap-model, got %q", got)
+	}
+}

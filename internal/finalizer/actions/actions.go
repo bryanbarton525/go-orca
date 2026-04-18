@@ -834,6 +834,19 @@ func (a *CreateRepoAction) Execute(ctx context.Context, in Input) (*Output, erro
 			"content": content,
 		}
 
+		// If the file already exists (e.g. auto_init README.md), we must
+		// include the existing file's SHA or the API returns 422.
+		getResp, getStatus, _ := ghDo(http.MethodGet,
+			apiBase+"/contents/"+filePath, nil)
+		if getStatus == http.StatusOK {
+			var existing struct {
+				SHA string `json:"sha"`
+			}
+			if json.Unmarshal(getResp, &existing) == nil && existing.SHA != "" {
+				putBody["sha"] = existing.SHA
+			}
+		}
+
 		putData, putStatus, err := ghDo(http.MethodPut,
 			apiBase+"/contents/"+filePath, putBody)
 		if err != nil {
