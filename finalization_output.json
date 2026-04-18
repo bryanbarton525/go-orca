@@ -1,0 +1,18 @@
+{
+  "delivery_action": "github-pr",
+  "summary": "Created finalizer.md artifact containing clarified guidance for blog-draft delivery action's Conclusion/CTA injection mandate. The update explicitly limits polished sections to substantive articles while exempting atomic/system responses from this step.",
+  "links": [],
+  "metadata": {
+    "workflow_id": "a7eaa0b8-8906-4bb3-85dd-d2ffadf5ce44",
+    "mode": "github-pr",
+    "persona": "finalizer",
+    "update_type": "persona-improvement",
+    "artifact_path": "finalizer.md"
+  },
+  "suggestions": [
+    "Review the finalizer.md artifact before PR creation",
+    "Ensure no additional persona updates are pending before merging",
+    "Consider scheduling a quick sync with the team on updated polish guidelines"
+  ],
+  "delivery_notes": "The artifact clarifies the blog-draft polish mandate to apply Conclusion/CTA only to substantive articles, not atomic acknowledgments. This reduces unnecessary polishing overhead and maintains appropriate brevity for system responses. Ready for GitHub PR creation and review."
+}

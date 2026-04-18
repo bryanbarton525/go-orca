@@ -113,8 +113,10 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		params.System = systemBlocks
 	}
 	if req.OutputSchema != nil {
-		params.OutputFormat = anthropicapi.BetaJSONOutputFormatParam{
-			Schema: req.OutputSchema,
+		params.OutputConfig = anthropicapi.BetaOutputConfigParam{
+			Format: anthropicapi.BetaJSONOutputFormatParam{
+				Schema: req.OutputSchema,
+			},
 		}
 	}
 

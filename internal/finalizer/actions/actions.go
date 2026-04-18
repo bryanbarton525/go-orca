@@ -33,6 +33,7 @@ const (
 	ActionAPIResponse    ActionKind = "api-response"
 	ActionGitHubPR       ActionKind = "github-pr"
 	ActionRepoCommit     ActionKind = "repo-commit-only"
+	ActionCreateRepo     ActionKind = "create-repo"
 	ActionArtifactBundle ActionKind = "artifact-bundle"
 	ActionMarkdownExport ActionKind = "markdown-export"
 	ActionBlogDraft      ActionKind = "blog-draft"
@@ -719,6 +720,143 @@ func (a *RepoCommitAction) Execute(ctx context.Context, in Input) (*Output, erro
 	}, nil
 }
 
+// CreateRepoAction creates a new GitHub repository and seeds it with all artifacts.
+// Config fields:
+//
+//	name        – repository name (required)
+//	org         – GitHub organisation to create under; when empty, creates under the
+//	              authenticated user
+//	description – repository description (optional)
+//	private     – whether the repository should be private (default: false)
+//	token       – GitHub PAT; overrides the application-level default token
+//
+// Token resolution order:
+//  1. config.token (per-workflow inline override)
+//  2. defaultToken seeded from cfg.GitHub.Token via GOORCA_GITHUB_TOKEN
+type CreateRepoAction struct {
+	defaultToken string
+}
+
+func (a *CreateRepoAction) Kind() ActionKind { return ActionCreateRepo }
+func (a *CreateRepoAction) Description() string {
+	return "Create a new GitHub repository and seed it with all artifacts."
+}
+
+func (a *CreateRepoAction) Execute(ctx context.Context, in Input) (*Output, error) {
+	var cfg struct {
+		Name        string `json:"name"`
+		Org         string `json:"org"`
+		Description string `json:"description"`
+		Private     bool   `json:"private"`
+		Token       string `json:"token"`
+	}
+	if in.Config != nil {
+		_ = json.Unmarshal(in.Config, &cfg)
+	}
+	if cfg.Name == "" {
+		return nil, fmt.Errorf("actions: create-repo requires config.name")
+	}
+	token := cfg.Token
+	if token == "" {
+		token = a.defaultToken
+	}
+	if token == "" {
+		return nil, fmt.Errorf("actions: create-repo requires a GitHub token (config.token or GOORCA_GITHUB_TOKEN)")
+	}
+	if cfg.Description == "" && in.Workflow != nil && in.Workflow.Title != "" {
+		cfg.Description = in.Workflow.Title
+	}
+
+	ghDo := func(method, url string, reqBody interface{}) ([]byte, int, error) {
+		var bodyReader io.Reader
+		if reqBody != nil {
+			b, err := json.Marshal(reqBody)
+			if err != nil {
+				return nil, 0, err
+			}
+			bodyReader = bytes.NewReader(b)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return b, resp.StatusCode, nil
+	}
+
+	// 1. Create the repository.
+	createURL := "https://api.github.com/user/repos"
+	createPayload := map[string]interface{}{
+		"name":        cfg.Name,
+		"description": cfg.Description,
+		"private":     cfg.Private,
+		"auto_init":   true,
+	}
+	if cfg.Org != "" {
+		createURL = "https://api.github.com/orgs/" + cfg.Org + "/repos"
+	}
+
+	repoData, repoStatus, err := ghDo(http.MethodPost, createURL, createPayload)
+	if err != nil {
+		return nil, fmt.Errorf("actions: create-repo POST: %w", err)
+	}
+	if repoStatus != http.StatusCreated {
+		return nil, fmt.Errorf("actions: create-repo POST %d: %s", repoStatus, string(repoData))
+	}
+	var repoResp struct {
+		FullName string `json:"full_name"`
+		HTMLURL  string `json:"html_url"`
+	}
+	_ = json.Unmarshal(repoData, &repoResp)
+
+	// 2. Seed artifacts into the repo via the Contents API.
+	apiBase := "https://api.github.com/repos/" + repoResp.FullName
+	var committed []string
+	for _, art := range in.Artifacts {
+		filePath := art.Path
+		if filePath == "" {
+			filePath = art.Name
+		}
+		if filePath == "" {
+			continue
+		}
+		content := base64.StdEncoding.EncodeToString([]byte(art.Content))
+		putBody := map[string]interface{}{
+			"message": "add " + art.Name,
+			"content": content,
+		}
+
+		putData, putStatus, err := ghDo(http.MethodPut,
+			apiBase+"/contents/"+filePath, putBody)
+		if err != nil {
+			return nil, fmt.Errorf("actions: create-repo PUT %s: %w", filePath, err)
+		}
+		if putStatus != http.StatusCreated && putStatus != http.StatusOK {
+			return nil, fmt.Errorf("actions: create-repo PUT %s (%d): %s", filePath, putStatus, string(putData))
+		}
+		committed = append(committed, filePath)
+	}
+
+	return &Output{
+		Action:  ActionCreateRepo,
+		Success: true,
+		Links:   []string{repoResp.HTMLURL},
+		Message: fmt.Sprintf("Repository %s created with %d artifact(s) seeded", repoResp.FullName, len(committed)),
+		Metadata: map[string]string{
+			"repo_url":  repoResp.HTMLURL,
+			"full_name": repoResp.FullName,
+		},
+	}, nil
+}
+
 // Global is the process-wide action registry, pre-loaded with built-in actions.
 // Call InitGlobal with the application GitHub token before starting the server.
 var Global = newGlobalRegistry("")
@@ -740,5 +878,6 @@ func newGlobalRegistry(githubToken string) *Registry {
 	r.Register(&WebhookAction{})
 	r.Register(&GitHubPRAction{defaultToken: githubToken})
 	r.Register(&RepoCommitAction{defaultToken: githubToken})
+	r.Register(&CreateRepoAction{defaultToken: githubToken})
 	return r
 }

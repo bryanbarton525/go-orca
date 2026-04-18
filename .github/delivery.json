@@ -1,0 +1,20 @@
+{
+  "delivery_action": "github-pr",
+  "summary": "Finalized persona improvement for 'finalizer' that clarifies the blog-draft delivery action's polish mandate. The update explicitly states that Conclusion/CTA sections should ONLY be injected for articles with substantive content (multi-section, multi-paragraph pieces), skipping atomic acknowledgments, minimal system responses, single-sentence updates, and procedural confirmations. Artifact finalizer.md updated with clear exemption criteria. PR brief created at .github/pr-brief.md for review.",
+  "links": [
+    "finalizer.md",
+    ".github/pr-brief.md"
+  ],
+  "metadata": {
+    "workflow_id": "a7eaa0b8-8906-4bb3-85dd-d2ffadf5ce44",
+    "mode": "self-improvement",
+    "persona": "finalizer",
+    "change_type": "documentation",
+    "scope": "blog-draft delivery action"
+  },
+  "suggestions": [
+    "Review PR brief at .github/pr-brief.md before merging",
+    "Test blog-draft deliveries after merge to verify atomic responses remain concise"
+  ],
+  "delivery_notes": "Self-improvement workflow completed. The clarification ensures blog-draft polish step applies only to substantive content, preventing over-polishing of simple responses. No breaking changes - existing behavior preserved for qualified content."
+}

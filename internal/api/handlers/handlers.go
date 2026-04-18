@@ -312,6 +312,24 @@ func TestProvider(log *zap.Logger) gin.HandlerFunc {
 	}
 }
 
+// ListProviderModels handles GET /providers/:name/models.
+func ListProviderModels() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		name := c.Param("name")
+		p, ok := common.Get(name)
+		if !ok {
+			respondError(c, http.StatusNotFound, fmt.Sprintf("provider %q not found", name))
+			return
+		}
+		models, err := p.Models(c.Request.Context())
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, fmt.Sprintf("failed to list models for %q: %v", name, err))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"provider": name, "models": models})
+	}
+}
+
 // ─── Scope/Tenant handlers ────────────────────────────────────────────────────
 
 // GetEffectiveConfig handles GET /scopes/:id/effective-config.

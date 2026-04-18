@@ -61,6 +61,7 @@ func New(cfg Config) *gin.Engine {
 	prov := r.Group("/providers")
 	{
 		prov.GET("", handlers.ListProviders())
+		prov.GET("/:name/models", handlers.ListProviderModels())
 		prov.POST("/:name/test", handlers.TestProvider(cfg.Logger))
 	}
 

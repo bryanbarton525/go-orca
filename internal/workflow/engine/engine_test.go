@@ -52,6 +52,16 @@ func (m *mockStore) AppendEvents(_ context.Context, evts ...*events.Event) error
 	return nil
 }
 
+func (m *mockStore) setWorkflowStatus(id string, status state.WorkflowStatus, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ws, ok := m.workflows[id]; ok {
+		ws.Status = status
+		ws.ErrorMessage = errMsg
+		ws.UpdatedAt = time.Now().UTC()
+	}
+}
+
 // ─── Mock personas ────────────────────────────────────────────────────────────
 
 // noopPersona immediately succeeds with an empty output (reserved for future
@@ -272,6 +282,25 @@ func (p *trackingPersona) Execute(_ context.Context, packet state.HandoffPacket)
 	return &state.PersonaOutput{Persona: p.kind, Summary: "tracked"}, nil
 }
 
+type blockingPersona struct {
+	kind    state.PersonaKind
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingPersona) Kind() state.PersonaKind { return p.kind }
+func (p *blockingPersona) Name() string            { return string(p.kind) }
+func (p *blockingPersona) Description() string     { return "blocks until released" }
+func (p *blockingPersona) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	select {
+	case <-p.started:
+	default:
+		close(p.started)
+	}
+	<-p.release
+	return &state.PersonaOutput{Persona: p.kind, Summary: "should not persist after cancellation"}, nil
+}
+
 // TestPersonaInclusionSkipping verifies that phases excluded from
 // RequiredPersonas (set by the Director) are never executed.
 func TestPersonaInclusionSkipping(t *testing.T) {
@@ -395,6 +424,75 @@ func TestPromptSnapshotReusedOnResume(t *testing.T) {
 
 	if !finPersona.called {
 		t.Error("Finalizer persona was not called")
+	}
+}
+
+// TestRunStopsWhenWorkflowCancelled verifies that an external status flip to
+// cancelled stops the engine before it can save additional persona output or
+// transition the workflow back to completed.
+func TestRunStopsWhenWorkflowCancelled(t *testing.T) {
+	directorPersona := &blockingPersona{
+		kind:    state.PersonaDirector,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	persona.Register(directorPersona)
+	t.Cleanup(func() { persona.Unregister(state.PersonaDirector) })
+
+	ms := newMockStore()
+	ctx := context.Background()
+
+	ws := state.NewWorkflowState("t1", "s1", "cancel mid-run")
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaDirector}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- eng.Run(ctx, ws.ID)
+	}()
+
+	select {
+	case <-directorPersona.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("director persona did not start")
+	}
+
+	ms.setWorkflowStatus(ws.ID, state.WorkflowStatusCancelled, "cancelled by test")
+	close(directorPersona.release)
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, engine.ErrCancelled) {
+			t.Fatalf("expected ErrCancelled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("engine did not stop after workflow cancellation")
+	}
+
+	stored, err := ms.GetWorkflow(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflow: %v", err)
+	}
+	if stored.Status != state.WorkflowStatusCancelled {
+		t.Fatalf("expected cancelled status, got %q", stored.Status)
+	}
+	if stored.Execution.CurrentPersona != "" {
+		t.Fatalf("expected current persona to be cleared, got %q", stored.Execution.CurrentPersona)
+	}
+	if stored.Summaries[state.PersonaDirector] != "" {
+		t.Fatalf("expected director summary to stay empty after cancellation, got %q", stored.Summaries[state.PersonaDirector])
+	}
+	if stored.ErrorMessage != "cancelled by test" {
+		t.Fatalf("expected cancellation error message to persist, got %q", stored.ErrorMessage)
+	}
+	if stored.CompletedAt == nil {
+		t.Fatal("expected cancelled workflow to get a completion timestamp")
 	}
 }
 

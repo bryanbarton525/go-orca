@@ -51,7 +51,7 @@ providers:
 
   ollama:
     enabled: true
-    host: "http://ollama.local"
+    host: "https://ollama.barton.local"
     default_model: "qwen3.5:9b"
     excluded_models: []    # optional deny-list; excluded models are hidden from Director routing
     timeout: "600s"        # local models can be slow; QA receives large artifact context

@@ -5,6 +5,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -53,7 +54,6 @@ type Scheduler struct {
 	queue  chan job
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
-	mu     sync.Mutex
 	done   chan struct{}
 }
 
@@ -156,8 +156,12 @@ func (s *Scheduler) runJob(ctx context.Context, j job, log *zap.Logger) {
 	if err := s.eng.Run(ctx, j.workflowID); err != nil {
 		// ErrPaused is not a failure; the workflow has been transitioned to
 		// paused and must be explicitly resumed via the API.
-		if err == engine.ErrPaused {
+		if errors.Is(err, engine.ErrPaused) {
 			log.Info("scheduler: workflow paused", zap.String("workflow_id", j.workflowID))
+			return
+		}
+		if errors.Is(err, engine.ErrCancelled) {
+			log.Info("scheduler: workflow cancelled", zap.String("workflow_id", j.workflowID))
 			return
 		}
 		log.Error("scheduler: workflow failed", zap.Error(err))

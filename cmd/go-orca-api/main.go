@@ -166,6 +166,12 @@ func main() {
 		MaxRetries:  0,
 	}, log)
 
+	if recovered, err := reconcileInterruptedWorkflows(ctx, store, log); err != nil {
+		log.Warn("workflow recovery sweep incomplete", zap.Error(err))
+	} else if recovered > 0 {
+		log.Info("workflow recovery sweep completed", zap.Int("recovered", recovered))
+	}
+
 	// Wire the improvement dispatcher now that both store and scheduler exist,
 	// then inject it into the engine (no chicken-and-egg problem).
 	improvementDispatcher := improvements.NewConcreteDispatcher(improvementsRoot, store, sched)

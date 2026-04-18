@@ -15,6 +15,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,11 @@ type Store interface {
 // The workflow status is set to WorkflowStatusPaused before returning this
 // error; callers (e.g. the scheduler) should NOT treat this as a failure.
 var ErrPaused = fmt.Errorf("engine: workflow paused")
+
+// ErrCancelled is returned by Run when the persisted workflow status is flipped
+// to cancelled while the engine is mid-flight. Callers should treat it as a
+// terminal stop, not a failure that should be retried.
+var ErrCancelled = fmt.Errorf("engine: workflow cancelled")
 
 // ImprovementDispatcher applies a single RefinerImprovement and returns the
 // outcome.  It is called by the engine after the Finalizer phase completes.
@@ -200,13 +206,27 @@ func (e *Engine) Run(ctx context.Context, workflowID string) error {
 
 	runErr := e.runPhases(ctx, ws)
 	if runErr != nil {
-		if runErr == ErrPaused {
-			// Paused is not a failure; transition was already applied inside runPhases.
+		if errors.Is(runErr, ErrPaused) {
+			// Pause and cancellation are terminal control signals, not failures.
 			return ErrPaused
+		}
+		if errors.Is(runErr, ErrCancelled) {
+			// Pause and cancellation are terminal control signals, not failures.
+			return ErrCancelled
 		}
 		ws.ErrorMessage = runErr.Error()
 		_ = e.transition(ctx, ws, state.WorkflowStatusFailed)
 		return runErr
+	}
+
+	if err := e.checkControlState(ctx, ws); err != nil {
+		if errors.Is(err, ErrPaused) {
+			return ErrPaused
+		}
+		if errors.Is(err, ErrCancelled) {
+			return ErrCancelled
+		}
+		return err
 	}
 
 	return e.transition(ctx, ws, state.WorkflowStatusCompleted)
@@ -214,9 +234,40 @@ func (e *Engine) Run(ctx context.Context, workflowID string) error {
 
 // ─── Internal phase execution ────────────────────────────────────────────────
 
-// checkPause transitions the workflow to paused if the PauseFunc fires.
-// Returns ErrPaused if the caller should stop execution.
-func (e *Engine) checkPause(ctx context.Context, ws *state.WorkflowState) error {
+// checkControlState stops execution when an external control signal changes the
+// persisted workflow state. Cancellation is detected from the store so the API
+// can stop an in-flight run even though the scheduler's parent context remains
+// alive.
+func (e *Engine) checkControlState(ctx context.Context, ws *state.WorkflowState) error {
+	latest, err := e.store.GetWorkflow(ctx, ws.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow control state: %w", err)
+	}
+
+	if latest.Status == state.WorkflowStatusCancelled {
+		if activeTaskID := ws.Execution.ActiveTaskID; activeTaskID != "" {
+			for i := range ws.Tasks {
+				if ws.Tasks[i].ID == activeTaskID && ws.Tasks[i].Status == state.TaskStatusRunning {
+					ws.Tasks[i].Status = state.TaskStatusPending
+					break
+				}
+			}
+		}
+
+		ws.Execution.CurrentPersona = ""
+		ws.Execution.ActiveTaskID = ""
+		ws.Execution.ActiveTaskTitle = ""
+		ws.ErrorMessage = latest.ErrorMessage
+
+		if ws.Status != state.WorkflowStatusCancelled {
+			if err := e.transition(ctx, ws, state.WorkflowStatusCancelled); err != nil {
+				return fmt.Errorf("cancel transition: %w", err)
+			}
+		}
+
+		return ErrCancelled
+	}
+
 	if e.opts.PauseFunc == nil || !e.opts.PauseFunc() {
 		return nil
 	}
@@ -304,7 +355,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
 			return fmt.Errorf("director phase: %w", err)
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
+		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
@@ -314,7 +365,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
 			return fmt.Errorf("pm phase: %w", err)
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
+		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
@@ -324,7 +375,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaArchitect, snap); err != nil {
 			return fmt.Errorf("architect phase: %w", err)
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
+		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
@@ -334,7 +385,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
 			return fmt.Errorf("implementer phase: %w", err)
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
+		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
@@ -391,7 +442,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
 						return fmt.Errorf("remediation planning (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.checkPause(ctx, ws); err != nil {
+					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
 					}
 
@@ -401,7 +452,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
 						return fmt.Errorf("implementer remediation (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.checkPause(ctx, ws); err != nil {
+					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
 					}
 				}
@@ -411,7 +462,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				ws.BlockingIssues = nil
 			}
 		}
-		if err := e.checkPause(ctx, ws); err != nil {
+		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
@@ -428,6 +479,10 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 // runPersona dispatches a single persona phase against the current workflow state.
 func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) error {
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
+
 	p, ok := persona.Get(kind)
 	if !ok {
 		return fmt.Errorf("persona %q not registered", kind)
@@ -467,6 +522,10 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	var elapsed time.Duration
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := e.checkControlState(ctx, ws); err != nil {
+			return err
+		}
+
 		if attempt > 0 {
 			// Parent context cancelled — no point retrying.
 			if ctx.Err() != nil {
@@ -497,6 +556,10 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 			if ctx.Err() != nil {
 				break
 			}
+
+			if err := e.checkControlState(ctx, ws); err != nil {
+				return err
+			}
 		}
 
 		personaCtx, cancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
@@ -508,6 +571,10 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		if err == nil {
 			break
 		}
+	}
+
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
 	}
 
 	if err != nil {
@@ -654,6 +721,10 @@ func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowSta
 // silently skipped so role boundaries are maintained at the engine layer
 // regardless of what the LLM's Architect output said.
 func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
+
 	p, ok := persona.Get(state.PersonaImplementer)
 	if !ok {
 		return fmt.Errorf("implementer persona not registered")
@@ -675,6 +746,10 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 
 	var implErr error
 	for i := range ws.Tasks {
+		if err := e.checkControlState(ctx, ws); err != nil {
+			return err
+		}
+
 		t := &ws.Tasks[i]
 
 		// Only process Implementer-owned tasks that still need work.
@@ -712,6 +787,9 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		out, err := p.Execute(taskCtx, packet)
 		taskElapsed := time.Since(taskStart)
 		taskCancel()
+		if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
+			return controlErr
+		}
 		if err != nil {
 			t.Status = state.TaskStatusFailed
 			ws.Execution.ActiveTaskID = ""
@@ -767,6 +845,9 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 	implElapsed := time.Since(implPhaseStart)
 	ws.Execution.ActiveTaskID = ""
 	ws.Execution.ActiveTaskTitle = ""
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
 	if implErr != nil {
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventPersonaFailed, state.PersonaImplementer,
@@ -793,6 +874,10 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 // The new tasks are appended to the task graph (existing completed tasks are
 // preserved for audit) with Attempt and RemediationSource set.
 func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
+
 	p, ok := persona.Get(state.PersonaArchitect)
 	if !ok {
 		return fmt.Errorf("architect persona not registered")
@@ -804,6 +889,9 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	archCtx, archCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
 	out, err := p.Execute(archCtx, packet)
 	archCancel()
+	if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
+		return controlErr
+	}
 	if err != nil {
 		return fmt.Errorf("architect remediation: %w", err)
 	}

@@ -33,6 +33,15 @@ You MUST NOT:
      If your task requires code examples, inline them directly in the article content.
      If your task is a remediation task that references code in a supporting artifact,
      copy the relevant code blocks inline — do NOT reference the supporting artifact.
+   
+     **Minimal Content Workflows Exemption — CRITICAL**: For minimal content (definitions, single-sentence summaries, quick overviews under ~200 words):
+     - DO NOT add YAML markdown frontmatter to these artifacts
+     - DO NOT add document-level meta-scaffolding markers
+     - The content should be plain markdown only, suitable for direct consumption
+     - This exemption applies only when the content is truly minimal and self-contained
+   
+   - **Short Content Exemption — CRITICAL**: Single-sentence definitions, quick overviews, and content under ~200 words (such as two-sentence summaries) do NOT require a Conclusion/CTA section. Produce these as-is without adding conclusions that would feel unnatural to the reader.
+   
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 
@@ -66,7 +75,7 @@ You MUST NOT:
 
 When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders.
 
-**Short content exemption**: Single-sentence definitions, quick overviews, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
+**Short content exemption**: Single-sentence definitions, quick overviews, two-sentence summaries, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
 
 ## Output format
 
