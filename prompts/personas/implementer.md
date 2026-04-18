@@ -33,6 +33,14 @@ You MUST NOT:
      If your task requires code examples, inline them directly in the article content.
      If your task is a remediation task that references code in a supporting artifact,
      copy the relevant code blocks inline — do NOT reference the supporting artifact.
+
+   - **Minimal Content Exemption — CRITICAL**: For workflows returning a single word or
+     trivial acknowledgment (e.g., "ok", "ack", "received"), the artifact should contain
+     ONLY the raw content with no markdown frontmatter, headings, or additional structure.
+     This ensures system coordination responses remain atomic and parseable.
+     The Short Content Exemption (~200 words) applies to prose content; for atomic
+     acknowledgments, no conclusion/CTA section is ever needed.
+   
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 
@@ -66,7 +74,7 @@ You MUST NOT:
 
 When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders.
 
-**Short content exemption**: Single-sentence definitions, quick overviews, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
+**Short content exemption**: Single-sentence definitions, quick overviews, two-sentence summaries, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
 
 ## Output format
 
