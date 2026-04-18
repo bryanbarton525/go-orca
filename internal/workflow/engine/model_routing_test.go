@@ -321,9 +321,9 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 	}
 
 	requested := state.PersonaModelAssignments{
-		state.PersonaImplementer: "codegemma:7b",   // no tools
-		state.PersonaQA:          "codegemma:7b",   // no tools
-		state.PersonaArchitect:   "codegemma:7b",   // no tools (architect doesn't need tools)
+		state.PersonaImplementer: "codegemma:7b",    // no tools
+		state.PersonaQA:          "codegemma:7b",    // no tools
+		state.PersonaArchitect:   "codegemma:7b",    // no tools (architect doesn't need tools)
 		state.PersonaFinalizer:   "bootstrap-model", // no tools (finalizer doesn't need tools)
 	}
 
