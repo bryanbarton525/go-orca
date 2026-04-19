@@ -808,7 +808,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		t.Status = state.TaskStatusCompleted
 		t.CompletedAt = &now
 		for _, art := range out.Artifacts {
-			ws.Artifacts = append(ws.Artifacts, art)
+			ws.Artifacts = mergeOrAppendArtifact(ws.Mode, ws.Artifacts, art)
 			artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 				events.EventArtifactProduced, state.PersonaImplementer,
 				events.ArtifactProducedPayload{
@@ -1166,6 +1166,52 @@ func logicalArtifactKey(art state.Artifact) string {
 		return "path:" + path
 	}
 	return "name:" + strings.TrimSpace(art.Name) + "|kind:" + string(art.Kind)
+}
+
+// isContentSynthesisKind returns true for artifact kinds that represent a
+// single evolving document in content-mode workflows.
+func isContentSynthesisKind(kind state.ArtifactKind) bool {
+	switch kind {
+	case state.ArtifactKindBlogPost, state.ArtifactKindMarkdown, state.ArtifactKindDocument:
+		return true
+	}
+	return false
+}
+
+// mergeOrAppendArtifact handles content-mode artifact accumulation.
+//
+// In content-mode workflows the implementer executes multiple tasks (e.g.
+// "write intro", "write body", "write conclusion") that all contribute to a
+// single evolving document.  Rather than storing each task's output as a
+// separate artifact, we find the existing synthesis artifact and **replace**
+// its content with the new (cumulative) output.  The implementer prompt
+// already injects the latest document so the model appends to / patches it.
+//
+// For non-content modes, or non-synthesis artifact kinds, the artifact is
+// appended as before.
+func mergeOrAppendArtifact(mode state.WorkflowMode, artifacts []state.Artifact, art state.Artifact) []state.Artifact {
+	if mode != state.WorkflowModeContent || !isContentSynthesisKind(art.Kind) {
+		return append(artifacts, art)
+	}
+
+	// Look for an existing synthesis artifact to update in-place.
+	for i := range artifacts {
+		if isContentSynthesisKind(artifacts[i].Kind) {
+			artifacts[i].Content = art.Content
+			artifacts[i].TaskID = art.TaskID
+			artifacts[i].CreatedAt = art.CreatedAt
+			if art.Name != "" {
+				artifacts[i].Name = art.Name
+			}
+			if art.Description != "" {
+				artifacts[i].Description = art.Description
+			}
+			return artifacts
+		}
+	}
+
+	// No existing synthesis artifact — first task, just append.
+	return append(artifacts, art)
 }
 
 // formatToolSpecs renders a list of tool specs as a markdown section for

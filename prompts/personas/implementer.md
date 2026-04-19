@@ -24,6 +24,12 @@ You MUST NOT:
 
      **SELF-CONTAINED REQUIREMENT — CRITICAL**: Every blog_post artifact MUST be completely
      self-contained and publishable as-is, with no cross-artifact references whatsoever.
+
+     **CUMULATIVE WRITING — CRITICAL**: When a `## Current Document` section appears in your
+     context, you are adding to an existing document. Your `content` output MUST contain the
+     COMPLETE document: all previously written sections preserved verbatim, plus the new section
+     appended in the correct position. Do NOT output only the new section in isolation. The
+     engine stores a single evolving artifact, so your output replaces the previous version.
      The following are STRICTLY PROHIBITED in any blog_post or article content:
        - `[CODE REFERENCE: ...]` or any variant referencing another artifact
        - `{artifact_image_placeholder: ...}` or any brace-wrapped placeholder
