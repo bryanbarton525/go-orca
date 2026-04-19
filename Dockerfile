@@ -47,7 +47,7 @@ COPY prompts/ ./prompts/
 COPY internal/storage/migrations/ ./internal/storage/migrations/
 
 # Non-root user
-RUN useradd -u 1001 -M -s /sbin/nologin orca
+RUN useradd -u 1001 -m -s /sbin/nologin orca
 USER orca
 
 EXPOSE 8080
