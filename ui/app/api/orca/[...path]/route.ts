@@ -58,7 +58,7 @@ async function proxy(request: NextRequest, path: string[]) {
     );
   }
 
-  const upstreamUrl = new URL(`${baseUrl.replace(/\/$/, "")}/${joinedPath}`);
+  const upstreamUrl = new URL(`${baseUrl.replace(/\/$/, "")}/api/v1/${joinedPath}`);
   request.nextUrl.searchParams.forEach((value, key) => {
     if (key !== "tenantId" && key !== "scopeId") {
       upstreamUrl.searchParams.append(key, value);
