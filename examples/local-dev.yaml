@@ -50,16 +50,13 @@ providers:
     enabled: false
 
   ollama:
-    enabled: true
-    host: "https://ollama.barton.local"
-    default_model: "qwen3.5:9b"
-    excluded_models: []    # optional deny-list; excluded models are hidden from Director routing
-    timeout: "600s"        # local models can be slow; QA receives large artifact context
-    tls_skip_verify: true  # homelab CA not trusted on this machine
-    num_ctx: 32768         # explicit context window — default (2048-4096) causes mid-content truncation on synthesis tasks
+    enabled: false
 
   copilot:
-    enabled: false
+    enabled: true
+    github_token: ""       # leave empty to use GOORCA_PROVIDERS_COPILOT_GITHUB_TOKEN env var
+    cli_path: ""           # leave empty to use "copilot" from PATH
+    default_model: "claude-sonnet-4-5"
 
   anthropic:
     enabled: false

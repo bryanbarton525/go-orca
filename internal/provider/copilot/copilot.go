@@ -93,9 +93,13 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 	}
 
 	session, err := p.client.CreateSession(ctx, &copilot.SessionConfig{
-		Model:         model,
-		ClientName:    "gorca",
-		SystemMessage: p.buildSystemMessage(req.Messages),
+		Model:               model,
+		ClientName:          "gorca",
+		SystemMessage:       p.buildSystemMessage(req.Messages),
+		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		// Disable all built-in agent tools so the model responds with text only
+		// and does not try to invoke filesystem / shell tools during generation.
+		AvailableTools: []string{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("copilot: create session error: %w", err)
@@ -170,9 +174,11 @@ func (p *Provider) Stream(ctx context.Context, req common.ChatRequest) (<-chan c
 		defer close(ch)
 
 		session, err := p.client.CreateSession(ctx, &copilot.SessionConfig{
-			Model:         model,
-			ClientName:    "gorca",
-			SystemMessage: p.buildSystemMessage(req.Messages),
+			Model:               model,
+			ClientName:          "gorca",
+			SystemMessage:       p.buildSystemMessage(req.Messages),
+			OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+			AvailableTools:      []string{},
 		})
 		if err != nil {
 			ch <- common.StreamChunk{Done: true}
