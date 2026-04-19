@@ -1,0 +1,20 @@
+# Minimal go-orca config for CI e2e tests.
+# Uses SQLite so no external database is needed.
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "release"
+  read_timeout: "30s"
+  write_timeout: "120s"
+  shutdown_timeout: "5s"
+  trusted_proxies: []
+
+database:
+  driver: "sqlite"
+  dsn: "/tmp/go-orca-e2e.db"
+  max_open_conns: 5
+  max_idle_conns: 2
+  conn_max_lifetime: "5m"
+  auto_migrate: true
+
+providers: []

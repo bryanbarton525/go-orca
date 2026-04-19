@@ -12,6 +12,7 @@ on:
       - "skills/**"
       - "customization/**"
       - "ui/**"
+      - "e2e/**"
       - ".github/workflows/build.yaml"
   workflow_dispatch: {}
 
@@ -20,7 +21,68 @@ env:
   IMAGE_NAME: bryanbarton525/go-orca-api
 
 jobs:
+  # ── Go unit tests ────────────────────────────────────────────────────────────
+  test-go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 7
+
+  # ── UI lint / typecheck / unit tests ────────────────────────────────────────
+  test-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+  # ── Build & push API image ───────────────────────────────────────────────────
   build-push:
+    needs: [test-go]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,7 +121,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Build & push UI image ────────────────────────────────────────────────────
   build-push-ui:
+    needs: [test-ui]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -97,3 +161,73 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── E2e tests ────────────────────────────────────────────────────────────────
+  e2e:
+    needs: [build-push, build-push-ui]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install e2e dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest images
+        run: |
+          docker pull ghcr.io/bryanbarton525/go-orca-api:latest
+          docker pull ghcr.io/bryanbarton525/go-orca-ui:latest
+
+      - name: Start services
+        run: docker compose up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 120 bash -c '
+            until docker compose ps | grep -E "api.*healthy" && docker compose ps | grep -E "ui.*healthy"; do
+              echo "Waiting for services..."
+              sleep 3
+            done
+          '
+
+      - name: Run e2e tests
+        run: pnpm test
+        env:
+          API_BASE_URL: http://localhost:8080
+          UI_BASE_URL: http://localhost:3000
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
