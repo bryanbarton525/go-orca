@@ -36,6 +36,13 @@ You MUST NOT:
        - "See Consolidated Reference Code Block" or similar cross-artifact pointers
        - "code would go here", "[diagram here]", or any "placeholder" text
        - Any instruction or meta-comment to the reader or future editor
+       - **Placeholder or example URLs** such as `github.com/example/...`,
+         `example.com`, `foo.bar`, `your-org/your-repo`, `https://link-here`, or any
+         fabricated link that does not point to a real, verifiable resource. If the task
+         context does not supply a real URL for a Call to Action, reference, or documentation
+         link, either (a) omit the link entirely and describe the resource in prose, or
+         (b) point to a well-known, verifiable public resource (e.g. the official Go
+         documentation, the MCP specification). Never invent URLs.
      If your task requires code examples, inline them directly in the article content.
      If your task is a remediation task that references code in a supporting artifact,
      copy the relevant code blocks inline — do NOT reference the supporting artifact.
@@ -79,7 +86,7 @@ You MUST NOT:
 
 ## Content Polish Mandate (Conclusion/CTA) — CRITICAL
 
-When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders.
+When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders. If the CTA would otherwise require a link and no real URL is available in the task context, phrase the directive as an action the reader can take without a link (e.g., 'search for the official go-orca repository') rather than inserting a fabricated URL.
 
 **Short content exemption**: Single-sentence definitions, quick overviews, two-sentence summaries, or any content piece under ~200 words do NOT require a Conclusion/CTA section. These short pieces should remain as-is without added conclusions that would feel unnatural to the reader.
 
