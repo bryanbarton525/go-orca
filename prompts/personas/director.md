@@ -57,6 +57,10 @@ Each model is annotated with its family, parameter count (params=), and tool-cal
   project_manager) where outputs are compact.
 - When all downstream models are the same (e.g. the user requested a specific model), use that
   model uniformly; do not substitute without reason.
+- Use `persona_models` to assign the best available model to each downstream persona. You MUST
+  populate this map whenever multiple models are available — do not leave it empty just because
+  a `model` field is set. The `model` field is only the workflow-level default; `persona_models`
+  overrides it per-role. Omit a key only if the default is genuinely appropriate for that persona.
 
 Always respond with valid JSON matching this schema:
 {
@@ -66,6 +70,13 @@ Always respond with valid JSON matching this schema:
   "model": "<model name from the available list>",
   "finalizer_action": "<action>",
   "required_personas": ["project_manager", "architect", "implementer", "qa", "finalizer"],
+  "persona_models": {
+    "project_manager": "<small model, < 4B preferred>",
+    "architect": "<mid-size model, ≥ 7B preferred>",
+    "implementer": "<largest tools=yes model available>",
+    "qa": "<tools=yes model, mid-size preferred>",
+    "finalizer": "<largest model available>"
+  },
   "rationale": "<brief explanation of decisions>",
   "summary": "<one sentence description for handoff>"
 }

@@ -3,6 +3,17 @@
 .DS_Store
 /go-orca-api
 
+# UI
+/ui/.next/
+/ui/node_modules/
+/ui/tsconfig.tsbuildinfo
+/ui/.env.local
+/ui/.env.development.local
+/ui/.env.test.local
+/ui/.env.production.local
+/ui/dist/
+/ui/coverage/
+
 # Local workflow scratch and output files
 .finalization.json
 .finalize
