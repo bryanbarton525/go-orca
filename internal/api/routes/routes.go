@@ -41,52 +41,60 @@ func New(cfg Config) *gin.Engine {
 	r.Use(middleware.TenantFromHeader(cfg.DefaultTenantID))
 	r.Use(middleware.ScopeFromHeader(cfg.DefaultScopeID))
 
-	// ── Health probes ────────────────────────────────────────────────────────
+	// ── Health probes at root (Kubernetes liveness/readiness) ───────────────
 	r.GET("/healthz", handlers.Healthz())
 	r.GET("/readyz", handlers.Readyz(cfg.Store))
 
-	// ── Workflows ────────────────────────────────────────────────────────────
-	wf := r.Group("/workflows")
+	// ── API v1 ───────────────────────────────────────────────────────────────
+	v1 := r.Group("/api/v1")
 	{
-		wf.GET("", handlers.ListWorkflows(cfg.Store))
-		wf.POST("", handlers.CreateWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
-		wf.GET("/:id", handlers.GetWorkflow(cfg.Store))
-		wf.GET("/:id/events", handlers.GetWorkflowEvents(cfg.Store))
-		wf.GET("/:id/stream", handlers.StreamWorkflowEvents(cfg.Store))
-		wf.POST("/:id/cancel", handlers.CancelWorkflow(cfg.Store, cfg.Logger))
-		wf.POST("/:id/resume", handlers.ResumeWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
-	}
+		// Health (also accessible under the versioned prefix)
+		v1.GET("/healthz", handlers.Healthz())
+		v1.GET("/readyz", handlers.Readyz(cfg.Store))
 
-	// ── Providers ────────────────────────────────────────────────────────────
-	prov := r.Group("/providers")
-	{
-		prov.GET("", handlers.ListProviders())
-		prov.GET("/:name/models", handlers.ListProviderModels())
-		prov.POST("/:name/test", handlers.TestProvider(cfg.Logger))
-	}
-
-	// ── Scopes ───────────────────────────────────────────────────────────────
-	r.GET("/scopes/:id/effective-config", handlers.GetEffectiveConfig(cfg.Store))
-
-	// ── Tenants ──────────────────────────────────────────────────────────────
-	tenants := r.Group("/tenants")
-	{
-		tenants.GET("", handlers.ListTenants(cfg.Store))
-		tenants.POST("", handlers.CreateTenant(cfg.Store, cfg.Logger))
-		tenant := tenants.Group("/:id")
+		// ── Workflows ────────────────────────────────────────────────────────
+		wf := v1.Group("/workflows")
 		{
-			tenant.GET("", handlers.GetTenant(cfg.Store))
-			tenant.PATCH("", handlers.UpdateTenant(cfg.Store, cfg.Logger))
-			tenant.DELETE("", handlers.DeleteTenant(cfg.Store, cfg.Logger))
-			tenant.POST("/scopes", handlers.CreateScope(cfg.Store, cfg.Logger))
-			tenant.GET("/scopes", handlers.ListScopesForTenant(cfg.Store))
-			tenant.PATCH("/scopes/:scopeId", handlers.UpdateScope(cfg.Store, cfg.Logger))
-			tenant.DELETE("/scopes/:scopeId", handlers.DeleteScope(cfg.Store, cfg.Logger))
+			wf.GET("", handlers.ListWorkflows(cfg.Store))
+			wf.POST("", handlers.CreateWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
+			wf.GET("/:id", handlers.GetWorkflow(cfg.Store))
+			wf.GET("/:id/events", handlers.GetWorkflowEvents(cfg.Store))
+			wf.GET("/:id/stream", handlers.StreamWorkflowEvents(cfg.Store))
+			wf.POST("/:id/cancel", handlers.CancelWorkflow(cfg.Store, cfg.Logger))
+			wf.POST("/:id/resume", handlers.ResumeWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
 		}
-	}
 
-	// ── Customizations ───────────────────────────────────────────────────────
-	r.GET("/customizations/resolve", handlers.ResolveCustomizations(cfg.CustomizationRegistry))
+		// ── Providers ────────────────────────────────────────────────────────
+		prov := v1.Group("/providers")
+		{
+			prov.GET("", handlers.ListProviders())
+			prov.GET("/:name/models", handlers.ListProviderModels())
+			prov.POST("/:name/test", handlers.TestProvider(cfg.Logger))
+		}
+
+		// ── Scopes ───────────────────────────────────────────────────────────
+		v1.GET("/scopes/:id/effective-config", handlers.GetEffectiveConfig(cfg.Store))
+
+		// ── Tenants ──────────────────────────────────────────────────────────
+		tenants := v1.Group("/tenants")
+		{
+			tenants.GET("", handlers.ListTenants(cfg.Store))
+			tenants.POST("", handlers.CreateTenant(cfg.Store, cfg.Logger))
+			tenant := tenants.Group("/:id")
+			{
+				tenant.GET("", handlers.GetTenant(cfg.Store))
+				tenant.PATCH("", handlers.UpdateTenant(cfg.Store, cfg.Logger))
+				tenant.DELETE("", handlers.DeleteTenant(cfg.Store, cfg.Logger))
+				tenant.POST("/scopes", handlers.CreateScope(cfg.Store, cfg.Logger))
+				tenant.GET("/scopes", handlers.ListScopesForTenant(cfg.Store))
+				tenant.PATCH("/scopes/:scopeId", handlers.UpdateScope(cfg.Store, cfg.Logger))
+				tenant.DELETE("/scopes/:scopeId", handlers.DeleteScope(cfg.Store, cfg.Logger))
+			}
+		}
+
+		// ── Customizations ───────────────────────────────────────────────────
+		v1.GET("/customizations/resolve", handlers.ResolveCustomizations(cfg.CustomizationRegistry))
+	}
 
 	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────
 	r.GET("/docs/openapi.yaml", func(c *gin.Context) {

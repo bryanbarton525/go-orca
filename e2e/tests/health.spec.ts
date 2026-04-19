@@ -4,21 +4,21 @@ const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8080";
 
 test.describe("API health", () => {
   test("liveness probe returns ok", async ({ request }) => {
-    const res = await request.get(`${API_BASE}/api/orca/healthz`);
+    const res = await request.get(`${API_BASE}/api/v1/healthz`);
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     expect(body).toHaveProperty("status");
   });
 
   test("readiness probe returns ok", async ({ request }) => {
-    const res = await request.get(`${API_BASE}/api/orca/readyz`);
+    const res = await request.get(`${API_BASE}/api/v1/readyz`);
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     expect(body).toHaveProperty("status");
   });
 
   test("workflows list endpoint responds", async ({ request }) => {
-    const res = await request.get(`${API_BASE}/api/orca/workflows?limit=1&offset=0`);
+    const res = await request.get(`${API_BASE}/api/v1/workflows?limit=1&offset=0`);
     // 200 OK or 401 Unauthorized are both valid — just not 5xx
     expect(res.status()).toBeLessThan(500);
   });

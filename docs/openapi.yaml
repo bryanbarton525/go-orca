@@ -909,7 +909,7 @@ paths:
 
   # ── Workflows ───────────────────────────────────────────────────────────────
 
-  /workflows:
+  /api/v1/workflows:
     get:
       summary: List workflows
       description: >
@@ -991,7 +991,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /workflows/{id}:
+  /api/v1/workflows/{id}:
     get:
       summary: Get a workflow
       description: >
@@ -1017,7 +1017,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /workflows/{id}/events:
+  /api/v1/workflows/{id}/events:
     get:
       summary: Get workflow events
       description: >
@@ -1062,7 +1062,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /workflows/{id}/stream:
+  /api/v1/workflows/{id}/stream:
     get:
       summary: Stream workflow events (SSE)
       description: |
@@ -1109,7 +1109,7 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
-  /workflows/{id}/cancel:
+  /api/v1/workflows/{id}/cancel:
     post:
       summary: Cancel a workflow
       description: >
@@ -1143,7 +1143,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /workflows/{id}/resume:
+  /api/v1/workflows/{id}/resume:
     post:
       summary: Resume a paused workflow
       description: >
@@ -1185,7 +1185,7 @@ paths:
 
   # ── Providers ───────────────────────────────────────────────────────────────
 
-  /providers:
+  /api/v1/providers:
     get:
       summary: List providers
       description: >
@@ -1210,7 +1210,7 @@ paths:
                   default_model: llama3
                   enabled: false
 
-  /providers/{name}/test:
+  /api/v1/providers/{name}/test:
     post:
       summary: Test a provider
       description: >
@@ -1255,7 +1255,7 @@ paths:
 
   # ── Scopes ──────────────────────────────────────────────────────────────────
 
-  /scopes/{id}/effective-config:
+  /api/v1/scopes/{id}/effective-config:
     get:
       summary: Get effective scope config
       description: >
@@ -1287,7 +1287,7 @@ paths:
 
   # ── Tenants ─────────────────────────────────────────────────────────────────
 
-  /tenants:
+  /api/v1/tenants:
     get:
       summary: List tenants
       description: Returns all tenants.
@@ -1341,7 +1341,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /tenants/{id}:
+  /api/v1/tenants/{id}:
     get:
       summary: Get a tenant
       description: Retrieves a single tenant by ID.
@@ -1413,7 +1413,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /tenants/{id}/scopes:
+  /api/v1/tenants/{id}/scopes:
     get:
       summary: List scopes for a tenant
       description: Returns all scopes belonging to the given tenant.
@@ -1491,7 +1491,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
-  /tenants/{id}/scopes/{scopeId}:
+  /api/v1/tenants/{id}/scopes/{scopeId}:
     patch:
       summary: Update a scope
       description: Updates mutable fields (name, slug) on an existing scope.
@@ -1546,7 +1546,7 @@ paths:
 
   # ── Customizations ───────────────────────────────────────────────────────────
 
-  /customizations/resolve:
+  /api/v1/customizations/resolve:
     get:
       summary: Resolve customizations
       description: >
