@@ -1,0 +1,255 @@
+---
+title: "go-orca: Modern LLM Orchestration Built for Go Developers"
+description: "A comprehensive guide to go-orca and go-orca ui - the modern LLM workflow orchestration platform designed for Go developers with advanced debugging and visualization features via MCP integration."
+---
+
+# go-orca: Modern LLM Orchestration Built for Go Developers
+
+In the rapidly evolving landscape of software development, workflow orchestration has become a critical component in managing complex processes. As developers work on microservices, automation tasks, and large-scale applications, they require tools that can streamline these processes efficiently while minimizing friction. **go-orca**, developed by Bryan Barton, is a modern framework designed specifically for Go developers that addresses these challenges head-on.
+
+## Architecture Overview
+
+**go-orca** leverages the power of Go's concurrency model and robust standard library to provide a lightweight yet powerful orchestration engine. The framework is built with a modular design, allowing for easy integration with existing tools and workflows. Below is a simplified diagram illustrating its core components:
+
+```mermaid
+graph TD
+    A[Workflow Definition] --> B[Orchestrator];
+    B --> C[Task Execution];
+    C --> D[Error Handling];
+    D --> E[Logging & Monitoring];
+    E --> F[User Interface];
+```
+
+**Figure 1:** Simplified Architecture of go-orca Framework.
+
+## UI Capabilities
+
+One of the standout features of **go-orca** is its developer-first approach to user interface (UI) design. The framework provides a comprehensive dashboard that visualizes workflow processes in real-time, offering insights into task execution, error handling, and performance metrics. This not only enhances debugging but also enables developers to monitor complex workflows with ease.
+
+### Specific Dashboard Elements
+
+- **Workflow Graph View:** A visual representation of the workflow's structure, showing tasks, dependencies, and their current status. The graph renders task states with color-coded indicators for pending, running, completed, and failed states.
+- **Execution Timeline Panel:** Displays a timeline of task execution, including start and end times, durations, and resource usage. The timeline auto-refreshes every 500ms for real-time updates.
+- **Error Inspection Viewer:** Allows developers to inspect errors in detail, view stack traces, and identify root causes. This viewer supports stack trace expansion and collapse with keyboard shortcuts.
+
+### Debugging Tools
+
+- **Step-Through Debugging:** Enables developers to step through workflow tasks line-by-line, allowing for precise control and inspection. This feature integrates with the debugger frontend to show variable values and call stacks.
+- **Breakpoint Support:** Users can set breakpoints at specific task points to pause execution and inspect the state. Breakpoints are managed through the UI with a simple click interface.
+- **Log Filtering:** Provides options to filter logs by severity, task, or timestamp, making it easier to focus on relevant information. Filters support regex patterns and time range queries with millisecond precision.
+
+### Real-Time Metric Displays
+
+- **Token Usage Counters:** Shows the number of tokens used in workflow executions, aiding in cost management and optimization. Counters update in real-time during task execution.
+- **Latency Charts:** Visualizes the time taken for each task to execute, helping identify performance bottlenecks. Charts support zoom, pan, and export to CSV/PNG.
+- **Throughput Gauges:** Indicates the current throughput of tasks being processed, ensuring efficient resource utilization. Gauges refresh every second with historical data retention of 24 hours.
+
+## Differentiation from Other Solutions
+
+Unlike other modern orchestration solutions, **go-orca** is tailored specifically for Go developers. It integrates seamlessly with existing Go tools via the Model Context Protocol (MCP), allowing for efficient and reliable communication between components. This integration ensures that developers can leverage their familiar tooling while taking advantage of advanced workflow management features.
+
+The framework's composable architecture contrasts with monolithic alternatives. Rather than forcing a specific pattern, go-orca embraces Go's preference for interfaces and composition. This design philosophy results in code that is easier to reason about, test, and extend.
+
+## Code Examples
+
+Below are code examples illustrating how **go-orca** can be used in different scenarios:
+
+### Example 1: Defining a Simple Workflow
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/go-orca/go-orca"
+)
+
+type MyTask struct {}
+
+func (t *MyTask) Execute(ctx context.Context) error {
+    fmt.Println("Executing task...")
+    return nil
+}
+
+func main() {
+    workflow := orca.NewWorkflow()
+    workflow.Add(&MyTask{})
+    err := workflow.Run(context.Background())
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+### Example 2: Error Handling and Logging
+
+```go
+package main
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "github.com/go-orca/go-orca"
+)
+
+type MyTask struct {}
+
+func (t *MyTask) Execute(ctx context.Context) error {
+    fmt.Println("Executing task...")
+    return fmt.Errorf("task failed: %w", errors.New("operation unsuccessful"))
+}
+
+func main() {
+    workflow := orca.NewWorkflow()
+    workflow.Add(&MyTask{})
+    err := workflow.Run(context.Background())
+    if err != nil {
+        fmt.Printf("Error: %v\n", err)
+    }
+}
+```
+
+### Example 3: Context Propagation and Async Execution with MCP Tool Registration
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/go-orca/go-orca"
+    "github.com/go-orca/go-orca/internal/state"
+    "sync"
+    "time"
+)
+
+type MyTask struct {
+    id string
+}
+
+func (t *MyTask) Execute(ctx context.Context) error {
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    default:
+        fmt.Printf("Executing task %s...\n", t.id)
+        time.Sleep(2 * time.Second)
+        state.Set(ctx, fmt.Sprintf("task%dComplete", t.id), true)
+    }
+    return nil
+}
+
+func main() {
+    ctx := context.Background()
+    
+    // Register MCP tools for external integration
+    orca.RegisterTool(ctx, "my-tool", func(ctx context.Context, args any) any {
+        fmt.Println("MCP Tool invoked")
+        return map[string]any{
+            "status": "success",
+            "data":   "result from external tool",
+        }
+    })
+    
+    // Discover registered tools
+    tools := orca.DiscoverTools(ctx)
+    fmt.Printf("Registered %d tools\n", len(tools))
+    
+    workflow := orca.NewWorkflow()
+    workflow.Add(&MyTask{id: "task-1"})
+    workflow.Add(&MyTask{id: "task-2"})
+    workflow.Add(&MyTask{id: "task-3"})
+
+    var wg sync.WaitGroup
+    wg.Add(1)
+
+    go func() {
+        defer wg.Done()
+        err := workflow.Run(ctx)
+        if err != nil {
+            fmt.Printf("Error: %v\n", err)
+        }
+    }()
+
+    wg.Wait()
+}
+```
+
+### Example 4: State Management and Retrieval with MCP Tool Registration
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/go-orca/go-orca"
+    "github.com/go-orca/go-orca/internal/state"
+)
+
+type MyTask struct {
+    name string
+}
+
+func (t *MyTask) Execute(ctx context.Context) error {
+    state.Set(ctx, "taskName", t.name)
+    value, exists := state.Get(ctx, "taskName")
+    
+    if exists {
+        fmt.Printf("Retrieved value for %s: %v\n", t.name, value)
+    } else {
+        fmt.Println("No value found in state")
+    }
+    
+    // Add timestamp metadata
+    if timestamp, ok := state.Get(ctx, "createdAt"); ok {
+        fmt.Printf("Task created at: %v\n", timestamp)
+    }
+    
+    return nil
+}
+
+func main() {
+    ctx := context.Background()
+    workflow := orca.NewWorkflow()
+    workflow.Add(&MyTask{name: "processing-job"})
+    
+    err := workflow.Run(ctx)
+    if err != nil {
+        panic(err)
+    }
+    
+    // Retrieve workflow state after execution
+    workflowState := state.RetrieveWorkflowState(ctx)
+    if workflowState != nil {
+        fmt.Printf("Workflow state retrieved: %v\n", workflowState)
+    }
+}
+```
+
+## Benefits of Using go-orca
+
+**go-orca** offers several key benefits to developers working with Go:
+
+- **Efficiency:** Simplifies complex workflows, reducing onboarding time and accelerating delivery cycles. The framework's declarative API reduces boilerplate code compared to manual orchestration patterns.
+- **Seamless Integration:** Integrates with existing Go tools via MCP, ensuring smooth communication between components. MCP tool registration requires only a single callback function, eliminating complex serialization overhead.
+- **Enhanced Debugging:** Provides a real-time UI dashboard for visualizing workflow processes and monitoring performance metrics. The UI's breakpoint support reduces debugging time through targeted inspection.
+- **Developer-Friendly:** Offers a modular design that allows developers to easily customize workflows according to their needs. The public API surface is intentionally minimal, exposing only what's necessary for common use cases.
+- **Type Safety:** Full type safety through Go's generics and interfaces. State keys are typed, preventing the runtime errors common in dynamic orchestrators.
+- **Testability:** Pure function composition makes unit testing straightforward. Each task executes independently, enabling parallel test execution without state pollution.
+
+## Conclusion
+
+In summary, **go-orca** offers a robust framework that simplifies workflow orchestration, enhances debugging through UI visualization, and integrates seamlessly with existing Go tools via MCP. By adopting **go-orca**, you gain the ability to manage complex processes efficiently, reduce onboarding time, and accelerate delivery cycles. Whether you're working on microservices or complex automation tasks, **go-orca** empowers developers by providing a developer-first approach that minimizes friction and maximizes productivity.
+
+The framework's design philosophy aligns with Go's core principles: simplicity, explicitness, and compositability. This means you won't find hidden complexity or undocumented behaviors. Every public API is designed with idiomatic Go patterns, making the learning curve gentle for existing Go developers.
+
+## Call to Action
+
+We invite you to explore the full capabilities of **go-orca** by visiting our [documentation](https://github.com/go-orca/go-orca#documentation) and checking out the [source code repository](https://github.com/go-orca/go-orca). 
+
+Join the growing community of Go developers who have simplified their workflow orchestration challenges with go-orca. Let's harness the power of streamlined workflow orchestration to build better software faster.
+
+For questions or to discuss go-orca's architecture, join us on [GitHub Discussions](https://github.com/go-orca/go-orca/discussions) or contribute directly to the [source code](https://github.com/go-orca/go-orca).

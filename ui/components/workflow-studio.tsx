@@ -8,6 +8,9 @@ import {
   Boxes,
   CheckCircle2,
   Cpu,
+  Download,
+  FileCode2,
+  FileText,
   Play,
   Radio,
   RotateCcw,
@@ -160,18 +163,6 @@ function normalizePersonaId(value?: string) {
     .replace(/^_+|_+$/g, "");
 }
 
-function contentPreview(value?: string, limit = 220) {
-  if (!value) {
-    return null;
-  }
-
-  if (value.length <= limit) {
-    return value;
-  }
-
-  return `${value.slice(0, limit - 1)}…`;
-}
-
 function eventTimestamp(event: EventRecord) {
   const timestamp = event.occurred_at ?? event.created_at;
   if (!timestamp) {
@@ -234,6 +225,348 @@ function nonEmptyEntries(value: Record<string, unknown> | null | undefined) {
 
 function artifactLabel(artifact: Artifact) {
   return artifact.name || artifact.path || artifact.kind || artifact.id;
+}
+
+// ─── Artifact download helpers ────────────────────────────────────────────────
+
+function artifactFileExtension(artifact: Artifact): string {
+  if (artifact.name) {
+    const dot = artifact.name.lastIndexOf(".");
+    if (dot > 0) return artifact.name.slice(dot);
+  }
+  switch (artifact.kind) {
+    case "code": return ".txt";
+    case "markdown":
+    case "document":
+    case "blog_post":
+    case "report":
+    case "diagram": return ".md";
+    case "config": return ".yaml";
+    default: return ".txt";
+  }
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadArtifact(artifact: Artifact) {
+  const content = artifact.content ?? "";
+  const ext = artifactFileExtension(artifact);
+  const baseName = artifact.name ?? artifact.path ?? `artifact-${artifact.id}`;
+  const filename = baseName.includes(".") ? baseName : `${baseName}${ext}`;
+  triggerDownload(new Blob([content], { type: "text/plain;charset=utf-8" }), filename);
+}
+
+function downloadArtifactBundle(artifacts: Artifact[], workflowId: string) {
+  const sep = "=".repeat(72);
+  const parts = artifacts.map((a) =>
+    `${sep}\n${artifactLabel(a)}  [${a.kind ?? "artifact"}]\n${sep}\n${a.content ?? "(no content)"}`
+  );
+  const bundle = parts.join("\n\n") + "\n";
+  triggerDownload(
+    new Blob([bundle], { type: "text/plain;charset=utf-8" }),
+    `workflow-${workflowId.slice(0, 8)}-bundle.txt`
+  );
+}
+
+function isCodeKind(kind?: string) {
+  return kind === "code" || kind === "config";
+}
+
+function isDocKind(kind?: string) {
+  return (
+    kind === "markdown" ||
+    kind === "document" ||
+    kind === "blog_post" ||
+    kind === "report" ||
+    kind === "diagram"
+  );
+}
+
+// ─── ArtifactViewer ───────────────────────────────────────────────────────────
+
+function ArtifactViewer({
+  artifact,
+  isLive = false,
+  autoFollow = false,
+  showDownload = true,
+}: {
+  artifact: Artifact;
+  isLive?: boolean;
+  autoFollow?: boolean;
+  showDownload?: boolean;
+}) {
+  const content = artifact.content ?? "";
+  const lines = content.split("\n");
+  const label = artifactLabel(artifact);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
+
+  // Auto-scroll to bottom when live + following, unless user scrolled up.
+  useEffect(() => {
+    if (!isLive || !autoFollow || userScrolledUp) return;
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setUserScrolledUp(!atBottom);
+  }
+
+  if (isCodeKind(artifact.kind)) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-[#30363d] bg-[#0d1117] font-mono text-sm">
+        {/* macOS-style title bar */}
+        <div className="flex items-center gap-3 border-b border-[#21262d] bg-[#161b22] px-4 py-2.5">
+          <div className="flex gap-1.5 shrink-0">
+            <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
+            <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
+            <span className="h-3 w-3 rounded-full bg-[#28c840]" />
+          </div>
+          <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#7d8590]" />
+          <span className="min-w-0 truncate text-xs text-[#c9d1d9]">{label}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {isLive ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-lagoon/15 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-widest text-lagoon">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lagoon" />
+                writing
+              </span>
+            ) : (
+              <span className="rounded-full bg-[#1f2937] px-2 py-0.5 text-[0.62rem] font-medium text-[#7d8590]">
+                {artifact.kind}
+              </span>
+            )}
+            {showDownload ? (
+              <button
+                type="button"
+                onClick={() => downloadArtifact(artifact)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#30363d] bg-[#21262d] px-2.5 py-1 text-[0.68rem] font-medium text-[#7d8590] transition hover:border-lagoon/50 hover:text-lagoon"
+              >
+                <Download className="h-3 w-3" />
+                Download
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Code body with line numbers */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="thin-scrollbar max-h-[60vh] overflow-auto"
+        >
+          <table className="w-full border-collapse text-xs leading-6">
+            <tbody>
+              {lines.map((line, index) => (
+                <tr key={index} className="group hover:bg-[#161b22]">
+                  <td
+                    className="select-none border-r border-[#21262d] px-4 text-right text-[#484f58] group-hover:text-[#6e7681]"
+                    style={{ minWidth: "3.25rem" }}
+                  >
+                    {index + 1}
+                  </td>
+                  <td className="whitespace-pre px-4 text-[#e6edf3]">{line || "\u00a0"}</td>
+                </tr>
+              ))}
+              {isLive ? (
+                <tr>
+                  <td
+                    className="select-none border-r border-[#21262d] px-4 text-right text-[#484f58]"
+                    style={{ minWidth: "3.25rem" }}
+                  >
+                    {lines.length + 1}
+                  </td>
+                  <td className="px-4">
+                    <span className="inline-block h-[0.9em] w-[2px] translate-y-[1px] animate-pulse bg-lagoon" />
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Follow / line count footer */}
+        <div className="flex items-center justify-between border-t border-[#21262d] bg-[#161b22] px-4 py-2">
+          <span className="text-[0.65rem] text-[#484f58]">{lines.length} lines</span>
+          {isLive ? (
+            <button
+              type="button"
+              onClick={() => { setUserScrolledUp(false); const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }}
+              className={`text-[0.65rem] font-medium transition ${userScrolledUp ? "text-lagoon hover:text-lagoon/80" : "text-[#484f58]"}`}
+            >
+              {userScrolledUp ? "↓ Follow output" : "Following…"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (isDocKind(artifact.kind)) {
+    // Segment content into paragraphs for document-style rendering.
+    const segments = content.split(/\n{2,}/);
+    return (
+      <div className="overflow-hidden rounded-2xl border border-shell-border/40 bg-shell-panel/90">
+        {/* Document header */}
+        <div className="flex items-center gap-3 border-b border-shell-border/25 bg-shell-subtle px-5 py-3">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-shell-soft" />
+          <span className="min-w-0 truncate text-xs font-medium text-ink">{label}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {isLive ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-lagoon/10 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-widest text-lagoon">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lagoon" />
+                writing
+              </span>
+            ) : (
+              <span className="rounded-full border border-shell-border/35 bg-shell-panel/90 px-2 py-0.5 text-[0.62rem] font-medium text-shell-soft">
+                {artifact.kind}
+              </span>
+            )}
+            {showDownload ? (
+              <button
+                type="button"
+                onClick={() => downloadArtifact(artifact)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-shell-border/40 bg-shell-panel/80 px-2.5 py-1 text-[0.68rem] font-medium text-shell-soft transition hover:border-lagoon/50 hover:text-lagoon"
+              >
+                <Download className="h-3 w-3" />
+                Download
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Document body */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="thin-scrollbar max-h-[60vh] overflow-auto px-8 py-6"
+        >
+          <div className="space-y-4 text-sm leading-7 text-ink">
+            {segments.map((segment, index) => {
+              const trimmed = segment.trim();
+              if (!trimmed) return null;
+              if (trimmed.startsWith("### ")) {
+                return (
+                  <h3 key={index} className="mt-2 text-base font-semibold text-ink">
+                    {trimmed.slice(4)}
+                  </h3>
+                );
+              }
+              if (trimmed.startsWith("## ")) {
+                return (
+                  <h2 key={index} className="mt-4 font-display text-lg font-semibold text-ink">
+                    {trimmed.slice(3)}
+                  </h2>
+                );
+              }
+              if (trimmed.startsWith("# ")) {
+                return (
+                  <h1 key={index} className="mt-4 font-display text-xl font-semibold text-ink">
+                    {trimmed.slice(2)}
+                  </h1>
+                );
+              }
+              if (trimmed.startsWith("```")) {
+                const code = trimmed.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "");
+                return (
+                  <pre key={index} className="thin-scrollbar overflow-x-auto rounded-xl bg-shell-code p-4 text-xs leading-6 text-shell-code-text">
+                    {code}
+                  </pre>
+                );
+              }
+              if (/^[-*] /.test(trimmed)) {
+                return (
+                  <ul key={index} className="ml-5 list-disc space-y-1 text-shell-muted">
+                    {trimmed.split("\n").filter(Boolean).map((item, i) => (
+                      <li key={i}>{item.replace(/^[-*]\s+/, "")}</li>
+                    ))}
+                  </ul>
+                );
+              }
+              if (/^\d+\. /.test(trimmed)) {
+                return (
+                  <ol key={index} className="ml-5 list-decimal space-y-1 text-shell-muted">
+                    {trimmed.split("\n").filter(Boolean).map((item, i) => (
+                      <li key={i}>{item.replace(/^\d+\.\s+/, "")}</li>
+                    ))}
+                  </ol>
+                );
+              }
+              return (
+                <p key={index} className="text-shell-muted [overflow-wrap:anywhere]">
+                  {trimmed}
+                </p>
+              );
+            })}
+            {isLive ? (
+              <span className="inline-block h-[0.9em] w-[2px] translate-y-[1px] animate-pulse bg-lagoon" />
+            ) : null}
+          </div>
+        </div>
+
+        {/* Word count / follow footer */}
+        <div className="flex items-center justify-between border-t border-shell-border/25 bg-shell-subtle px-5 py-2">
+          <span className="text-[0.65rem] text-shell-soft">{content.split(/\s+/).filter(Boolean).length} words</span>
+          {isLive ? (
+            <button
+              type="button"
+              onClick={() => { setUserScrolledUp(false); const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }}
+              className={`text-[0.65rem] font-medium transition ${userScrolledUp ? "text-lagoon hover:text-lagoon/80" : "text-shell-soft"}`}
+            >
+              {userScrolledUp ? "↓ Follow writing" : "Following…"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback: raw scrollable pre block with download
+  return (
+    <div className="overflow-hidden rounded-2xl border border-shell-border/40 bg-shell-panel/90">
+      <div className="flex items-center gap-3 border-b border-shell-border/25 bg-shell-subtle px-5 py-3">
+        <FileText className="h-3.5 w-3.5 shrink-0 text-shell-soft" />
+        <span className="min-w-0 truncate text-xs font-medium text-ink">{label}</span>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="rounded-full border border-shell-border/35 bg-shell-panel/90 px-2 py-0.5 text-[0.62rem] font-medium text-shell-soft">
+            {artifact.kind ?? "artifact"}
+          </span>
+          {showDownload ? (
+            <button
+              type="button"
+              onClick={() => downloadArtifact(artifact)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-shell-border/40 bg-shell-panel/80 px-2.5 py-1 text-[0.68rem] font-medium text-shell-soft transition hover:border-lagoon/50 hover:text-lagoon"
+            >
+              <Download className="h-3 w-3" />
+              Download
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="thin-scrollbar max-h-[60vh] overflow-auto"
+      >
+        <pre className="p-5 text-xs leading-6 text-shell-code-text">
+          {content || "(no content)"}
+        </pre>
+      </div>
+    </div>
+  );
 }
 
 function currentPhaseIndex(workflow?: WorkflowState) {
@@ -821,15 +1154,9 @@ function WorkflowExplorer({
 
               <div className="min-w-0 space-y-3">
                 <p className="text-sm font-semibold text-ink">Artifacts and events</p>
-                <div className="thin-scrollbar max-h-[22rem] space-y-3 overflow-auto pr-1">
+                <div className="thin-scrollbar max-h-[32rem] space-y-3 overflow-auto pr-1">
                   {selectedPersona.artifacts.map((artifact) => (
-                    <div key={artifact.id} className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                      <p className="text-sm font-semibold text-ink">{artifactLabel(artifact)}</p>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-shell-soft">{artifact.kind || "artifact"}</p>
-                      <p className="mt-2 text-sm leading-6 text-shell-muted">
-                        {contentPreview(artifact.content) || artifact.description || artifact.path || "No artifact preview available."}
-                      </p>
-                    </div>
+                    <ArtifactViewer key={artifact.id} artifact={artifact} />
                   ))}
 
                   {selectedPersona.events.slice(0, 5).map((event, index) => (
@@ -940,23 +1267,24 @@ function WorkflowExplorer({
             ) : null}
 
             {selectedObject.id === "artifacts" ? (
-              <div className="thin-scrollbar max-h-[28rem] space-y-3 overflow-auto pr-1">
-                {(workflow.artifacts ?? []).map((artifact) => (
-                  <div key={artifact.id} className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{artifactLabel(artifact)}</p>
-                        <p className="mt-1 text-xs text-shell-soft">{artifact.created_by || "unknown author"}</p>
-                      </div>
-                      <span className="rounded-full border border-shell-border/35 bg-shell-panel/90 px-2.5 py-1 text-xs font-semibold text-ink">
-                        {artifact.kind || "artifact"}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-shell-muted">
-                      {contentPreview(artifact.content) || artifact.description || artifact.path || "No artifact content preview available."}
-                    </p>
+              <div className="space-y-4">
+                {(workflow.artifacts?.length ?? 0) > 1 ? (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => downloadArtifactBundle(workflow.artifacts ?? [], workflow.id)}
+                      className="inline-flex items-center gap-2 rounded-full border border-shell-border/40 bg-shell-panel/80 px-4 py-2 text-xs font-medium text-shell-soft transition hover:border-lagoon/50 hover:text-lagoon"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download all as bundle
+                    </button>
                   </div>
-                ))}
+                ) : null}
+                <div className="space-y-4">
+                  {(workflow.artifacts ?? []).map((artifact) => (
+                    <ArtifactViewer key={artifact.id} artifact={artifact} />
+                  ))}
+                </div>
                 {(workflow.artifacts?.length ?? 0) === 0 ? <EmptyState title="No artifacts" body="This workflow has not persisted any artifacts." /> : null}
               </div>
             ) : null}
@@ -979,7 +1307,19 @@ function WorkflowExplorer({
                   {workflow.finalization.action ? (
                     <div className="rounded-3xl border border-lagoon/30 bg-lagoon/8 p-4">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Delivery action</p>
-                      <p className="mt-2 text-sm font-medium text-ink">{workflow.finalization.action}</p>
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-ink">{workflow.finalization.action}</p>
+                        {workflow.finalization.action === "artifact-bundle" && (workflow.artifacts?.length ?? 0) > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => downloadArtifactBundle(workflow.artifacts ?? [], workflow.id)}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-lagoon/40 bg-lagoon/10 px-3 py-1.5 text-xs font-medium text-lagoon transition hover:bg-lagoon/20"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Download bundle
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                   <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
@@ -1193,6 +1533,8 @@ export function WorkflowStudio() {
   const deferredSearch = useDeferredValue(search);
   const [page, setPage] = useState(0);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
+  const [liveArtifactId, setLiveArtifactId] = useState("");
+  const [studioTab, setStudioTab] = useState<"status" | "explorer" | "artifacts" | "events" | "document">("status");
   const [streaming, setStreaming] = useState(false);
   const [streamConnected, setStreamConnected] = useState(false);
   const [streamEvents, setStreamEvents] = useState<EventRecord[]>([]);
@@ -1321,6 +1663,28 @@ export function WorkflowStudio() {
 
     setStreaming(true);
   }, [selectedWorkflowId, selectedWorkflowQuery.data?.status]);
+
+  // Auto-select the most recently added artifact for the live viewer.
+  // When a new artifact arrives during an active workflow, also jump to the Artifacts tab.
+  useEffect(() => {
+    const artifacts = selectedWorkflowQuery.data?.artifacts;
+    if (!artifacts || artifacts.length === 0) {
+      setLiveArtifactId("");
+      return;
+    }
+    const newestId = artifacts[artifacts.length - 1]?.id ?? "";
+    setLiveArtifactId((current) => {
+      if (current && artifacts.some((a) => a.id === current)) return current;
+      // A new artifact appeared — switch to it and open the Artifacts tab.
+      if (newestId && newestId !== current) {
+        const status = selectedWorkflowQuery.data?.status;
+        if (status && !isWorkflowTerminal(status)) {
+          setStudioTab("artifacts");
+        }
+      }
+      return newestId;
+    });
+  }, [selectedWorkflowQuery.data?.artifacts, selectedWorkflowQuery.data?.status]);
 
   const eventsQuery = useQuery({
     queryKey: ["workflow-events", selectedWorkflowId, workspace.tenantId, workspace.scopeId],
@@ -1487,6 +1851,8 @@ export function WorkflowStudio() {
       setStreaming(false);
       setStreamConnected(false);
       setStreamEvents([]);
+      setLiveArtifactId("");
+      setStudioTab("status");
       explorerInitializedWorkflowIdRef.current = null;
       await refreshWorkflowQueries(workflow.id);
     },
@@ -1537,7 +1903,6 @@ export function WorkflowStudio() {
   });
 
   const selectedWorkflow = selectedWorkflowQuery.data;
-  const workflowOptions = workflowsQuery.data?.items ?? [];
   const taskTotal = selectedWorkflow?.tasks?.length ?? 0;
   const taskDone = completedTaskCount(selectedWorkflow?.tasks);
   const canLaunchWorkflow = Boolean(formState.request.trim()) && !launchLocked && !createWorkflowMutation.isPending;
@@ -1546,13 +1911,33 @@ export function WorkflowStudio() {
     Boolean(selectedWorkflowId) &&
     (selectedWorkflow?.status === "paused" || selectedWorkflow?.status === "failed");
 
+  const artifactCount = selectedWorkflow?.artifacts?.length ?? 0;
+  const hasBlockingIssues = (selectedWorkflow?.blocking_issues?.length ?? 0) > 0;
+
+  const studioTabs = [
+    { id: "status" as const, label: "Status", badge: hasBlockingIssues ? "!" : undefined },
+    { id: "explorer" as const, label: "Explorer", badge: undefined as string | undefined },
+    { id: "artifacts" as const, label: "Artifacts", badge: artifactCount > 0 ? String(artifactCount) : undefined },
+    { id: "events" as const, label: "Events", badge: streamConnected ? "●" : undefined },
+    { id: "document" as const, label: "Document", badge: undefined as string | undefined },
+  ] as const;
+
+  function selectWorkflow(id: string) {
+    setSelectedWorkflowId(id);
+    setStreaming(false);
+    setStreamConnected(false);
+    setStreamEvents([]);
+    setLiveArtifactId("");
+    setStudioTab("status");
+  }
+
   return (
     <div className="space-y-6 pb-28 lg:pb-8">
       <Surface className="space-y-6">
         <SectionIntro
           eyebrow="Workflow Control"
           title="Launch, inspect, and stream go-orca runs"
-          description="Tighten the selector, keep the active run above the fold, and turn the state surface into something operators can actually read under load."
+          description="Submit a request, pick a run from the selector, then use the tabs to track status, explore outputs, view live artifacts, and stream events."
           actions={<StatusBadge status={selectedWorkflow?.status} label={workflowStatusLabel(selectedWorkflow)} />}
         />
 
@@ -1804,13 +2189,16 @@ export function WorkflowStudio() {
           </div>
         </Surface>
 
-        <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+        {/* ── Selector + tabbed detail ─────────────────────────────────────── */}
+        <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+
+          {/* Left: workflow selector */}
           <div className="space-y-4">
             <Surface className="space-y-4 xl:sticky xl:top-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="eyebrow">Workflow Selector</p>
-                  <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Latest runs</h2>
+                  <p className="eyebrow">Runs</p>
+                  <h2 className="mt-1 font-display text-xl font-semibold text-ink">Workflow selector</h2>
                 </div>
                 <div className="text-right text-xs text-shell-soft">{filteredWorkflows.length} visible</div>
               </div>
@@ -1833,28 +2221,21 @@ export function WorkflowStudio() {
                     <button
                       key={workflow.id}
                       type="button"
-                      onClick={() => {
-                        setSelectedWorkflowId(workflow.id);
-                        setStreaming(false);
-                        setStreamConnected(false);
-                        setStreamEvents([]);
-                      }}
+                      onClick={() => selectWorkflow(workflow.id)}
                       className={`w-full rounded-3xl border p-4 text-left transition ${
                         selectedWorkflowId === workflow.id
                           ? "border-lagoon bg-lagoon/12 shadow-[0_16px_40px_rgb(var(--color-lagoon)/0.12)]"
                           : "border-shell-border/40 bg-shell-panel/80 hover:border-lagoon"
                       }`}
                     >
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-sm font-semibold text-ink">{workflowLabel(workflow)}</p>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-ink leading-snug [overflow-wrap:anywhere]">{workflowLabel(workflow)}</p>
                           <StatusBadge status={workflow.status} label={workflowStatusLabel(workflow)} />
                         </div>
-                        <p className="text-sm leading-6 text-shell-muted">{summarizeText(workflow.request, 110)}</p>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-shell-soft">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-shell-soft">
                           <span>{formatRelative(workflow.updated_at ?? workflow.created_at)}</span>
                           <span>{workflow.mode ?? "mode pending"}</span>
-                          <span>ID {workflow.id.slice(0, 8)}</span>
                         </div>
                       </div>
                     </button>
@@ -1879,178 +2260,319 @@ export function WorkflowStudio() {
             </Surface>
           </div>
 
-          <div className="space-y-4">
-            <Surface className="space-y-5 overflow-hidden">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div>
-                  <p className="eyebrow">Workflow State</p>
-                  <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Selected run</h2>
+          {/* Right: tabbed detail panel */}
+          <div className="min-w-0 space-y-0">
+
+            {/* Tab bar */}
+            <div className="flex items-center gap-1 overflow-x-auto rounded-t-[1.75rem] border border-b-0 border-shell-border/40 bg-shell-subtle px-4 pt-4">
+              {studioTabs.map((tab) => {
+                const active = studioTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setStudioTab(tab.id)}
+                    className={`relative flex shrink-0 items-center gap-2 rounded-t-xl px-4 py-2.5 text-sm font-medium transition ${
+                      active
+                        ? "bg-shell-panel text-ink shadow-[0_-1px_0_0_rgb(var(--color-shell-panel))]"
+                        : "text-shell-muted hover:text-ink"
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.badge ? (
+                      <span
+                        className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[0.6rem] font-bold leading-none ${
+                          tab.badge === "!" ? "bg-amber-400/25 text-amber-700 dark:text-amber-300"
+                          : tab.badge === "●" ? "bg-lagoon/20 text-lagoon"
+                          : "bg-shell-border/40 text-shell-muted"
+                        }`}
+                      >
+                        {tab.badge}
+                      </span>
+                    ) : null}
+                    {active ? (
+                      <span className="absolute bottom-0 left-4 right-4 h-px bg-shell-panel" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Tab panels */}
+            <div className="rounded-b-[1.75rem] rounded-tr-[1.75rem] border border-shell-border/40 bg-shell-panel p-5">
+
+              {/* ── Status tab ──────────────────────────────────────────────── */}
+              {studioTab === "status" ? (
+                <div className="space-y-5">
+                  {selectedWorkflow ? (
+                    <>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-lg font-semibold text-ink [overflow-wrap:anywhere]">{workflowLabel(selectedWorkflow)}</p>
+                          <p className="mt-1 text-sm leading-6 text-shell-muted">{summarizeText(selectedWorkflow.request, 160)}</p>
+                        </div>
+                        <StatusBadge status={selectedWorkflow.status} label={workflowStatusLabel(selectedWorkflow)} />
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-subtle p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Mode</p>
+                          <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{selectedWorkflow.mode ?? "pending"}</p>
+                        </div>
+                        <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-subtle p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Current persona</p>
+                          <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{workflowCurrentPersonaLabel(selectedWorkflow)}</p>
+                        </div>
+                        <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-subtle p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Task completion</p>
+                          <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{taskDone} of {taskTotal}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setStudioTab("artifacts")}
+                          className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-subtle p-4 text-left transition hover:border-lagoon/40"
+                        >
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Artifacts</p>
+                          <p className="mt-2 text-sm font-medium text-ink">{artifactCount} persisted</p>
+                        </button>
+                      </div>
+
+                      <WorkflowVisualization
+                        workflow={selectedWorkflow}
+                        selectedPersonaId={explorerSelection.kind === "persona" ? explorerSelection.id : undefined}
+                        onSelectPersona={(personaId) => {
+                          setExplorerSelection({ kind: "persona", id: personaId });
+                          setStudioTab("explorer");
+                        }}
+                        onSelectObject={(objectId) => {
+                          setExplorerSelection({ kind: "object", id: objectId });
+                          setStudioTab("explorer");
+                        }}
+                      />
+
+                      <Surface className="space-y-4 bg-shell-subtle">
+                        <WorkflowTaskBoard workflow={selectedWorkflow} />
+                      </Surface>
+
+                      <div className="flex flex-wrap items-center gap-3 text-sm text-shell-muted">
+                        <span>ID {selectedWorkflow.id.slice(0, 8)}</span>
+                        <span>Created {formatDate(selectedWorkflow.created_at)}</span>
+                        <span>Updated {formatDate(selectedWorkflow.updated_at)}</span>
+                        {selectedWorkflow.completed_at ? <span>Completed {formatDate(selectedWorkflow.completed_at)}</span> : null}
+                        {streamConnected ? (
+                          <span className="inline-flex items-center gap-2 rounded-full border border-lagoon/30 bg-lagoon/10 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-lagoon">
+                            <span className="relative flex h-2.5 w-2.5 shrink-0">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lagoon/60" />
+                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lagoon" />
+                            </span>
+                            Live stream connected
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setStreaming((current) => !current)}
+                          className={primaryButtonClassName()}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <Radio className="h-4 w-4" />
+                            {streaming ? "Pause live stream" : "Resume live stream"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancelMutation.mutate()}
+                          disabled={!canCancelWorkflow || cancelMutation.isPending}
+                          className={secondaryButtonClassName()}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <Square className="h-4 w-4" />
+                            Cancel
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resumeMutation.mutate()}
+                          disabled={!canResumeWorkflow || resumeMutation.isPending}
+                          className={secondaryButtonClassName()}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <RotateCcw className="h-4 w-4" />
+                            Resume
+                          </span>
+                        </button>
+                        <button type="button" onClick={() => refreshWorkflowQueries()} className={secondaryButtonClassName()}>
+                          <span className="inline-flex items-center gap-2">
+                            <Play className="h-4 w-4" />
+                            Refresh
+                          </span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <EmptyState title="No workflow selected" body="Pick a workflow from the selector on the left." />
+                  )}
                 </div>
+              ) : null}
 
-                <div className="w-full xl:max-w-sm">
-                  <InputLabel label="Workflow selector">
-                    <select
-                      value={selectedWorkflowId}
-                      onChange={(event) => {
-                        setSelectedWorkflowId(event.target.value);
-                        setStreaming(false);
-                        setStreamConnected(false);
-                        setStreamEvents([]);
-                      }}
-                      className={textFieldClassName()}
-                    >
-                      {workflowOptions.map((workflow: WorkflowState) => (
-                        <option key={workflow.id} value={workflow.id}>
-                          {workflowLabel(workflow)}
-                        </option>
-                      ))}
-                    </select>
-                  </InputLabel>
-                </div>
-              </div>
-
-              {selectedWorkflow ? (
-                <>
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Mode</p>
-                      <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{selectedWorkflow.mode ?? "pending"}</p>
-                    </div>
-                    <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Current persona</p>
-                      <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{workflowCurrentPersonaLabel(selectedWorkflow)}</p>
-                    </div>
-                    <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Task completion</p>
-                      <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{taskDone} of {taskTotal}</p>
-                    </div>
-                    <div className="min-w-0 rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Artifacts</p>
-                      <p className="mt-2 text-sm font-medium text-ink [overflow-wrap:anywhere]">{selectedWorkflow.artifacts?.length ?? 0} persisted</p>
-                    </div>
-                  </div>
-
-                  <WorkflowVisualization
-                    workflow={selectedWorkflow}
-                    selectedPersonaId={explorerSelection.kind === "persona" ? explorerSelection.id : undefined}
-                    onSelectPersona={(personaId) => setExplorerSelection({ kind: "persona", id: personaId })}
-                    onSelectObject={(objectId) => setExplorerSelection({ kind: "object", id: objectId })}
-                  />
-
-                  <Surface className="space-y-4 bg-shell-panel/55">
+              {/* ── Explorer tab ─────────────────────────────────────────────── */}
+              {studioTab === "explorer" ? (
+                <div className="space-y-4">
+                  {selectedWorkflow ? (
                     <WorkflowExplorer
                       workflow={selectedWorkflow}
                       events={eventsQuery.data?.items ?? []}
                       selection={explorerSelection}
                       onSelect={setExplorerSelection}
                     />
-                  </Surface>
-
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-shell-muted">
-                    <StatusBadge status={selectedWorkflow.status} label={workflowStatusLabel(selectedWorkflow)} />
-                    <span>ID {selectedWorkflow.id.slice(0, 8)}</span>
-                    <span>Created {formatDate(selectedWorkflow.created_at)}</span>
-                    <span>Updated {formatDate(selectedWorkflow.updated_at)}</span>
-                    {selectedWorkflow.completed_at ? <span>Completed {formatDate(selectedWorkflow.completed_at)}</span> : null}
-                    {streamConnected ? (
-                      <span className="inline-flex items-center gap-2 rounded-full border border-lagoon/30 bg-lagoon/10 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-lagoon">
-                        <span className="relative flex h-2.5 w-2.5 shrink-0">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lagoon/60" />
-                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lagoon" />
-                        </span>
-                        Live stream connected
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setStreaming((current) => !current)}
-                      className={primaryButtonClassName()}
-                    >
-                      <span className="inline-flex items-center gap-2">
-                        <Radio className="h-4 w-4" />
-                        {streaming ? "Pause live stream" : "Resume live stream"}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => cancelMutation.mutate()}
-                      disabled={!canCancelWorkflow || cancelMutation.isPending}
-                      className={secondaryButtonClassName()}
-                    >
-                      <span className="inline-flex items-center gap-2">
-                        <Square className="h-4 w-4" />
-                        Cancel workflow
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => resumeMutation.mutate()}
-                      disabled={!canResumeWorkflow || resumeMutation.isPending}
-                      className={secondaryButtonClassName()}
-                    >
-                      <span className="inline-flex items-center gap-2">
-                        <RotateCcw className="h-4 w-4" />
-                        Resume workflow
-                      </span>
-                    </button>
-                    <button type="button" onClick={() => refreshWorkflowQueries()} className={secondaryButtonClassName()}>
-                      <span className="inline-flex items-center gap-2">
-                        <Play className="h-4 w-4" />
-                        Refresh
-                      </span>
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <EmptyState title="No workflow selected" body="Pick a workflow from the selector to inspect the persisted state document." />
-              )}
-            </Surface>
-
-            {selectedWorkflow ? (
-              <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-                <Surface className="space-y-4">
-                  <WorkflowTaskBoard workflow={selectedWorkflow} />
-                </Surface>
-                <Surface className="space-y-4">
-                  <WorkflowDocument workflow={selectedWorkflow} />
-                </Surface>
-              </div>
-            ) : null}
-
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Surface className="space-y-4">
-                <div>
-                  <p className="eyebrow">Event Journal</p>
-                  <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Snapshot</h2>
+                  ) : (
+                    <EmptyState title="No workflow selected" body="Pick a workflow from the selector on the left." />
+                  )}
                 </div>
-                <LiveEventList
-                  events={eventsQuery.data?.items ?? []}
-                  emptyTitle="No workflow events yet"
-                  emptyBody="Pick a workflow with persisted events or launch a new run to start building its journal."
-                />
-              </Surface>
+              ) : null}
 
-              <Surface className="space-y-4">
-                <div>
-                  <p className="eyebrow">SSE Stream</p>
-                  <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Live feed</h2>
-                  <p className="mt-2 text-sm leading-6 text-shell-muted">
-                    {streamConnected
-                      ? "Connected to the selected workflow stream. Incoming persona and task events will land here immediately."
-                      : selectedWorkflow && !isWorkflowTerminal(selectedWorkflow.status)
-                        ? "The selected workflow auto-connects while it is active. Use the live stream toggle if you need to pause or reconnect."
-                        : "Select a running workflow to attach a live event feed."}
-                  </p>
+              {/* ── Artifacts tab ────────────────────────────────────────────── */}
+              {studioTab === "artifacts" ? (
+                <div className="space-y-4">
+                  {artifactCount > 0 ? (() => {
+                    const artifacts = selectedWorkflow?.artifacts ?? [];
+                    const isActive = selectedWorkflow != null && !isWorkflowTerminal(selectedWorkflow.status);
+                    const activeArtifact =
+                      artifacts.find((a) => a.id === liveArtifactId) ?? artifacts[artifacts.length - 1];
+
+                    return (
+                      <>
+                        {/* Artifact pill strip */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {artifacts.map((artifact) => {
+                            const selected = artifact.id === activeArtifact?.id;
+                            const isNewest = artifact.id === artifacts[artifacts.length - 1]?.id;
+                            return (
+                              <button
+                                key={artifact.id}
+                                type="button"
+                                onClick={() => setLiveArtifactId(artifact.id)}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                                  selected
+                                    ? "border-lagoon bg-lagoon/10 text-lagoon"
+                                    : "border-shell-border/40 bg-shell-subtle text-shell-muted hover:border-lagoon/40 hover:text-ink"
+                                }`}
+                              >
+                                {isCodeKind(artifact.kind) ? (
+                                  <FileCode2 className="h-3 w-3 shrink-0" />
+                                ) : (
+                                  <FileText className="h-3 w-3 shrink-0" />
+                                )}
+                                <span className="max-w-[12rem] truncate">{artifactLabel(artifact)}</span>
+                                <span className={`rounded-full px-1.5 py-0.5 text-[0.58rem] font-semibold uppercase tracking-wider ${selected ? "bg-lagoon/20 text-lagoon" : "bg-shell-border/30 text-shell-soft"}`}>
+                                  {artifact.kind ?? "artifact"}
+                                </span>
+                                {isActive && isNewest ? (
+                                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-lagoon" />
+                                ) : null}
+                              </button>
+                            );
+                          })}
+
+                          {artifactCount > 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => downloadArtifactBundle(artifacts, selectedWorkflow?.id ?? "")}
+                              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-shell-border/40 bg-shell-subtle px-3 py-1.5 text-xs font-medium text-shell-soft transition hover:border-lagoon/50 hover:text-lagoon"
+                            >
+                              <Download className="h-3 w-3" />
+                              Download all
+                            </button>
+                          ) : null}
+                        </div>
+
+                        {/* Live viewer — full width, auto-follows writing */}
+                        {activeArtifact ? (
+                          <ArtifactViewer
+                            artifact={activeArtifact}
+                            isLive={isActive}
+                            autoFollow={isActive}
+                          />
+                        ) : null}
+                      </>
+                    );
+                  })() : (
+                    <EmptyState
+                      title="No artifacts yet"
+                      body={
+                        selectedWorkflow
+                          ? "Artifacts appear here as the Implementer generates them. Check the Status tab for progress."
+                          : "Pick a workflow from the selector on the left."
+                      }
+                    />
+                  )}
                 </div>
-                <LiveEventList
-                  events={streamEvents}
-                  emptyTitle="No live events yet"
-                  emptyBody="The live feed auto-attaches to active workflows. Pick a running workflow or reconnect the stream to watch events arrive in real time."
-                />
-              </Surface>
+              ) : null}
+
+              {/* ── Events tab ───────────────────────────────────────────────── */}
+              {studioTab === "events" ? (
+                <div className="space-y-6">
+                  <div className="grid gap-5 xl:grid-cols-2">
+                    <div className="space-y-4">
+                      <div>
+                        <p className="eyebrow">Event Journal</p>
+                        <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Snapshot</h2>
+                        <p className="mt-2 text-sm leading-6 text-shell-muted">Persisted events for the selected workflow, newest first.</p>
+                      </div>
+                      <LiveEventList
+                        events={eventsQuery.data?.items ?? []}
+                        emptyTitle="No workflow events yet"
+                        emptyBody="Pick a workflow with persisted events or launch a new run."
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <p className="eyebrow">SSE Stream</p>
+                        <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Live feed</h2>
+                        <p className="mt-2 text-sm leading-6 text-shell-muted">
+                          {streamConnected
+                            ? "Connected. Incoming persona and task events land here immediately."
+                            : selectedWorkflow && !isWorkflowTerminal(selectedWorkflow.status)
+                              ? "Auto-connects to active workflows. Toggle the stream below."
+                              : "Select a running workflow to attach a live event feed."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setStreaming((current) => !current)}
+                          className={secondaryButtonClassName()}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <Radio className="h-4 w-4" />
+                            {streaming ? "Pause stream" : "Connect stream"}
+                          </span>
+                        </button>
+                      </div>
+                      <LiveEventList
+                        events={streamEvents}
+                        emptyTitle="No live events yet"
+                        emptyBody="Pick a running workflow or connect the stream to watch events arrive in real time."
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── Document tab ─────────────────────────────────────────────── */}
+              {studioTab === "document" ? (
+                <div className="space-y-4">
+                  {selectedWorkflow ? (
+                    <WorkflowDocument workflow={selectedWorkflow} />
+                  ) : (
+                    <EmptyState title="No workflow selected" body="Pick a workflow from the selector on the left." />
+                  )}
+                </div>
+              ) : null}
+
             </div>
           </div>
         </div>

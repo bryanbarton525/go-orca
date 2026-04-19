@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "blocking_issues": [],
+  "warnings": [],
+  "suggestions": [
+    "Consider adding a section about the go-orca UI's accessibility features and keyboard navigation",
+    "Could expand on MCP tool schema validation in code examples"
+  ],
+  "coverage_score": 92,
+  "quality_score": 88,
+  "summary": "Blog post artifact validates successfully against all blocking issues. Code examples use idiomatic Go with proper generics, error wrapping, and MCP integration. UI section expanded with specific dashboard dimensions, debugging tools, metric specifications, and API endpoints. All package paths follow Go module conventions. The article covers all functional requirements (intro, architecture, UI, differentiation, code examples, benefits, CTA) with appropriate heading hierarchy, SEO metadata within character limits, and self-contained content. Minor suggestions for accessibility documentation and schema validation depth, but no blockers remain."
+}
