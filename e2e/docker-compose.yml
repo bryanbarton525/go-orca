@@ -17,7 +17,7 @@ services:
       start_period: 10s
 
   ui:
-    image: ghcr.io/bryanbarton525/go-orca-ui:latest
+    image: ghcr.io/bryanbarton525/molokini:latest
     ports:
       - "3000:3000"
     environment:

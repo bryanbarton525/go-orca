@@ -147,7 +147,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/bryanbarton525/go-orca-ui
+          images: ghcr.io/bryanbarton525/molokini
           tags: |
             type=sha,prefix=sha-,format=short
             type=raw,value=latest,enable={{is_default_branch}}
@@ -200,7 +200,7 @@ jobs:
       - name: Pull latest images
         run: |
           docker pull ghcr.io/bryanbarton525/go-orca-api:latest
-          docker pull ghcr.io/bryanbarton525/go-orca-ui:latest
+          docker pull ghcr.io/bryanbarton525/molokini:latest
 
       - name: Start services
         run: docker compose up -d
