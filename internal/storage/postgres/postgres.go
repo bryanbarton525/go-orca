@@ -454,6 +454,9 @@ type scanner interface {
 func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	ws := &state.WorkflowState{}
 	var (
+		providerName          *string
+		modelName             *string
+		errorMessage          *string
 		constitution          []byte
 		requirements          []byte
 		design                []byte
@@ -473,7 +476,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 
 	err := row.Scan(
 		&ws.ID, &ws.TenantID, &ws.ScopeID, &ws.Status, &ws.Mode, &ws.Title, &ws.Request,
-		&ws.ProviderName, &ws.ModelName, &ws.ErrorMessage,
+		&providerName, &modelName, &errorMessage,
 		&constitution, &requirements, &design, &tasks, &artifacts,
 		&finalization, &summaries, &blockingIssues,
 		&allSuggestions, &personaPromptSnapshot, &requiredPersonas, &ws.FinalizerAction,
@@ -483,6 +486,16 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if providerName != nil {
+		ws.ProviderName = *providerName
+	}
+	if modelName != nil {
+		ws.ModelName = *modelName
+	}
+	if errorMessage != nil {
+		ws.ErrorMessage = *errorMessage
 	}
 
 	unmarshal := func(data []byte, v interface{}) error {
