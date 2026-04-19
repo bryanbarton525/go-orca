@@ -3,14 +3,13 @@
 services:
   api:
     image: ghcr.io/bryanbarton525/go-orca-api:latest
+    command: ["-config", "/etc/go-orca/config.yaml"]
     ports:
       - "8080:8080"
-    environment:
-      GOORCA_CONFIG: /etc/go-orca/config.yaml
     volumes:
       - ./api-config.yaml:/etc/go-orca/config.yaml:ro
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/orca/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 5s
       timeout: 5s
       retries: 10
