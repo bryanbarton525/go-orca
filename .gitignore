@@ -1,6 +1,7 @@
 *.db*
 .env
 .DS_Store
+/go-orca-api
 
 # Local workflow scratch and output files
 .finalization.json
