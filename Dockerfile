@@ -12,18 +12,32 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux \
     go build -ldflags="-s -w" -o /go-orca-api ./cmd/go-orca-api
 
+# ─── Copilot CLI stage ────────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS copilot-cli
+
+ARG COPILOT_CLI_VERSION=1.0.32
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -qO /tmp/copilot.tar.gz \
+       "https://github.com/github/copilot-cli/releases/download/v${COPILOT_CLI_VERSION}/copilot-linux-x64.tar.gz" \
+    && tar -xzf /tmp/copilot.tar.gz -C /tmp \
+    && chmod +x /tmp/copilot \
+    && rm /tmp/copilot.tar.gz
+
 # ─── Runtime stage ────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy binary
 COPY --from=builder /go-orca-api ./go-orca-api
+
+# Copy copilot CLI binary
+COPY --from=copilot-cli /tmp/copilot /usr/local/bin/copilot
 
 # Copy built-in skills, agent overlays, persona prompts, and DB migrations
 COPY skills/ ./skills/
