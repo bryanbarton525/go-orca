@@ -17,4 +17,4 @@ database:
   conn_max_lifetime: "5m"
   auto_migrate: true
 
-providers: []
+providers: {}
