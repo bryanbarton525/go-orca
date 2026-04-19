@@ -24,9 +24,10 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /go-orca-api ./go-orca-api
 
-# Copy built-in skills and agent overlays
+# Copy built-in skills, agent overlays, and DB migrations
 COPY skills/ ./skills/
 COPY customization/ ./customization/
+COPY internal/storage/migrations/ ./internal/storage/migrations/
 
 # Non-root user
 RUN useradd -u 1001 -M -s /sbin/nologin orca
