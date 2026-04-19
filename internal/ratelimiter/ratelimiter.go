@@ -75,12 +75,12 @@ func (rl *RateLimiter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // refill replenishes tokens based on elapsed time.
 func (rl *RateLimiter) refill(ctx context.Context) error {
 	now := time.Now()
-	elapsed := now.Sub(rl.lastRefill).Seconds()
-	tokensToAdd := elapsed * float64(rl.rate)
 
 	rl.tokensMu.Lock()
 	defer rl.tokensMu.Unlock()
 
+	elapsed := now.Sub(rl.lastRefill).Seconds()
+	tokensToAdd := elapsed * float64(rl.rate)
 	rl.tokens = min(float64(rl.burst), rl.tokens+tokensToAdd)
 	rl.lastRefill = now
 
@@ -96,6 +96,8 @@ func (rl *RateLimiter) refill(ctx context.Context) error {
 
 // recalcWaitTime calculates how long to wait before tokens are available again.
 func (rl *RateLimiter) recalcWaitTime() time.Duration {
+	rl.tokensMu.Lock()
 	needed := 1.0 - rl.tokens
+	rl.tokensMu.Unlock()
 	return time.Duration(float64(time.Second) * needed / float64(rl.rate))
 }
