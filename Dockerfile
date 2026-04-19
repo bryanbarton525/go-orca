@@ -25,9 +25,10 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /go-orca-api ./go-orca-api
 
-# Copy built-in skills, agent overlays, and DB migrations
+# Copy built-in skills, agent overlays, persona prompts, and DB migrations
 COPY skills/ ./skills/
 COPY customization/ ./customization/
+COPY prompts/ ./prompts/
 COPY internal/storage/migrations/ ./internal/storage/migrations/
 
 # Non-root user
