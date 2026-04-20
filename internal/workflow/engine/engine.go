@@ -32,13 +32,18 @@ import (
 )
 
 // ScopeResolver resolves a scope ID to its ancestor slug chain.
-// The engine uses this to pass scope slugs (not UUIDs) to the
-// customization registry, which filters sources by slug.
 type ScopeResolver interface {
-	// ScopeSlugsForID returns the ordered slug chain for a scope (scope itself
-	// first, then ancestors up to global).  Returns nil on error — callers
-	// treat a nil chain as "all scopes match".
 	ScopeSlugsForID(ctx context.Context, scopeID string) []string
+}
+
+// AttachmentStore is the persistence interface for attachment ingestion.
+type AttachmentStore interface {
+	ListAttachmentsByWorkflow(ctx context.Context, workflowID string) ([]*state.Attachment, error)
+	ListAttachmentsBySession(ctx context.Context, sessionID string) ([]*state.Attachment, error)
+	GetAttachment(ctx context.Context, id string) (*state.Attachment, error)
+	UpdateAttachmentStatus(ctx context.Context, id string, status state.AttachmentStatus, summary string, chunkCount int, errMsg string) error
+	CreateAttachmentChunks(ctx context.Context, chunks []state.AttachmentChunk) error
+	ListAttachmentChunks(ctx context.Context, attachmentID string) ([]state.AttachmentChunk, error)
 }
 
 // Store is the persistence interface required by the Engine.
@@ -147,6 +152,27 @@ type Options struct {
 	// ## Available tools section.
 	// When nil, no tool context is injected.
 	ToolRegistry *tools.Registry
+
+	// AttachmentStore provides access to upload sessions, attachments, and
+	// chunks for the pre-Director ingestion stage.  When nil, ingestion is
+	// skipped even if the workflow has an upload_session_id.
+	AttachmentStore AttachmentStore
+
+	// IngestionProvider is the provider name used for attachment summarisation.
+	// Falls back to DefaultProvider when empty.
+	IngestionProvider string
+	// IngestionModel is the model used for attachment summarisation.
+	// Falls back to DefaultModel when empty.
+	IngestionModel string
+	// IngestionMaxWorkers limits parallel attachment processing goroutines.
+	// Defaults to 4.
+	IngestionMaxWorkers int
+	// IngestionTimeout is the per-attachment summarisation timeout.
+	// Defaults to 5 minutes.
+	IngestionTimeout time.Duration
+	// IngestionChunkSize is the max character count per attachment chunk.
+	// Defaults to 4000.
+	IngestionChunkSize int
 }
 
 func (o *Options) applyDefaults() {
@@ -164,6 +190,15 @@ func (o *Options) applyDefaults() {
 	}
 	if o.ModelDiscoveryTimeout <= 0 {
 		o.ModelDiscoveryTimeout = defaultModelDiscoveryTimeout
+	}
+	if o.IngestionMaxWorkers <= 0 {
+		o.IngestionMaxWorkers = 4
+	}
+	if o.IngestionTimeout <= 0 {
+		o.IngestionTimeout = 5 * time.Minute
+	}
+	if o.IngestionChunkSize <= 0 {
+		o.IngestionChunkSize = 4000
 	}
 }
 
@@ -348,6 +383,16 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 			}
 		}
 		return false
+	}
+
+	// Phase 0: Pre-Director attachment ingestion (engine-owned, not a persona).
+	if ws.UploadSessionID != "" && e.opts.AttachmentStore != nil {
+		if err := e.ensureAttachmentProcessing(ctx, ws); err != nil {
+			return fmt.Errorf("attachment ingestion: %w", err)
+		}
+		if err := e.checkControlState(ctx, ws); err != nil {
+			return err
+		}
 	}
 
 	// Phase 1: Director (always mandatory)
@@ -1085,6 +1130,8 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		DeliveryConfig:        ws.DeliveryConfig,
 		QACycle:               ws.Execution.QACycle,
 		RemediationAttempt:    ws.Execution.RemediationAttempt,
+		InputDocuments:            ws.InputDocuments,
+		InputDocumentCorpusSummary: ws.InputDocumentCorpusSummary,
 	}
 
 	// Populate customization context from the workflow-start snapshot.

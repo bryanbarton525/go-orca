@@ -118,6 +118,7 @@ func main() {
 	// ── Register built-in tools ───────────────────────────────────────────────
 	toolReg := tools.NewRegistry()
 	builtin.RegisterAll(toolReg)
+	builtin.RegisterAttachmentTools(toolReg, store)
 	log.Info("builtin tools registered", zap.Int("count", len(toolReg.All())))
 
 	// ── Load MCP tools from config ────────────────────────────────────────────
@@ -157,6 +158,12 @@ func main() {
 		PersonaRetryBackoff:   cfg.Workflow.PersonaRetryBackoff,
 		ImprovementsRoot:      improvementsRoot,
 		ToolRegistry:          toolReg,
+		AttachmentStore:       store,
+		IngestionProvider:     cfg.Workflow.Ingestion.Provider,
+		IngestionModel:        cfg.Workflow.Ingestion.Model,
+		IngestionMaxWorkers:   cfg.Workflow.Ingestion.MaxWorkers,
+		IngestionTimeout:      cfg.Workflow.Ingestion.Timeout,
+		IngestionChunkSize:    cfg.Workflow.Ingestion.ChunkSize,
 	})
 
 	// Build the scheduler with the real engine.
@@ -185,6 +192,8 @@ func main() {
 		DefaultTenantID:       defaultTenant.ID,
 		DefaultScopeID:        defaultScope.ID,
 		CustomizationRegistry: customReg,
+		IngestionCfg:          cfg.Workflow.Ingestion,
+		ArtifactStoragePath:   cfg.Workflow.ArtifactStoragePath,
 		GinMode:               cfg.Server.Mode,
 	})
 

@@ -242,3 +242,42 @@ func (s *recoveryTestStore) Ping(context.Context) error {
 func (s *recoveryTestStore) Close() error {
 	return nil
 }
+
+// ── AttachmentStore stubs ────────────────────────────────────────────────────
+
+func (s *recoveryTestStore) CreateUploadSession(context.Context, *state.UploadSession) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) GetUploadSession(context.Context, string) (*state.UploadSession, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) ConsumeUploadSession(context.Context, string, string, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) AbortUploadSession(context.Context, string, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) CreateAttachment(context.Context, *state.Attachment) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) GetAttachment(context.Context, string) (*state.Attachment, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) ListAttachmentsBySession(context.Context, string) ([]*state.Attachment, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) ListAttachmentsByWorkflow(context.Context, string) ([]*state.Attachment, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) UpdateAttachmentStatus(context.Context, string, state.AttachmentStatus, string, int, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) CreateAttachmentChunks(context.Context, []state.AttachmentChunk) error {
+	return fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) GetAttachmentChunk(context.Context, string, int) (*state.AttachmentChunk, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *recoveryTestStore) ListAttachmentChunks(context.Context, string) ([]state.AttachmentChunk, error) {
+	return nil, fmt.Errorf("not implemented")
+}

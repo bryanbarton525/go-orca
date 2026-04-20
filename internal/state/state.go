@@ -208,6 +208,22 @@ type WorkflowState struct {
 	// persisted here.  Stored as raw JSON so each action can define its own shape.
 	DeliveryConfig json.RawMessage `json:"delivery_config,omitempty"`
 
+	// InputDocuments is the compact per-document manifest built by the
+	// pre-Director attachment ingestion stage.  It is immutable once set and
+	// included in every HandoffPacket so all personas see the same view.
+	InputDocuments []InputDocument `json:"input_documents,omitempty"`
+
+	// InputDocumentCorpusSummary is a single LLM-generated summary of all
+	// input documents, produced by the ingestion stage.
+	InputDocumentCorpusSummary string `json:"input_document_corpus_summary,omitempty"`
+
+	// AttachmentProcessing tracks aggregate ingestion progress.
+	// Nil when no attachments were submitted.
+	AttachmentProcessing *AttachmentProcessing `json:"attachment_processing,omitempty"`
+
+	// UploadSessionID is set when the workflow was created with staged uploads.
+	UploadSessionID string `json:"upload_session_id,omitempty"`
+
 	// Execution holds live progress metadata for in-flight workflows.
 	// Updated by the engine at every persona/task boundary.
 	Execution Execution `json:"execution,omitempty"`
@@ -419,6 +435,12 @@ type HandoffPacket struct {
 	CustomAgentMD  string `json:"custom_agent_md,omitempty"` // loaded .agent.md
 	SkillsContext  string `json:"skills_context,omitempty"`  // loaded SKILL.md content
 	PromptsContext string `json:"prompts_context,omitempty"` // loaded .prompt.md
+
+	// InputDocuments is the compact per-document manifest from ingestion.
+	InputDocuments []InputDocument `json:"input_documents,omitempty"`
+	// InputDocumentCorpusSummary is the merged summary of all input documents.
+	InputDocumentCorpusSummary string `json:"input_document_corpus_summary,omitempty"`
+
 	// ToolsContext is a formatted markdown description of available tools,
 	// injected into every persona's system prompt.  Populated by the engine
 	// from the global tool registry at workflow start.
@@ -524,4 +546,99 @@ type Scope struct {
 	ParentScopeID string    `json:"parent_scope_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// ─── Attachment ingestion ─────────────────────────────────────────────────────
+
+// UploadSessionStatus represents the lifecycle of a staged upload session.
+type UploadSessionStatus string
+
+const (
+	UploadSessionOpen     UploadSessionStatus = "open"
+	UploadSessionConsumed UploadSessionStatus = "consumed"
+	UploadSessionExpired  UploadSessionStatus = "expired"
+	UploadSessionAborted  UploadSessionStatus = "aborted"
+)
+
+// UploadSession is a staged upload session created before workflow submission.
+type UploadSession struct {
+	ID         string              `json:"id"`
+	TenantID   string              `json:"tenant_id"`
+	ScopeID    string              `json:"scope_id"`
+	Status     UploadSessionStatus `json:"status"`
+	WorkflowID string              `json:"workflow_id,omitempty"` // set when consumed
+	ExpiresAt  time.Time           `json:"expires_at"`
+	CreatedAt  time.Time           `json:"created_at"`
+	UpdatedAt  time.Time           `json:"updated_at"`
+}
+
+// AttachmentStatus represents the processing state of a single attachment.
+type AttachmentStatus string
+
+const (
+	AttachmentPending       AttachmentStatus = "pending"
+	AttachmentStatusRunning AttachmentStatus = "processing"
+	AttachmentCompleted     AttachmentStatus = "completed"
+	AttachmentFailed        AttachmentStatus = "failed"
+)
+
+// Attachment is a user-uploaded file associated with a workflow.
+type Attachment struct {
+	ID              string           `json:"id"`
+	UploadSessionID string           `json:"upload_session_id"`
+	WorkflowID      string           `json:"workflow_id,omitempty"`
+	TenantID        string           `json:"tenant_id"`
+	ScopeID         string           `json:"scope_id"`
+	Filename        string           `json:"filename"`
+	ContentType     string           `json:"content_type"`
+	SizeBytes       int64            `json:"size_bytes"`
+	StoragePath     string           `json:"storage_path"`
+	Status          AttachmentStatus `json:"status"`
+	Summary         string           `json:"summary,omitempty"`
+	ChunkCount      int              `json:"chunk_count,omitempty"`
+	ErrorMessage    string           `json:"error_message,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+// AttachmentChunk is a segment of a chunked attachment for retrieval.
+type AttachmentChunk struct {
+	ID           string `json:"id"`
+	AttachmentID string `json:"attachment_id"`
+	WorkflowID   string `json:"workflow_id"`
+	Index        int    `json:"index"`
+	Content      string `json:"content"`
+}
+
+// AttachmentProcessingStatus is the workflow-level attachment ingestion state.
+type AttachmentProcessingStatus string
+
+const (
+	AttachmentProcessingPending    AttachmentProcessingStatus = "pending"
+	AttachmentProcessingRunning    AttachmentProcessingStatus = "running"
+	AttachmentProcessingCompleted  AttachmentProcessingStatus = "completed"
+	AttachmentProcessingFailed     AttachmentProcessingStatus = "failed"
+	AttachmentProcessingCancelled  AttachmentProcessingStatus = "cancelled"
+)
+
+// AttachmentProcessing tracks aggregate ingestion progress on a workflow.
+type AttachmentProcessing struct {
+	Status       AttachmentProcessingStatus `json:"status"`
+	TotalCount   int                        `json:"total_count"`
+	DoneCount    int                        `json:"done_count"`
+	FailedCount  int                        `json:"failed_count"`
+	ErrorMessage string                     `json:"error_message,omitempty"`
+	StartedAt    *time.Time                 `json:"started_at,omitempty"`
+	CompletedAt  *time.Time                 `json:"completed_at,omitempty"`
+}
+
+// InputDocument is the compact per-document metadata persisted on the workflow
+// for inclusion in handoff packets.
+type InputDocument struct {
+	AttachmentID string `json:"attachment_id"`
+	Filename     string `json:"filename"`
+	ContentType  string `json:"content_type"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Summary      string `json:"summary"`
+	ChunkCount   int    `json:"chunk_count"`
 }

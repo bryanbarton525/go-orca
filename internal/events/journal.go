@@ -42,6 +42,13 @@ const (
 	// MaxQARetries with blocking issues still present.  The workflow
 	// continues to the Finalizer rather than failing.
 	EventQAExhausted EventType = "qa.exhausted"
+
+	// Attachment ingestion lifecycle events.
+	EventAttachmentProcessingStarted   EventType = "attachment.processing.started"
+	EventAttachmentProcessed           EventType = "attachment.processed"
+	EventAttachmentProcessingCompleted EventType = "attachment.processing.completed"
+	EventAttachmentProcessingFailed    EventType = "attachment.processing.failed"
+	EventAttachmentProcessingCancelled EventType = "attachment.processing.cancelled"
 )
 
 // Event is a single immutable journal entry for a workflow.
@@ -178,6 +185,41 @@ type RefinerSuggestionPayload struct {
 type QAExhaustedPayload struct {
 	RetriesAllowed int      `json:"retries_allowed"`
 	BlockingIssues []string `json:"blocking_issues"`
+}
+
+// ─── Attachment ingestion payloads ────────────────────────────────────────────
+
+// AttachmentProcessingStartedPayload is the payload for EventAttachmentProcessingStarted.
+type AttachmentProcessingStartedPayload struct {
+	TotalCount int `json:"total_count"`
+}
+
+// AttachmentProcessedPayload is the payload for EventAttachmentProcessed.
+type AttachmentProcessedPayload struct {
+	AttachmentID string `json:"attachment_id"`
+	Filename     string `json:"filename"`
+	SizeBytes    int64  `json:"size_bytes"`
+	ChunkCount   int    `json:"chunk_count"`
+	DurationMs   int64  `json:"duration_ms"`
+}
+
+// AttachmentProcessingCompletedPayload is the payload for EventAttachmentProcessingCompleted.
+type AttachmentProcessingCompletedPayload struct {
+	TotalCount int   `json:"total_count"`
+	DurationMs int64 `json:"duration_ms"`
+}
+
+// AttachmentProcessingFailedPayload is the payload for EventAttachmentProcessingFailed.
+type AttachmentProcessingFailedPayload struct {
+	Error        string `json:"error"`
+	AttachmentID string `json:"attachment_id,omitempty"` // if failure is per-attachment
+	Filename     string `json:"filename,omitempty"`
+}
+
+// AttachmentProcessingCancelledPayload is the payload for EventAttachmentProcessingCancelled.
+type AttachmentProcessingCancelledPayload struct {
+	ProcessedCount int `json:"processed_count"`
+	TotalCount     int `json:"total_count"`
 }
 
 // ─── Journal note ─────────────────────────────────────────────────────────────

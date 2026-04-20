@@ -212,6 +212,33 @@ type WorkflowConfig struct {
 	// MaxQARetries is the maximum number of times the Implementer will be
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	MaxQARetries int `mapstructure:"max_qa_retries"`
+
+	// Ingestion controls the pre-Director attachment processing stage.
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
+}
+
+// IngestionConfig controls the pre-Director attachment processing stage.
+type IngestionConfig struct {
+	// Provider is the LLM provider used for summarisation during ingestion.
+	// When empty, the workflow's own provider is used.
+	Provider string `mapstructure:"provider"`
+	// Model is the LLM model used for summarisation during ingestion.
+	// When empty, the workflow's own model is used.
+	Model string `mapstructure:"model"`
+	// MaxWorkers limits the number of concurrent per-document ingestion goroutines.
+	MaxWorkers int `mapstructure:"max_workers"`
+	// Timeout is the maximum wall-clock time allowed for the ingestion stage.
+	Timeout time.Duration `mapstructure:"timeout"`
+	// MaxFileSize is the maximum allowed file size in bytes.
+	MaxFileSize int64 `mapstructure:"max_file_size"`
+	// AllowedTypes is the set of allowed file extensions (with leading dot).
+	// When empty a default set of text-like types is used.
+	AllowedTypes []string `mapstructure:"allowed_types"`
+	// ChunkSize is the target character count per chunk when splitting large documents.
+	ChunkSize int `mapstructure:"chunk_size"`
+	// UploadSessionTTL controls how long an upload session stays open before
+	// being considered expired.
+	UploadSessionTTL time.Duration `mapstructure:"upload_session_ttl"`
 }
 
 // Load reads configuration from the given file (if set) and merges with
@@ -310,6 +337,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.persona_max_retries", 3)
 	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)
 	v.SetDefault("workflow.max_qa_retries", 2)
+
+	// Attachment ingestion defaults
+	v.SetDefault("workflow.ingestion.max_workers", 4)
+	v.SetDefault("workflow.ingestion.timeout", 5*time.Minute)
+	v.SetDefault("workflow.ingestion.max_file_size", 10*1024*1024) // 10 MB
+	v.SetDefault("workflow.ingestion.chunk_size", 4000)
+	v.SetDefault("workflow.ingestion.upload_session_ttl", 30*time.Minute)
 
 	// GitHub delivery
 	v.SetDefault("github.token", "")

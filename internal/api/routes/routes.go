@@ -8,6 +8,7 @@ import (
 	"github.com/go-orca/go-orca/docs"
 	"github.com/go-orca/go-orca/internal/api/handlers"
 	"github.com/go-orca/go-orca/internal/api/middleware"
+	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/storage"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
@@ -21,6 +22,8 @@ type Config struct {
 	DefaultTenantID       string
 	DefaultScopeID        string
 	CustomizationRegistry *customization.Registry
+	IngestionCfg          config.IngestionConfig
+	ArtifactStoragePath   string
 	// GinMode sets gin.SetMode; defaults to "release".
 	GinMode string
 }
@@ -62,6 +65,16 @@ func New(cfg Config) *gin.Engine {
 			wf.GET("/:id/stream", handlers.StreamWorkflowEvents(cfg.Store))
 			wf.POST("/:id/cancel", handlers.CancelWorkflow(cfg.Store, cfg.Logger))
 			wf.POST("/:id/resume", handlers.ResumeWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
+			wf.GET("/:id/attachments", handlers.ListWorkflowAttachments(cfg.Store))
+		}
+
+		// ── Upload Sessions ──────────────────────────────────────────────────
+		us := v1.Group("/upload-sessions")
+		{
+			us.POST("", handlers.CreateUploadSession(cfg.Store, cfg.IngestionCfg, cfg.Logger))
+			us.POST("/:sessionId/files", handlers.UploadFile(cfg.Store, cfg.IngestionCfg, cfg.ArtifactStoragePath, cfg.Logger))
+			us.GET("/:sessionId/files", handlers.ListSessionFiles(cfg.Store))
+			us.POST("/:sessionId/abort", handlers.AbortUploadSession(cfg.Store, cfg.Logger))
 		}
 
 		// ── Providers ────────────────────────────────────────────────────────

@@ -498,6 +498,33 @@ components:
           type: string
           format: date-time
           nullable: true
+        upload_session_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the upload session bound to this workflow.
+        attachment_processing:
+          nullable: true
+          $ref: '#/components/schemas/AttachmentProcessing'
+        input_documents:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              attachment_id:
+                type: string
+              filename:
+                type: string
+              summary:
+                type: string
+              chunk_count:
+                type: integer
+          description: Snapshot of ingested documents available to personas.
+        input_document_corpus_summary:
+          type: string
+          nullable: true
+          description: LLM-generated summary of all attached documents.
 
     Tenant:
       type: object
@@ -701,6 +728,81 @@ components:
           additionalProperties: true
           description: Merged effective configuration for this scope.
 
+    # ── Upload Session & Attachment ─────────────────────────────────────────────
+
+    UploadSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [open, consumed, aborted]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    Attachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        workflow_id:
+          type: string
+          format: uuid
+          nullable: true
+        filename:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        summary:
+          type: string
+          nullable: true
+        chunk_count:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AttachmentProcessing:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [running, completed, failed]
+        total_count:
+          type: integer
+        done_count:
+          type: integer
+        failed_count:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
     # ── Request bodies ──────────────────────────────────────────────────────────
 
     CreateWorkflowRequest:
@@ -731,6 +833,13 @@ components:
           type: string
           description: Override the model for this workflow run.
           example: gpt-4o
+        upload_session_id:
+          type: string
+          description: >
+            ID of a previously created upload session. When provided, the
+            session's attachments are bound to the workflow and ingested
+            before the Director phase begins.
+          example: 550e8400-e29b-41d4-a716-446655440000
 
     CreateTenantRequest:
       type: object
@@ -1180,6 +1289,166 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "workflow is not paused"
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ── Upload Sessions ─────────────────────────────────────────────────────────
+
+  /api/v1/upload-sessions:
+    post:
+      summary: Create an upload session
+      description: >
+        Creates a new upload session for staging file attachments.
+        Files uploaded to the session can later be bound to a workflow
+        by passing the session ID in the create-workflow request.
+      operationId: createUploadSession
+      tags:
+        - upload-sessions
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+      responses:
+        "201":
+          description: Upload session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/upload-sessions/{sessionId}/files:
+    post:
+      summary: Upload a file to a session
+      description: >
+        Uploads a file to an open upload session. The file is persisted
+        to disk and an attachment record is created. Accepts multipart
+        form data with a `file` field.
+      operationId: uploadFile
+      tags:
+        - upload-sessions
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+      responses:
+        "201":
+          description: File uploaded and attachment created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "413":
+          description: File exceeds maximum size.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "415":
+          description: File type not supported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    get:
+      summary: List files in a session
+      operationId: listSessionFiles
+      tags:
+        - upload-sessions
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of attachments in the session.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attachment'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/upload-sessions/{sessionId}/abort:
+    post:
+      summary: Abort an upload session
+      operationId: abortUploadSession
+      tags:
+        - upload-sessions
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session aborted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: aborted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/workflows/{id}/attachments:
+    get:
+      summary: List workflow attachments
+      operationId: listWorkflowAttachments
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/WorkflowID'
+      responses:
+        "200":
+          description: List of attachments bound to the workflow.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attachment'
+        "404":
+          $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
 

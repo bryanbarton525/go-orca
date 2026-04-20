@@ -92,6 +92,18 @@ func (s *Store) Migrate() error {
 			}
 		}
 	}
+	// Idempotently add columns introduced in schema v008.
+	for _, stmt := range sqliteAlterV008 {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("sqlite migrate v008: %w", err)
+			}
+		}
+	}
+	// Create attachment tables (v008).
+	if _, err := s.db.Exec(sqliteAttachmentDDL); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -119,14 +131,16 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		   tasks, artifacts, finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		   delivery_action, delivery_config,
+		   upload_session_id, input_documents, input_document_corpus_summary, attachment_processing,
 		   created_at, updated_at, execution)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		p.constitution, p.requirements, p.design,
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
 		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
 		ws.DeliveryAction, p.deliveryConfig,
+		ws.UploadSessionID, p.inputDocuments, ws.InputDocumentCorpusSummary, p.attachmentProcessing,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(), p.execution,
 	)
 	return err
@@ -150,9 +164,10 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		   delivery_action, delivery_config,
+		   upload_session_id, input_documents, input_document_corpus_summary, attachment_processing,
 		   created_at, updated_at, started_at, completed_at, execution,
 		   persona_models, provider_catalogs)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  status=excluded.status, mode=excluded.mode, title=excluded.title,
 		  provider_name=excluded.provider_name, model_name=excluded.model_name,
@@ -167,6 +182,10 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  finalizer_action=excluded.finalizer_action,
 		  delivery_action=excluded.delivery_action,
 		  delivery_config=excluded.delivery_config,
+		  upload_session_id=excluded.upload_session_id,
+		  input_documents=excluded.input_documents,
+		  input_document_corpus_summary=excluded.input_document_corpus_summary,
+		  attachment_processing=excluded.attachment_processing,
 		  execution=excluded.execution,
 		  persona_models=excluded.persona_models,
 		  provider_catalogs=excluded.provider_catalogs,
@@ -178,6 +197,7 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		p.tasks, p.artifacts, p.finalization, p.summaries, p.blockingIssues,
 		p.allSuggestions, p.personaPromptSnapshot, p.requiredPersonas, ws.FinalizerAction,
 		ws.DeliveryAction, p.deliveryConfig,
+		ws.UploadSessionID, p.inputDocuments, ws.InputDocumentCorpusSummary, p.attachmentProcessing,
 		ws.CreatedAt.Unix(), ws.UpdatedAt.Unix(),
 		nullableUnix(ws.StartedAt), nullableUnix(ws.CompletedAt), p.execution,
 		p.personaModels, p.providerCatalogs,
@@ -402,6 +422,14 @@ var sqliteAlterV007 = []string{
 	`ALTER TABLE workflows ADD COLUMN provider_catalogs TEXT NOT NULL DEFAULT '{}'`,
 }
 
+// sqliteAlterV008 adds attachment / ingestion columns to existing databases.
+var sqliteAlterV008 = []string{
+	`ALTER TABLE workflows ADD COLUMN upload_session_id             TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE workflows ADD COLUMN input_documents               TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE workflows ADD COLUMN input_document_corpus_summary TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE workflows ADD COLUMN attachment_processing         TEXT NOT NULL DEFAULT 'null'`,
+}
+
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
 const selectWorkflowSQL = `
@@ -412,7 +440,8 @@ const selectWorkflowSQL = `
 	       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 	       delivery_action, delivery_config,
 	       created_at, updated_at, started_at, completed_at, execution,
-	       persona_models, provider_catalogs
+	       persona_models, provider_catalogs,
+	       upload_session_id, input_documents, input_document_corpus_summary, attachment_processing
 	FROM workflows`
 
 const selectEventSQL = `
@@ -573,6 +602,10 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		errorMessage                       sql.NullString
 		personaModels                      sql.NullString
 		providerCatalogs                   sql.NullString
+		uploadSessionID                    sql.NullString
+		inputDocuments                     sql.NullString
+		inputDocCorpusSummary              sql.NullString
+		attachmentProcessing               sql.NullString
 		createdAt, updatedAt               int64
 		startedAt, completedAt             sql.NullInt64
 	)
@@ -586,6 +619,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&deliveryAction, &deliveryConfig,
 		&createdAt, &updatedAt, &startedAt, &completedAt, &execution,
 		&personaModels, &providerCatalogs,
+		&uploadSessionID, &inputDocuments, &inputDocCorpusSummary, &attachmentProcessing,
 	)
 	if err != nil {
 		return nil, err
@@ -631,6 +665,10 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	unmarshal(execution, &ws.Execution)
 	unmarshal(personaModels, &ws.PersonaModels)
 	unmarshal(providerCatalogs, &ws.ProviderCatalogs)
+	unmarshal(inputDocuments, &ws.InputDocuments)
+	unmarshal(attachmentProcessing, &ws.AttachmentProcessing)
+	ws.UploadSessionID = uploadSessionID.String
+	ws.InputDocumentCorpusSummary = inputDocCorpusSummary.String
 
 	return ws, nil
 }
@@ -698,6 +736,8 @@ type workflowPayload struct {
 	execution                          []byte
 	personaModels                      []byte
 	providerCatalogs                   []byte
+	inputDocuments                     []byte
+	attachmentProcessing               []byte
 }
 
 func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
@@ -756,6 +796,12 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 	if p.providerCatalogs, err = json.Marshal(ws.ProviderCatalogs); err != nil {
 		return p, err
 	}
+	if p.inputDocuments, err = json.Marshal(ws.InputDocuments); err != nil {
+		return p, err
+	}
+	if p.attachmentProcessing, err = marshal(ws.AttachmentProcessing); err != nil {
+		return p, err
+	}
 	return p, nil
 }
 
@@ -771,4 +817,254 @@ func nullableStringVal(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// ─── Attachment DDL ───────────────────────────────────────────────────────────
+
+const sqliteAttachmentDDL = `
+CREATE TABLE IF NOT EXISTS upload_sessions (
+    id          TEXT    NOT NULL PRIMARY KEY,
+    tenant_id   TEXT    NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    scope_id    TEXT    NOT NULL REFERENCES scopes(id),
+    status      TEXT    NOT NULL DEFAULT 'open',
+    workflow_id TEXT,
+    expires_at  INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_tenant ON upload_sessions(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id                TEXT    NOT NULL PRIMARY KEY,
+    upload_session_id TEXT    NOT NULL REFERENCES upload_sessions(id) ON DELETE CASCADE,
+    workflow_id       TEXT,
+    tenant_id         TEXT    NOT NULL,
+    scope_id          TEXT    NOT NULL,
+    filename          TEXT    NOT NULL,
+    content_type      TEXT    NOT NULL DEFAULT '',
+    size_bytes        INTEGER NOT NULL DEFAULT 0,
+    storage_path      TEXT    NOT NULL DEFAULT '',
+    status            TEXT    NOT NULL DEFAULT 'pending',
+    summary           TEXT    NOT NULL DEFAULT '',
+    chunk_count       INTEGER NOT NULL DEFAULT 0,
+    error_message     TEXT    NOT NULL DEFAULT '',
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_session  ON attachments(upload_session_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_workflow ON attachments(workflow_id);
+
+CREATE TABLE IF NOT EXISTS attachment_chunks (
+    id            TEXT    NOT NULL PRIMARY KEY,
+    attachment_id TEXT    NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    workflow_id   TEXT    NOT NULL,
+    chunk_index   INTEGER NOT NULL,
+    content       TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_attachment ON attachment_chunks(attachment_id, chunk_index);
+`
+
+// ─── AttachmentStore ──────────────────────────────────────────────────────────
+
+func (s *Store) CreateUploadSession(ctx context.Context, sess *state.UploadSession) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO upload_sessions (id, tenant_id, scope_id, status, workflow_id, expires_at, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		sess.ID, sess.TenantID, sess.ScopeID, sess.Status, nullableStringVal(sess.WorkflowID),
+		sess.ExpiresAt.Unix(), sess.CreatedAt.Unix(), sess.UpdatedAt.Unix())
+	return err
+}
+
+func (s *Store) GetUploadSession(ctx context.Context, id string) (*state.UploadSession, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, scope_id, status, COALESCE(workflow_id,''), expires_at, created_at, updated_at
+		FROM upload_sessions WHERE id=?`, id)
+	sess := &state.UploadSession{}
+	var expiresAt, createdAt, updatedAt int64
+	if err := row.Scan(&sess.ID, &sess.TenantID, &sess.ScopeID, &sess.Status,
+		&sess.WorkflowID, &expiresAt, &createdAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	sess.ExpiresAt = time.Unix(expiresAt, 0).UTC()
+	sess.CreatedAt = time.Unix(createdAt, 0).UTC()
+	sess.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	return sess, nil
+}
+
+func (s *Store) ConsumeUploadSession(ctx context.Context, sessionID, workflowID, tenantID string) error {
+	now := time.Now().UTC().Unix()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE upload_sessions SET status='consumed', workflow_id=?, updated_at=?
+		WHERE id=? AND tenant_id=? AND status='open'`,
+		workflowID, now, sessionID, tenantID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("upload session %s not found, not open, or belongs to a different tenant", sessionID)
+	}
+	// Bind all attachments in this session to the workflow.
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE attachments SET workflow_id=?, updated_at=? WHERE upload_session_id=?`,
+		workflowID, now, sessionID)
+	return err
+}
+
+func (s *Store) AbortUploadSession(ctx context.Context, sessionID, tenantID string) error {
+	now := time.Now().UTC().Unix()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE upload_sessions SET status='aborted', updated_at=?
+		WHERE id=? AND tenant_id=? AND status='open'`,
+		now, sessionID, tenantID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("upload session %s not found, not open, or belongs to a different tenant", sessionID)
+	}
+	return nil
+}
+
+func (s *Store) CreateAttachment(ctx context.Context, att *state.Attachment) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO attachments
+		  (id, upload_session_id, workflow_id, tenant_id, scope_id,
+		   filename, content_type, size_bytes, storage_path,
+		   status, summary, chunk_count, error_message, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		att.ID, att.UploadSessionID, nullableStringVal(att.WorkflowID),
+		att.TenantID, att.ScopeID,
+		att.Filename, att.ContentType, att.SizeBytes, att.StoragePath,
+		att.Status, att.Summary, att.ChunkCount, att.ErrorMessage,
+		att.CreatedAt.Unix(), att.UpdatedAt.Unix())
+	return err
+}
+
+func (s *Store) GetAttachment(ctx context.Context, id string) (*state.Attachment, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE id=?`, id)
+	return scanAttachment(row)
+}
+
+func (s *Store) ListAttachmentsBySession(ctx context.Context, sessionID string) ([]*state.Attachment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE upload_session_id=? ORDER BY created_at`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAttachments(rows)
+}
+
+func (s *Store) ListAttachmentsByWorkflow(ctx context.Context, workflowID string) ([]*state.Attachment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE workflow_id=? ORDER BY created_at`, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAttachments(rows)
+}
+
+func (s *Store) UpdateAttachmentStatus(ctx context.Context, id string, status state.AttachmentStatus, summary string, chunkCount int, errMsg string) error {
+	now := time.Now().UTC().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE attachments SET status=?, summary=?, chunk_count=?, error_message=?, updated_at=?
+		WHERE id=?`,
+		status, summary, chunkCount, errMsg, now, id)
+	return err
+}
+
+func (s *Store) CreateAttachmentChunks(ctx context.Context, chunks []state.AttachmentChunk) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO attachment_chunks (id, attachment_id, workflow_id, chunk_index, content)
+		VALUES (?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, ch := range chunks {
+		if _, err := stmt.ExecContext(ctx, ch.ID, ch.AttachmentID, ch.WorkflowID, ch.Index, ch.Content); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GetAttachmentChunk(ctx context.Context, attachmentID string, index int) (*state.AttachmentChunk, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, attachment_id, workflow_id, chunk_index, content
+		FROM attachment_chunks WHERE attachment_id=? AND chunk_index=?`, attachmentID, index)
+	ch := &state.AttachmentChunk{}
+	if err := row.Scan(&ch.ID, &ch.AttachmentID, &ch.WorkflowID, &ch.Index, &ch.Content); err != nil {
+		return nil, err
+	}
+	return ch, nil
+}
+
+func (s *Store) ListAttachmentChunks(ctx context.Context, attachmentID string) ([]state.AttachmentChunk, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, attachment_id, workflow_id, chunk_index, content
+		FROM attachment_chunks WHERE attachment_id=? ORDER BY chunk_index`, attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []state.AttachmentChunk
+	for rows.Next() {
+		var ch state.AttachmentChunk
+		if err := rows.Scan(&ch.ID, &ch.AttachmentID, &ch.WorkflowID, &ch.Index, &ch.Content); err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	return out, rows.Err()
+}
+
+// ─── Attachment scan helpers ──────────────────────────────────────────────────
+
+func scanAttachment(row scanner) (*state.Attachment, error) {
+	att := &state.Attachment{}
+	var createdAt, updatedAt int64
+	if err := row.Scan(
+		&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
+		&att.Filename, &att.ContentType, &att.SizeBytes, &att.StoragePath,
+		&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	att.CreatedAt = time.Unix(createdAt, 0).UTC()
+	att.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	return att, nil
+}
+
+func scanAttachments(rows rowScanner) ([]*state.Attachment, error) {
+	var out []*state.Attachment
+	for rows.Next() {
+		att, err := scanAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, att)
+	}
+	return out, rows.Err()
 }

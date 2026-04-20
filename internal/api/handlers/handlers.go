@@ -104,12 +104,13 @@ type DeliveryRequest struct {
 
 // CreateWorkflowRequest is the request body for POST /workflows.
 type CreateWorkflowRequest struct {
-	Request  string          `json:"request" binding:"required"`
-	Title    string          `json:"title"`
-	Mode     string          `json:"mode"`     // optional; Director will classify if omitted
-	Provider string          `json:"provider"` // optional override
-	Model    string          `json:"model"`    // optional override
-	Delivery DeliveryRequest `json:"delivery"` // optional delivery action + config
+	Request         string          `json:"request" binding:"required"`
+	Title           string          `json:"title"`
+	Mode            string          `json:"mode"`               // optional; Director will classify if omitted
+	Provider        string          `json:"provider"`           // optional override
+	Model           string          `json:"model"`              // optional override
+	Delivery        DeliveryRequest `json:"delivery"`           // optional delivery action + config
+	UploadSessionID string          `json:"upload_session_id"`  // optional; links staged uploads to this workflow
 }
 
 func normalizeWorkflowMode(raw string) state.WorkflowMode {
@@ -154,11 +155,23 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		if len(req.Delivery.Config) > 0 {
 			ws.DeliveryConfig = req.Delivery.Config
 		}
+		if req.UploadSessionID != "" {
+			ws.UploadSessionID = req.UploadSessionID
+		}
 
 		if err := store.CreateWorkflow(c.Request.Context(), ws); err != nil {
 			log.Error("create workflow", zap.Error(err))
 			respondError(c, http.StatusInternalServerError, "failed to create workflow")
 			return
+		}
+
+		// Atomically consume the upload session, binding its attachments to this workflow.
+		if req.UploadSessionID != "" {
+			if err := store.ConsumeUploadSession(c.Request.Context(), req.UploadSessionID, ws.ID, tid); err != nil {
+				log.Error("consume upload session", zap.String("session_id", req.UploadSessionID), zap.Error(err))
+				respondError(c, http.StatusBadRequest, "failed to consume upload session: "+err.Error())
+				return
+			}
 		}
 
 		if sched != nil {

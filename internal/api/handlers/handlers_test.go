@@ -249,6 +249,37 @@ func (m *memStore) EventsSince(_ context.Context, tenantID string, after time.Ti
 	return out, nil
 }
 
+// ── AttachmentStore stubs ────────────────────────────────────────────────────
+
+func (m *memStore) CreateUploadSession(_ context.Context, _ *state.UploadSession) error { return nil }
+func (m *memStore) GetUploadSession(_ context.Context, _ string) (*state.UploadSession, error) {
+	return nil, errors.New("not found")
+}
+func (m *memStore) ConsumeUploadSession(_ context.Context, _, _, _ string) error { return nil }
+func (m *memStore) AbortUploadSession(_ context.Context, _, _ string) error      { return nil }
+func (m *memStore) CreateAttachment(_ context.Context, _ *state.Attachment) error { return nil }
+func (m *memStore) GetAttachment(_ context.Context, _ string) (*state.Attachment, error) {
+	return nil, errors.New("not found")
+}
+func (m *memStore) ListAttachmentsBySession(_ context.Context, _ string) ([]*state.Attachment, error) {
+	return nil, nil
+}
+func (m *memStore) ListAttachmentsByWorkflow(_ context.Context, _ string) ([]*state.Attachment, error) {
+	return nil, nil
+}
+func (m *memStore) UpdateAttachmentStatus(_ context.Context, _ string, _ state.AttachmentStatus, _ string, _ int, _ string) error {
+	return nil
+}
+func (m *memStore) CreateAttachmentChunks(_ context.Context, _ []state.AttachmentChunk) error {
+	return nil
+}
+func (m *memStore) GetAttachmentChunk(_ context.Context, _ string, _ int) (*state.AttachmentChunk, error) {
+	return nil, errors.New("not found")
+}
+func (m *memStore) ListAttachmentChunks(_ context.Context, _ string) ([]state.AttachmentChunk, error) {
+	return nil, nil
+}
+
 // ─── HTTP test helpers ────────────────────────────────────────────────────────
 
 func newRouter(store *memStore) *gin.Engine {

@@ -17,6 +17,7 @@ type Store interface {
 	EventStore
 	TenantStore
 	ScopeStore
+	AttachmentStore
 
 	// Ping verifies the connection to the backing store.
 	Ping(ctx context.Context) error
@@ -78,4 +79,42 @@ type ScopeStore interface {
 	UpdateScope(ctx context.Context, s *state.Scope) error
 	// DeleteScope removes a scope by ID.
 	DeleteScope(ctx context.Context, id string) error
+}
+
+// AttachmentStore manages upload sessions, attachments, and chunks.
+type AttachmentStore interface {
+	// ── Upload sessions ──────────────────────────────────────────────────
+
+	// CreateUploadSession inserts a new open upload session.
+	CreateUploadSession(ctx context.Context, sess *state.UploadSession) error
+	// GetUploadSession retrieves an upload session by ID.
+	GetUploadSession(ctx context.Context, id string) (*state.UploadSession, error)
+	// ConsumeUploadSession atomically marks a session as consumed, sets the
+	// workflow ID, and binds all of its attachments to that workflow.
+	// Returns an error if the session is not open or is owned by a different tenant.
+	ConsumeUploadSession(ctx context.Context, sessionID, workflowID, tenantID string) error
+	// AbortUploadSession marks a session as aborted.
+	AbortUploadSession(ctx context.Context, sessionID, tenantID string) error
+
+	// ── Attachments ──────────────────────────────────────────────────────
+
+	// CreateAttachment inserts a new attachment record.
+	CreateAttachment(ctx context.Context, att *state.Attachment) error
+	// GetAttachment retrieves an attachment by ID.
+	GetAttachment(ctx context.Context, id string) (*state.Attachment, error)
+	// ListAttachmentsBySession returns all attachments for an upload session.
+	ListAttachmentsBySession(ctx context.Context, sessionID string) ([]*state.Attachment, error)
+	// ListAttachmentsByWorkflow returns all attachments for a workflow.
+	ListAttachmentsByWorkflow(ctx context.Context, workflowID string) ([]*state.Attachment, error)
+	// UpdateAttachmentStatus updates the processing status of an attachment.
+	UpdateAttachmentStatus(ctx context.Context, id string, status state.AttachmentStatus, summary string, chunkCount int, errMsg string) error
+
+	// ── Chunks ───────────────────────────────────────────────────────────
+
+	// CreateAttachmentChunks bulk-inserts chunks for an attachment.
+	CreateAttachmentChunks(ctx context.Context, chunks []state.AttachmentChunk) error
+	// GetAttachmentChunk retrieves a single chunk by attachment ID and index.
+	GetAttachmentChunk(ctx context.Context, attachmentID string, index int) (*state.AttachmentChunk, error)
+	// ListAttachmentChunks returns all chunks for an attachment, ordered by index.
+	ListAttachmentChunks(ctx context.Context, attachmentID string) ([]state.AttachmentChunk, error)
 }

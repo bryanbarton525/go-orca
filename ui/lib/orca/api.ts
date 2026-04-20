@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   CreateScopeRequest,
   CreateTenantRequest,
   CreateWorkflowRequest,
@@ -16,6 +17,7 @@ import type {
   Tenant,
   UpdateScopeRequest,
   UpdateTenantRequest,
+  UploadSession,
   WorkflowState,
 } from "../../types/orca";
 
@@ -249,4 +251,44 @@ export async function resolveCustomizations(context?: OrcaContext) {
     prompts: normalizeCustomizationItems(payload.prompts),
     note: typeof payload.note === "string" ? payload.note : undefined,
   } satisfies CustomizationsResolveResponse;
+}
+
+// ─── Upload sessions ──────────────────────────────────────────────────────────
+
+export function createUploadSession() {
+  return orcaRequest<UploadSession>("upload-sessions", { method: "POST" });
+}
+
+export async function uploadFile(sessionId: string, file: File): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`/api/orca/upload-sessions/${sessionId}/files`, {
+    method: "POST",
+    body: formData,
+  });
+
+  const payload = await parsePayload(response);
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `upload failed with status ${response.status}`));
+  }
+  return payload as Attachment;
+}
+
+export async function listSessionFiles(sessionId: string) {
+  return normalizeList<Attachment>(
+    await orcaRequest<unknown>(`upload-sessions/${sessionId}/files`),
+    "items"
+  );
+}
+
+export function abortUploadSession(sessionId: string) {
+  return orcaRequest<{ status: string }>(`upload-sessions/${sessionId}/abort`, { method: "POST" });
+}
+
+export async function listWorkflowAttachments(workflowId: string) {
+  return normalizeList<Attachment>(
+    await orcaRequest<unknown>(`workflows/${workflowId}/attachments`),
+    "items"
+  );
 }

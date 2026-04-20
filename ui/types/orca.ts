@@ -135,6 +135,10 @@ export interface WorkflowState {
   started_at?: string | null;
   completed_at?: string | null;
   execution?: WorkflowExecution;
+  upload_session_id?: string;
+  input_documents?: InputDocument[];
+  input_document_corpus_summary?: string;
+  attachment_processing?: AttachmentProcessingState | null;
 }
 
 export interface EventRecord {
@@ -233,6 +237,7 @@ export interface CreateWorkflowRequest {
   mode?: WorkflowMode | "";
   provider?: string;
   model?: string;
+  upload_session_id?: string;
   delivery?: {
     action?: string;
     config?: Record<string, unknown>;
@@ -265,4 +270,58 @@ export interface OrcaHealthResponse {
   status?: string;
   error?: string;
   provider?: string;
+}
+
+// ─── Attachment types ─────────────────────────────────────────────────────────
+
+export type UploadSessionStatus = "open" | "consumed" | "expired" | "aborted";
+export type AttachmentStatus = "pending" | "processing" | "completed" | "failed";
+export type AttachmentProcessingStatusValue = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface UploadSession {
+  id: string;
+  tenant_id: string;
+  scope_id: string;
+  workflow_id?: string;
+  status: UploadSessionStatus;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Attachment {
+  id: string;
+  upload_session_id: string;
+  workflow_id?: string;
+  tenant_id: string;
+  scope_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  storage_path: string;
+  status: AttachmentStatus;
+  summary?: string;
+  chunk_count?: number;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InputDocument {
+  attachment_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  summary: string;
+  chunk_count: number;
+}
+
+export interface AttachmentProcessingState {
+  status: AttachmentProcessingStatusValue;
+  total_count: number;
+  done_count: number;
+  failed_count: number;
+  error_message?: string;
+  started_at?: string;
+  completed_at?: string;
 }

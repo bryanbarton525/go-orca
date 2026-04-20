@@ -86,8 +86,9 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		   tasks, artifacts, finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		   delivery_action, delivery_config,
+		   upload_session_id, input_documents, input_document_corpus_summary, attachment_processing,
 		   created_at, updated_at, execution, persona_models, provider_catalogs)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName,
 		payload.constitution, payload.requirements, payload.design,
@@ -95,6 +96,7 @@ func (s *Store) CreateWorkflow(ctx context.Context, ws *state.WorkflowState) err
 		payload.summaries, payload.blockingIssues,
 		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
 		ws.DeliveryAction, payload.deliveryConfig,
+		ws.UploadSessionID, payload.inputDocuments, ws.InputDocumentCorpusSummary, payload.attachmentProcessing,
 		ws.CreatedAt, ws.UpdatedAt, payload.execution,
 		payload.personaModels, payload.providerCatalogs,
 	)
@@ -110,7 +112,8 @@ func (s *Store) GetWorkflow(ctx context.Context, id string) (*state.WorkflowStat
 		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		       delivery_action, delivery_config,
 		       created_at, updated_at, started_at, completed_at, execution,
-		       persona_models, provider_catalogs
+		       persona_models, provider_catalogs,
+		       upload_session_id, input_documents, input_document_corpus_summary, attachment_processing
 		FROM workflows WHERE id = $1`, id)
 
 	return scanWorkflow(row)
@@ -129,9 +132,10 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		   finalization, summaries, blocking_issues,
 		   all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		   delivery_action, delivery_config,
+		   upload_session_id, input_documents, input_document_corpus_summary, attachment_processing,
 		   created_at, updated_at, started_at, completed_at, execution,
 		   persona_models, provider_catalogs)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
 		ON CONFLICT (id) DO UPDATE SET
 		  status=$4, mode=$5, title=$6,
 		  provider_name=$8, model_name=$9, error_message=$10,
@@ -141,8 +145,10 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		  all_suggestions=$19, persona_prompt_snapshot=$20,
 		  required_personas=$21, finalizer_action=$22,
 		  delivery_action=$23, delivery_config=$24,
-		  updated_at=$26, started_at=$27, completed_at=$28, execution=$29,
-		  persona_models=$30, provider_catalogs=$31`,
+		  upload_session_id=$25, input_documents=$26,
+		  input_document_corpus_summary=$27, attachment_processing=$28,
+		  updated_at=$30, started_at=$31, completed_at=$32, execution=$33,
+		  persona_models=$34, provider_catalogs=$35`,
 		ws.ID, ws.TenantID, ws.ScopeID, ws.Status, ws.Mode, ws.Title, ws.Request,
 		ws.ProviderName, ws.ModelName, ws.ErrorMessage,
 		payload.constitution, payload.requirements, payload.design,
@@ -150,6 +156,7 @@ func (s *Store) SaveWorkflow(ctx context.Context, ws *state.WorkflowState) error
 		payload.summaries, payload.blockingIssues,
 		payload.allSuggestions, payload.personaPromptSnapshot, payload.requiredPersonas, ws.FinalizerAction,
 		ws.DeliveryAction, payload.deliveryConfig,
+		ws.UploadSessionID, payload.inputDocuments, ws.InputDocumentCorpusSummary, payload.attachmentProcessing,
 		ws.CreatedAt, ws.UpdatedAt, ws.StartedAt, ws.CompletedAt, payload.execution,
 		payload.personaModels, payload.providerCatalogs,
 	)
@@ -165,7 +172,8 @@ func (s *Store) ListWorkflows(ctx context.Context, tenantID string, limit, offse
 		       all_suggestions, persona_prompt_snapshot, required_personas, finalizer_action,
 		       delivery_action, delivery_config,
 		       created_at, updated_at, started_at, completed_at, execution,
-		       persona_models, provider_catalogs
+		       persona_models, provider_catalogs,
+		       upload_session_id, input_documents, input_document_corpus_summary, attachment_processing
 		FROM workflows
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC
@@ -383,6 +391,8 @@ type workflowPayload struct {
 	execution             []byte
 	personaModels         []byte
 	providerCatalogs      []byte
+	inputDocuments        []byte
+	attachmentProcessing  []byte
 }
 
 func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
@@ -443,6 +453,12 @@ func marshalWorkflow(ws *state.WorkflowState) (workflowPayload, error) {
 	if p.providerCatalogs, err = json.Marshal(ws.ProviderCatalogs); err != nil {
 		return p, err
 	}
+	if p.inputDocuments, err = json.Marshal(ws.InputDocuments); err != nil {
+		return p, err
+	}
+	if p.attachmentProcessing, err = marshal(ws.AttachmentProcessing); err != nil {
+		return p, err
+	}
 	return p, nil
 }
 
@@ -472,6 +488,9 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		execution             []byte
 		personaModels         []byte
 		providerCatalogs      []byte
+		inputDocuments        []byte
+		inputDocCorpusSummary *string
+		attachmentProcessing  []byte
 	)
 
 	err := row.Scan(
@@ -483,6 +502,7 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 		&ws.DeliveryAction, &deliveryConfig,
 		&ws.CreatedAt, &ws.UpdatedAt, &ws.StartedAt, &ws.CompletedAt, &execution,
 		&personaModels, &providerCatalogs,
+		&ws.UploadSessionID, &inputDocuments, &inputDocCorpusSummary, &attachmentProcessing,
 	)
 	if err != nil {
 		return nil, err
@@ -522,6 +542,11 @@ func scanWorkflow(row scanner) (*state.WorkflowState, error) {
 	_ = unmarshal(execution, &ws.Execution)
 	_ = unmarshal(personaModels, &ws.PersonaModels)
 	_ = unmarshal(providerCatalogs, &ws.ProviderCatalogs)
+	_ = unmarshal(inputDocuments, &ws.InputDocuments)
+	_ = unmarshal(attachmentProcessing, &ws.AttachmentProcessing)
+	if inputDocCorpusSummary != nil {
+		ws.InputDocumentCorpusSummary = *inputDocCorpusSummary
+	}
 
 	return ws, nil
 }
@@ -550,4 +575,198 @@ func nullableString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// ─── AttachmentStore ──────────────────────────────────────────────────────────
+
+func (s *Store) CreateUploadSession(ctx context.Context, sess *state.UploadSession) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO upload_sessions (id, tenant_id, scope_id, status, workflow_id, expires_at, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		sess.ID, sess.TenantID, sess.ScopeID, sess.Status,
+		nullableString(sess.WorkflowID), sess.ExpiresAt, sess.CreatedAt, sess.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetUploadSession(ctx context.Context, id string) (*state.UploadSession, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, tenant_id, scope_id, status, COALESCE(workflow_id,''), expires_at, created_at, updated_at
+		FROM upload_sessions WHERE id=$1`, id)
+	sess := &state.UploadSession{}
+	if err := row.Scan(&sess.ID, &sess.TenantID, &sess.ScopeID, &sess.Status,
+		&sess.WorkflowID, &sess.ExpiresAt, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+func (s *Store) ConsumeUploadSession(ctx context.Context, sessionID, workflowID, tenantID string) error {
+	now := time.Now().UTC()
+	res, err := s.pool.Exec(ctx, `
+		UPDATE upload_sessions SET status='consumed', workflow_id=$1, updated_at=$2
+		WHERE id=$3 AND tenant_id=$4 AND status='open'`,
+		workflowID, now, sessionID, tenantID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("upload session %s not found, not open, or belongs to a different tenant", sessionID)
+	}
+	_, err = s.pool.Exec(ctx, `
+		UPDATE attachments SET workflow_id=$1, updated_at=$2 WHERE upload_session_id=$3`,
+		workflowID, now, sessionID)
+	return err
+}
+
+func (s *Store) AbortUploadSession(ctx context.Context, sessionID, tenantID string) error {
+	now := time.Now().UTC()
+	res, err := s.pool.Exec(ctx, `
+		UPDATE upload_sessions SET status='aborted', updated_at=$1
+		WHERE id=$2 AND tenant_id=$3 AND status='open'`,
+		now, sessionID, tenantID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("upload session %s not found, not open, or belongs to a different tenant", sessionID)
+	}
+	return nil
+}
+
+func (s *Store) CreateAttachment(ctx context.Context, att *state.Attachment) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO attachments
+		  (id, upload_session_id, workflow_id, tenant_id, scope_id,
+		   filename, content_type, size_bytes, storage_path,
+		   status, summary, chunk_count, error_message, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		att.ID, att.UploadSessionID, nullableString(att.WorkflowID),
+		att.TenantID, att.ScopeID,
+		att.Filename, att.ContentType, att.SizeBytes, att.StoragePath,
+		att.Status, att.Summary, att.ChunkCount, att.ErrorMessage,
+		att.CreatedAt, att.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetAttachment(ctx context.Context, id string) (*state.Attachment, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE id=$1`, id)
+	att := &state.Attachment{}
+	if err := row.Scan(
+		&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
+		&att.Filename, &att.ContentType, &att.SizeBytes, &att.StoragePath,
+		&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
+		&att.CreatedAt, &att.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return att, nil
+}
+
+func (s *Store) ListAttachmentsBySession(ctx context.Context, sessionID string) ([]*state.Attachment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE upload_session_id=$1 ORDER BY created_at`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPGAttachments(rows)
+}
+
+func (s *Store) ListAttachmentsByWorkflow(ctx context.Context, workflowID string) ([]*state.Attachment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
+		       filename, content_type, size_bytes, storage_path,
+		       status, summary, chunk_count, error_message, created_at, updated_at
+		FROM attachments WHERE workflow_id=$1 ORDER BY created_at`, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPGAttachments(rows)
+}
+
+func (s *Store) UpdateAttachmentStatus(ctx context.Context, id string, status state.AttachmentStatus, summary string, chunkCount int, errMsg string) error {
+	now := time.Now().UTC()
+	_, err := s.pool.Exec(ctx, `
+		UPDATE attachments SET status=$2, summary=$3, chunk_count=$4, error_message=$5, updated_at=$6
+		WHERE id=$1`,
+		id, status, summary, chunkCount, errMsg, now)
+	return err
+}
+
+func (s *Store) CreateAttachmentChunks(ctx context.Context, chunks []state.AttachmentChunk) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	for _, ch := range chunks {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO attachment_chunks (id, attachment_id, workflow_id, chunk_index, content)
+			VALUES ($1,$2,$3,$4,$5)`,
+			ch.ID, ch.AttachmentID, ch.WorkflowID, ch.Index, ch.Content)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) GetAttachmentChunk(ctx context.Context, attachmentID string, index int) (*state.AttachmentChunk, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, attachment_id, workflow_id, chunk_index, content
+		FROM attachment_chunks WHERE attachment_id=$1 AND chunk_index=$2`, attachmentID, index)
+	ch := &state.AttachmentChunk{}
+	if err := row.Scan(&ch.ID, &ch.AttachmentID, &ch.WorkflowID, &ch.Index, &ch.Content); err != nil {
+		return nil, err
+	}
+	return ch, nil
+}
+
+func (s *Store) ListAttachmentChunks(ctx context.Context, attachmentID string) ([]state.AttachmentChunk, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, attachment_id, workflow_id, chunk_index, content
+		FROM attachment_chunks WHERE attachment_id=$1 ORDER BY chunk_index`, attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []state.AttachmentChunk
+	for rows.Next() {
+		var ch state.AttachmentChunk
+		if err := rows.Scan(&ch.ID, &ch.AttachmentID, &ch.WorkflowID, &ch.Index, &ch.Content); err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	return out, rows.Err()
+}
+
+func scanPGAttachments(rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}) ([]*state.Attachment, error) {
+	var out []*state.Attachment
+	for rows.Next() {
+		att := &state.Attachment{}
+		if err := rows.Scan(
+			&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
+			&att.Filename, &att.ContentType, &att.SizeBytes, &att.StoragePath,
+			&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
+			&att.CreatedAt, &att.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, att)
+	}
+	return out, rows.Err()
 }

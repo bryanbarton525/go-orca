@@ -26,6 +26,7 @@ import { useOrcaWorkspace } from "./orca-workspace-provider";
 import {
   buildWorkflowStreamUrl,
   cancelWorkflow,
+  createUploadSession,
   createWorkflow,
   getWorkflow,
   getWorkflowEvents,
@@ -33,9 +34,10 @@ import {
   listProviders,
   listWorkflows,
   resumeWorkflow,
+  uploadFile,
 } from "../lib/orca/api";
 import { formatDate, formatRelative, prettyJson, workflowModes, deliveryActions } from "../lib/orca/presentation";
-import type { Artifact, CreateWorkflowRequest, EventRecord, Task, WorkflowState } from "../types/orca";
+import type { Artifact, AttachmentProcessingState, CreateWorkflowRequest, EventRecord, Task, WorkflowState } from "../types/orca";
 import {
   EmptyState,
   InputLabel,
@@ -1559,6 +1561,8 @@ export function WorkflowStudio() {
     deliveryAction: "",
     deliveryConfig: "",
   });
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const workflowsQuery = useQuery({
     queryKey: ["workflows", workspace.tenantId, workspace.scopeId, page],
@@ -1836,6 +1840,16 @@ export function WorkflowStudio() {
         };
       }
 
+      // Upload files if any are selected.
+      let uploadSessionId: string | undefined;
+      if (selectedFiles.length > 0) {
+        const session = await createUploadSession();
+        uploadSessionId = session.id;
+        for (const file of selectedFiles) {
+          await uploadFile(session.id, file);
+        }
+      }
+
       return createWorkflow(
         {
           request,
@@ -1843,6 +1857,7 @@ export function WorkflowStudio() {
           mode: formState.mode || undefined,
           provider: (formState.provider ?? "").trim() || undefined,
           model: (formState.model ?? "").trim() || undefined,
+          upload_session_id: uploadSessionId,
           delivery,
         },
         workspace
@@ -1856,6 +1871,7 @@ export function WorkflowStudio() {
       setStreamEvents([]);
       setLiveArtifactId("");
       setStudioTab("status");
+      setSelectedFiles([]);
       explorerInitializedWorkflowIdRef.current = null;
       await refreshWorkflowQueries(workflow.id);
     },
@@ -1964,6 +1980,42 @@ export function WorkflowStudio() {
                 onChange={(event) => setFormState((current) => ({ ...current, request: event.target.value }))}
                 className={textFieldClassName()}
               />
+              <div className="mt-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    setSelectedFiles((prev) => [...prev, ...files]);
+                    event.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-xs font-medium text-shell-muted hover:text-ink transition-colors"
+                >
+                  + Attach files
+                </button>
+                {selectedFiles.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {selectedFiles.map((file, index) => (
+                      <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1 rounded bg-shell-subtle px-2 py-0.5 text-xs text-shell-muted">
+                        {file.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== index))}
+                          className="ml-0.5 text-shell-muted hover:text-ink"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </InputLabel>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -2340,6 +2392,35 @@ export function WorkflowStudio() {
                           <p className="mt-2 text-sm font-medium text-ink">{artifactCount} persisted</p>
                         </button>
                       </div>
+
+                      {selectedWorkflow.attachment_processing && (
+                        <div className="rounded-3xl border border-shell-border/40 bg-shell-subtle p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Attachment ingestion</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <p className="text-sm font-medium text-ink">
+                              {selectedWorkflow.attachment_processing.status === "running"
+                                ? `Processing ${selectedWorkflow.attachment_processing.done_count} of ${selectedWorkflow.attachment_processing.total_count} documents…`
+                                : selectedWorkflow.attachment_processing.status === "completed"
+                                  ? `${selectedWorkflow.attachment_processing.total_count} documents ingested`
+                                  : selectedWorkflow.attachment_processing.status === "failed"
+                                    ? `Failed: ${selectedWorkflow.attachment_processing.error_message ?? "unknown error"}`
+                                    : selectedWorkflow.attachment_processing.status}
+                            </p>
+                            {selectedWorkflow.attachment_processing.status === "running" && (
+                              <div className="h-1.5 flex-1 rounded-full bg-shell-border/40 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-lagoon transition-all"
+                                  style={{
+                                    width: `${selectedWorkflow.attachment_processing.total_count > 0
+                                      ? (selectedWorkflow.attachment_processing.done_count / selectedWorkflow.attachment_processing.total_count) * 100
+                                      : 0}%`,
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       <WorkflowVisualization
                         workflow={selectedWorkflow}
