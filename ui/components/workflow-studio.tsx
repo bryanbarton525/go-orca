@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -1524,6 +1525,8 @@ function WorkflowDocument({ workflow }: { workflow: WorkflowState }) {
 export function WorkflowStudio() {
   const queryClient = useQueryClient();
   const workspace = useOrcaWorkspace();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const createWorkflowLockRef = useRef(false);
   const explorerInitializedWorkflowIdRef = useRef<string | null>(null);
   const streamRefreshAtRef = useRef(0);
@@ -1532,7 +1535,7 @@ export function WorkflowStudio() {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [page, setPage] = useState(0);
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState(() => searchParams.get("id") ?? "");
   const [liveArtifactId, setLiveArtifactId] = useState("");
   const [studioTab, setStudioTab] = useState<"status" | "explorer" | "artifacts" | "events" | "document">("status");
   const [streaming, setStreaming] = useState(false);
@@ -1929,6 +1932,7 @@ export function WorkflowStudio() {
     setStreamEvents([]);
     setLiveArtifactId("");
     setStudioTab("status");
+    router.replace(`/workflows?id=${id}`, { scroll: false });
   }
 
   return (

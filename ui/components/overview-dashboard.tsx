@@ -1,25 +1,30 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Cable, Radar, Sparkles } from "lucide-react";
+import { Boxes, Cable, ExternalLink, Radar, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useOrcaWorkspace } from "./orca-workspace-provider";
-import { EmptyState, SectionIntro, StatusBadge, Surface } from "./ui";
+import { clickablePanelClassName, EmptyState, QuickViewDialog, SectionIntro, StatusBadge, Surface } from "./ui";
 import { getHealthz, getReadyz, listProviders, listWorkflows, resolveCustomizations } from "../lib/orca/api";
-import { formatRelative } from "../lib/orca/presentation";
+import { formatDate, formatRelative } from "../lib/orca/presentation";
+import type { WorkflowState } from "../types/orca";
 
 function StatTile({
   label,
   value,
   description,
   icon: Icon,
+  href,
 }: {
   label: string;
   value: string;
   description: string;
   icon: typeof Radar;
+  href?: string;
 }) {
-  return (
-    <Surface className="space-y-4">
+  const inner = (
+    <>
       <div className="flex items-center justify-between">
         <p className="eyebrow">{label}</p>
         <div className="rounded-full bg-shell-panel/85 p-3 text-lagoon">
@@ -30,12 +35,96 @@ function StatTile({
         <p className="font-display text-3xl font-semibold text-ink">{value}</p>
         <p className="mt-2 text-sm text-shell-muted">{description}</p>
       </div>
-    </Surface>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`glass-panel rounded-[1.75rem] p-5 shadow-aura space-y-4 block ${clickablePanelClassName()}`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+
+  return <Surface className="space-y-4">{inner}</Surface>;
+}
+
+function WorkflowQuickView({
+  workflow,
+  onClose,
+}: {
+  workflow: WorkflowState;
+  onClose: () => void;
+}) {
+  const title = workflow.title || workflow.request || workflow.id;
+
+  return (
+    <QuickViewDialog open title={title} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <StatusBadge status={workflow.status} />
+          {workflow.mode ? (
+            <span className="rounded-full border border-shell-border/40 bg-shell-panel/80 px-2.5 py-1 text-xs font-medium text-shell-muted">
+              {workflow.mode}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="space-y-3 rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 text-sm">
+          {workflow.provider_name ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">Provider / Model</p>
+              <p className="mt-1 font-medium text-ink">
+                {workflow.provider_name}
+                {workflow.model_name ? ` / ${workflow.model_name}` : ""}
+              </p>
+            </div>
+          ) : null}
+          {workflow.request ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">Request</p>
+              <p className="mt-1 text-shell-muted line-clamp-4">{workflow.request}</p>
+            </div>
+          ) : null}
+          <div className="flex gap-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">Created</p>
+              <p className="mt-1 font-medium text-ink">{formatDate(workflow.created_at ?? "")}</p>
+            </div>
+            {workflow.updated_at ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">Updated</p>
+                <p className="mt-1 font-medium text-ink">{formatRelative(workflow.updated_at)}</p>
+              </div>
+            ) : null}
+          </div>
+          {workflow.error_message ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">Error</p>
+              <p className="mt-1 text-shell-danger-text">{workflow.error_message}</p>
+            </div>
+          ) : null}
+        </div>
+
+        <Link
+          href={`/workflows?id=${workflow.id}`}
+          onClick={onClose}
+          className="flex items-center justify-center gap-2 rounded-2xl bg-lagoon px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-lagoon-hover"
+        >
+          <ExternalLink className="h-4 w-4" />
+          Open in Workflows Studio
+        </Link>
+      </div>
+    </QuickViewDialog>
   );
 }
 
 export function OverviewDashboard() {
   const workspace = useOrcaWorkspace();
+  const [quickViewWorkflow, setQuickViewWorkflow] = useState<WorkflowState | null>(null);
 
   const healthQuery = useQuery({ queryKey: ["healthz"], queryFn: getHealthz, refetchInterval: 30_000 });
   const readyQuery = useQuery({ queryKey: ["readyz"], queryFn: getReadyz, refetchInterval: 30_000 });
@@ -58,6 +147,10 @@ export function OverviewDashboard() {
 
   return (
     <div className="space-y-6 pb-28 lg:pb-8">
+      {quickViewWorkflow ? (
+        <WorkflowQuickView workflow={quickViewWorkflow} onClose={() => setQuickViewWorkflow(null)} />
+      ) : null}
+
       <Surface className="space-y-6 overflow-hidden">
         <SectionIntro
           eyebrow="Operations Snapshot"
@@ -72,24 +165,28 @@ export function OverviewDashboard() {
             value={(healthQuery.data?.status ?? "unknown").toUpperCase()}
             description="Unauthenticated probe response from the protected proxy."
             icon={Radar}
+            href="/health"
           />
           <StatTile
             label="Readiness"
             value={(readyQuery.data?.status ?? "unknown").toUpperCase()}
             description="Database and provider readiness from go-orca."
             icon={Sparkles}
+            href="/health"
           />
           <StatTile
             label="Providers"
             value={String(providers.length)}
             description="Registered model backends surfaced by the live API."
             icon={Boxes}
+            href="/providers"
           />
           <StatTile
             label="Recent Workflows"
             value={String(recentWorkflows.length)}
             description="Newest visible runs in the current tenant context."
             icon={Cable}
+            href="/workflows"
           />
         </div>
       </Surface>
@@ -105,9 +202,11 @@ export function OverviewDashboard() {
           ) : (
             <div className="space-y-3">
               {recentWorkflows.map((workflow) => (
-                <div
+                <button
                   key={workflow.id}
-                  className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4"
+                  type="button"
+                  onClick={() => setQuickViewWorkflow(workflow)}
+                  className={`w-full text-left rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 ${clickablePanelClassName()}`}
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -122,10 +221,19 @@ export function OverviewDashboard() {
                       <span className="text-xs text-shell-soft">{formatRelative(workflow.updated_at ?? workflow.created_at)}</span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
+          {recentWorkflows.length > 0 ? (
+            <Link
+              href="/workflows"
+              className="flex items-center gap-2 text-sm font-medium text-lagoon transition hover:text-lagoon-hover"
+            >
+              <ExternalLink className="h-4 w-4" />
+              View all in Workflows Studio
+            </Link>
+          ) : null}
         </Surface>
 
         <div className="space-y-4">
@@ -152,18 +260,27 @@ export function OverviewDashboard() {
               <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Resolved overlays</h2>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
+              <Link
+                href="/administration"
+                className={`rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 block ${clickablePanelClassName()}`}
+              >
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Skills</p>
                 <p className="mt-3 font-display text-3xl font-semibold text-ink">{customizationsQuery.data?.skills.length ?? 0}</p>
-              </div>
-              <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
+              </Link>
+              <Link
+                href="/administration"
+                className={`rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 block ${clickablePanelClassName()}`}
+              >
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Agents</p>
                 <p className="mt-3 font-display text-3xl font-semibold text-ink">{customizationsQuery.data?.agents.length ?? 0}</p>
-              </div>
-              <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
+              </Link>
+              <Link
+                href="/administration"
+                className={`rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 block ${clickablePanelClassName()}`}
+              >
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Prompts</p>
                 <p className="mt-3 font-display text-3xl font-semibold text-ink">{customizationsQuery.data?.prompts.length ?? 0}</p>
-              </div>
+              </Link>
             </div>
             <p className="text-sm text-shell-muted">
               {customizationTotal > 0
