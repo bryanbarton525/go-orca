@@ -47,7 +47,9 @@ func (t *ListInputDocumentsTool) Parameters() json.RawMessage {
 }`)
 }
 func (t *ListInputDocumentsTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	var p struct{ WorkflowID string `json:"workflow_id"` }
+	var p struct {
+		WorkflowID string `json:"workflow_id"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
@@ -97,7 +99,9 @@ func (t *GetInputDocumentSummaryTool) Parameters() json.RawMessage {
 }`)
 }
 func (t *GetInputDocumentSummaryTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	var p struct{ AttachmentID string `json:"attachment_id"` }
+	var p struct {
+		AttachmentID string `json:"attachment_id"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
@@ -131,7 +135,9 @@ func (t *ReadInputDocumentTool) Parameters() json.RawMessage {
 }`)
 }
 func (t *ReadInputDocumentTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	var p struct{ AttachmentID string `json:"attachment_id"` }
+	var p struct {
+		AttachmentID string `json:"attachment_id"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}

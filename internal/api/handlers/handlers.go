@@ -106,11 +106,11 @@ type DeliveryRequest struct {
 type CreateWorkflowRequest struct {
 	Request         string          `json:"request" binding:"required"`
 	Title           string          `json:"title"`
-	Mode            string          `json:"mode"`               // optional; Director will classify if omitted
-	Provider        string          `json:"provider"`           // optional override
-	Model           string          `json:"model"`              // optional override
-	Delivery        DeliveryRequest `json:"delivery"`           // optional delivery action + config
-	UploadSessionID string          `json:"upload_session_id"`  // optional; links staged uploads to this workflow
+	Mode            string          `json:"mode"`              // optional; Director will classify if omitted
+	Provider        string          `json:"provider"`          // optional override
+	Model           string          `json:"model"`             // optional override
+	Delivery        DeliveryRequest `json:"delivery"`          // optional delivery action + config
+	UploadSessionID string          `json:"upload_session_id"` // optional; links staged uploads to this workflow
 }
 
 func normalizeWorkflowMode(raw string) state.WorkflowMode {

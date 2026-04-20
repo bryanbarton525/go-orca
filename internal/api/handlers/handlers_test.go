@@ -255,8 +255,8 @@ func (m *memStore) CreateUploadSession(_ context.Context, _ *state.UploadSession
 func (m *memStore) GetUploadSession(_ context.Context, _ string) (*state.UploadSession, error) {
 	return nil, errors.New("not found")
 }
-func (m *memStore) ConsumeUploadSession(_ context.Context, _, _, _ string) error { return nil }
-func (m *memStore) AbortUploadSession(_ context.Context, _, _ string) error      { return nil }
+func (m *memStore) ConsumeUploadSession(_ context.Context, _, _, _ string) error  { return nil }
+func (m *memStore) AbortUploadSession(_ context.Context, _, _ string) error       { return nil }
 func (m *memStore) CreateAttachment(_ context.Context, _ *state.Attachment) error { return nil }
 func (m *memStore) GetAttachment(_ context.Context, _ string) (*state.Attachment, error) {
 	return nil, errors.New("not found")

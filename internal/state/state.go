@@ -614,11 +614,11 @@ type AttachmentChunk struct {
 type AttachmentProcessingStatus string
 
 const (
-	AttachmentProcessingPending    AttachmentProcessingStatus = "pending"
-	AttachmentProcessingRunning    AttachmentProcessingStatus = "running"
-	AttachmentProcessingCompleted  AttachmentProcessingStatus = "completed"
-	AttachmentProcessingFailed     AttachmentProcessingStatus = "failed"
-	AttachmentProcessingCancelled  AttachmentProcessingStatus = "cancelled"
+	AttachmentProcessingPending   AttachmentProcessingStatus = "pending"
+	AttachmentProcessingRunning   AttachmentProcessingStatus = "running"
+	AttachmentProcessingCompleted AttachmentProcessingStatus = "completed"
+	AttachmentProcessingFailed    AttachmentProcessingStatus = "failed"
+	AttachmentProcessingCancelled AttachmentProcessingStatus = "cancelled"
 )
 
 // AttachmentProcessing tracks aggregate ingestion progress on a workflow.
