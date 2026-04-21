@@ -20,6 +20,7 @@ import (
 
 // defaultAllowedTypes is the default set of file extensions accepted for upload.
 var defaultAllowedTypes = []string{
+	"", // Allow files with no extension (Makefile, Dockerfile, README, LICENSE, etc.)
 	".go", ".py", ".js", ".ts", ".jsx", ".tsx", ".rs", ".java", ".c", ".cpp", ".h",
 	".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".xml", ".csv",
 	".html", ".css", ".scss", ".sql", ".sh", ".bash", ".zsh",
