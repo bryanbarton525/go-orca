@@ -37,7 +37,7 @@ import {
   uploadFile,
 } from "../lib/orca/api";
 import { formatDate, formatRelative, prettyJson, workflowModes, deliveryActions } from "../lib/orca/presentation";
-import type { Artifact, AttachmentProcessingState, CreateWorkflowRequest, EventRecord, Task, WorkflowState } from "../types/orca";
+import type { Artifact, CreateWorkflowRequest, EventRecord, Task, WorkflowState } from "../types/orca";
 import {
   EmptyState,
   InputLabel,
@@ -1996,7 +1996,7 @@ export function WorkflowStudio() {
                 <input
                   ref={folderInputRef}
                   type="file"
-                  // @ts-ignore - webkitdirectory is not in the type definitions
+                  // @ts-expect-error - webkitdirectory is not in the type definitions
                   webkitdirectory=""
                   multiple
                   className="hidden"
