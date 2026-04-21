@@ -25,6 +25,7 @@ var defaultAllowedTypes = []string{
 	".html", ".css", ".scss", ".sql", ".sh", ".bash", ".zsh",
 	".proto", ".graphql", ".tf", ".hcl",
 	".dockerfile", ".makefile",
+	".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3",
 }
 
 // ─── Upload session handlers ──────────────────────────────────────────────────
