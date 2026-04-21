@@ -81,7 +81,7 @@ func main() {
 
 	// ── Open storage ──────────────────────────────────────────────────────────
 	ctx := context.Background()
-	store, err := openStore(ctx, cfg)
+	store, err := openStore(ctx, cfg, log)
 	if err != nil {
 		log.Fatal("storage init failed", zap.Error(err))
 	}
@@ -236,7 +236,7 @@ func main() {
 
 // ─── Bootstrap helpers ────────────────────────────────────────────────────────
 
-func openStore(ctx context.Context, cfg *config.Config) (storage.Store, error) {
+func openStore(ctx context.Context, cfg *config.Config, log *zap.Logger) (storage.Store, error) {
 	switch cfg.Database.Driver {
 	case config.DriverPostgres:
 		s, err := pgStore.New(ctx, cfg.Database.DSN)
@@ -244,9 +244,11 @@ func openStore(ctx context.Context, cfg *config.Config) (storage.Store, error) {
 			return nil, err
 		}
 		if cfg.Database.AutoMigrate {
+			log.Info("running database migrations", zap.String("path", cfg.Database.MigrationsPath))
 			if err := s.Migrate(cfg.Database.MigrationsPath); err != nil {
 				return nil, fmt.Errorf("postgres migrate: %w", err)
 			}
+			log.Info("database migrations completed")
 		}
 		return s, nil
 	case config.DriverSQLite:
