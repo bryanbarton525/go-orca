@@ -202,11 +202,10 @@ export function OverviewDashboard() {
           ) : (
             <div className="space-y-3">
               {recentWorkflows.map((workflow) => (
-                <button
+                <Link
                   key={workflow.id}
-                  type="button"
-                  onClick={() => setQuickViewWorkflow(workflow)}
-                  className={`w-full text-left rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 ${clickablePanelClassName()}`}
+                  href={`/workflows?id=${workflow.id}`}
+                  className={`block rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4 ${clickablePanelClassName()}`}
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -221,7 +220,7 @@ export function OverviewDashboard() {
                       <span className="text-xs text-shell-soft">{formatRelative(workflow.updated_at ?? workflow.created_at)}</span>
                     </div>
                   </div>
-                </button>
+                </Link>
               ))}
             </div>
           )}
@@ -257,7 +256,7 @@ export function OverviewDashboard() {
           <Surface className="space-y-4">
             <div>
               <p className="eyebrow">Customization Chain</p>
-              <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Resolved overlays</h2>
+              <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Active Customizations</h2>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <Link

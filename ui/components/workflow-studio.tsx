@@ -1563,6 +1563,7 @@ export function WorkflowStudio() {
   });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const workflowsQuery = useQuery({
     queryKey: ["workflows", workspace.tenantId, workspace.scopeId, page],
@@ -1992,13 +1993,35 @@ export function WorkflowStudio() {
                     event.target.value = "";
                   }}
                 />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-xs font-medium text-shell-muted hover:text-ink transition-colors"
-                >
-                  + Attach files
-                </button>
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  // @ts-ignore - webkitdirectory is not in the type definitions
+                  webkitdirectory=""
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    setSelectedFiles((prev) => [...prev, ...files]);
+                    event.target.value = "";
+                  }}
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-xs font-medium text-shell-muted hover:text-ink transition-colors"
+                  >
+                    + Attach files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => folderInputRef.current?.click()}
+                    className="text-xs font-medium text-shell-muted hover:text-ink transition-colors"
+                  >
+                    + Attach folder
+                  </button>
+                </div>
                 {selectedFiles.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {selectedFiles.map((file, index) => (
