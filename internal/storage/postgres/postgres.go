@@ -584,7 +584,7 @@ func (s *Store) CreateUploadSession(ctx context.Context, sess *state.UploadSessi
 		INSERT INTO upload_sessions (id, tenant_id, scope_id, status, workflow_id, expires_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 		sess.ID, sess.TenantID, sess.ScopeID, sess.Status,
-		nullableString(sess.WorkflowID), sess.ExpiresAt, sess.CreatedAt, sess.UpdatedAt)
+		nullableString(sess.WorkflowID), sess.ExpiresAt.Unix(), sess.CreatedAt.Unix(), sess.UpdatedAt.Unix())
 	return err
 }
 
@@ -593,15 +593,19 @@ func (s *Store) GetUploadSession(ctx context.Context, id string) (*state.UploadS
 		SELECT id, tenant_id, scope_id, status, COALESCE(workflow_id,''), expires_at, created_at, updated_at
 		FROM upload_sessions WHERE id=$1`, id)
 	sess := &state.UploadSession{}
+	var expiresAt, createdAt, updatedAt int64
 	if err := row.Scan(&sess.ID, &sess.TenantID, &sess.ScopeID, &sess.Status,
-		&sess.WorkflowID, &sess.ExpiresAt, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		&sess.WorkflowID, &expiresAt, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
+	sess.ExpiresAt = time.Unix(expiresAt, 0).UTC()
+	sess.CreatedAt = time.Unix(createdAt, 0).UTC()
+	sess.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return sess, nil
 }
 
 func (s *Store) ConsumeUploadSession(ctx context.Context, sessionID, workflowID, tenantID string) error {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Unix()
 	res, err := s.pool.Exec(ctx, `
 		UPDATE upload_sessions SET status='consumed', workflow_id=$1, updated_at=$2
 		WHERE id=$3 AND tenant_id=$4 AND status='open'`,
