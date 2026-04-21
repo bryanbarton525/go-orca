@@ -27,6 +27,7 @@ var defaultAllowedTypes = []string{
 	".proto", ".graphql", ".tf", ".hcl",
 	".dockerfile", ".makefile",
 	".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3",
+	".tsbuildinfo", ".lock", ".sum", ".mod", ".npmrc", ".gitignore", ".env",
 }
 
 // ─── Upload session handlers ──────────────────────────────────────────────────

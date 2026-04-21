@@ -1562,6 +1562,7 @@ export function WorkflowStudio() {
     deliveryConfig: "",
   });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -1846,9 +1847,12 @@ export function WorkflowStudio() {
       if (selectedFiles.length > 0) {
         const session = await createUploadSession();
         uploadSessionId = session.id;
-        for (const file of selectedFiles) {
-          await uploadFile(session.id, file);
+        setUploadProgress({ current: 0, total: selectedFiles.length });
+        for (let i = 0; i < selectedFiles.length; i++) {
+          await uploadFile(session.id, selectedFiles[i]);
+          setUploadProgress({ current: i + 1, total: selectedFiles.length });
         }
+        setUploadProgress(null);
       }
 
       return createWorkflow(
@@ -2248,9 +2252,24 @@ export function WorkflowStudio() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
+            <div className="space-y-1 flex-1">
               <p className="text-sm text-shell-muted">The request will use the active routing headers shown in the shell.</p>
               {workflowMessage ? <p className="text-sm text-shell-muted">{workflowMessage}</p> : null}
+              {uploadProgress && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-ink">
+                    Uploading files: {uploadProgress.current} of {uploadProgress.total}
+                  </p>
+                  <div className="h-2 rounded-full bg-shell-border/40 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-lagoon transition-all duration-300"
+                      style={{
+                        width: `${uploadProgress.total > 0 ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <button
               type="button"
