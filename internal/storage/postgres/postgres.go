@@ -623,7 +623,7 @@ func (s *Store) ConsumeUploadSession(ctx context.Context, sessionID, workflowID,
 }
 
 func (s *Store) AbortUploadSession(ctx context.Context, sessionID, tenantID string) error {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Unix()
 	res, err := s.pool.Exec(ctx, `
 		UPDATE upload_sessions SET status='aborted', updated_at=$1
 		WHERE id=$2 AND tenant_id=$3 AND status='open'`,
@@ -648,7 +648,7 @@ func (s *Store) CreateAttachment(ctx context.Context, att *state.Attachment) err
 		att.TenantID, att.ScopeID,
 		att.Filename, att.RelativePath, att.ContentType, att.SizeBytes, att.StoragePath,
 		att.Status, att.Summary, att.ChunkCount, att.ErrorMessage,
-		att.CreatedAt, att.UpdatedAt)
+		att.CreatedAt.Unix(), att.UpdatedAt.Unix())
 	return err
 }
 
@@ -659,14 +659,17 @@ func (s *Store) GetAttachment(ctx context.Context, id string) (*state.Attachment
 		       status, summary, chunk_count, error_message, created_at, updated_at
 		FROM attachments WHERE id=$1`, id)
 	att := &state.Attachment{}
+	var createdAt, updatedAt int64
 	if err := row.Scan(
 		&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
 		&att.Filename, &att.RelativePath, &att.ContentType, &att.SizeBytes, &att.StoragePath,
 		&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
-		&att.CreatedAt, &att.UpdatedAt,
+		&createdAt, &updatedAt,
 	); err != nil {
 		return nil, err
 	}
+	att.CreatedAt = time.Unix(createdAt, 0).UTC()
+	att.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return att, nil
 }
 
@@ -697,7 +700,7 @@ func (s *Store) ListAttachmentsByWorkflow(ctx context.Context, workflowID string
 }
 
 func (s *Store) UpdateAttachmentStatus(ctx context.Context, id string, status state.AttachmentStatus, summary string, chunkCount int, errMsg string) error {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Unix()
 	_, err := s.pool.Exec(ctx, `
 		UPDATE attachments SET status=$2, summary=$3, chunk_count=$4, error_message=$5, updated_at=$6
 		WHERE id=$1`,
@@ -762,14 +765,17 @@ func scanPGAttachments(rows interface {
 	var out []*state.Attachment
 	for rows.Next() {
 		att := &state.Attachment{}
+		var createdAt, updatedAt int64
 		if err := rows.Scan(
 			&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
 			&att.Filename, &att.RelativePath, &att.ContentType, &att.SizeBytes, &att.StoragePath,
 			&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
-			&att.CreatedAt, &att.UpdatedAt,
+			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, err
 		}
+		att.CreatedAt = time.Unix(createdAt, 0).UTC()
+		att.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 		out = append(out, att)
 	}
 	return out, rows.Err()
