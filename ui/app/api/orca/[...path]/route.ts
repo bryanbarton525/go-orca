@@ -12,6 +12,7 @@ const allowedRoutes = {
     /^workflows\/[^/]+$/,
     /^workflows\/[^/]+\/events$/,
     /^workflows\/[^/]+\/stream$/,
+    /^workflows\/[^/]+\/attachments$/,
     /^providers$/,
     /^providers\/[^/]+\/models$/,
     /^scopes\/[^/]+\/effective-config$/,
@@ -19,6 +20,8 @@ const allowedRoutes = {
     /^tenants\/[^/]+$/,
     /^tenants\/[^/]+\/scopes$/,
     /^customizations\/resolve$/,
+    /^upload-sessions\/[^/]+$/,
+    /^upload-sessions\/[^/]+\/files$/,
   ],
   POST: [
     /^workflows$/,
@@ -27,6 +30,8 @@ const allowedRoutes = {
     /^providers\/[^/]+\/test$/,
     /^tenants$/,
     /^tenants\/[^/]+\/scopes$/,
+    /^upload-sessions$/,
+    /^upload-sessions\/[^/]+\/files$/,
   ],
   PATCH: [/^tenants\/[^/]+$/, /^tenants\/[^/]+\/scopes\/[^/]+$/],
   DELETE: [/^tenants\/[^/]+$/, /^tenants\/[^/]+\/scopes\/[^/]+$/],
@@ -84,14 +89,19 @@ async function proxy(request: NextRequest, path: string[]) {
     upstreamHeaders.set("X-Scope-ID", scopeId);
   }
 
-  const body = request.method === "GET" || request.method === "DELETE" ? undefined : await request.text();
+  const body =
+    request.method === "GET" || request.method === "DELETE"
+      ? undefined
+      : contentType?.includes("multipart/form-data")
+        ? await request.arrayBuffer()
+        : await request.text();
 
   try {
     const upstreamResponse = await fetch(upstreamUrl, {
       method: request.method,
       cache: "no-store",
       headers: upstreamHeaders,
-      body: body && body.length > 0 ? body : undefined,
+      body: body && (typeof body === "string" ? body.length > 0 : body.byteLength > 0) ? body : undefined,
       redirect: "manual",
     });
 
