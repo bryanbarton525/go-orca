@@ -264,8 +264,8 @@ export async function uploadFile(sessionId: string, file: File): Promise<Attachm
   formData.append("file", file);
   
   // Include relative path if available (from folder uploads with webkitdirectory).
-  // @ts-expect-error - webkitRelativePath is a non-standard property
-  const relativePath = file.webkitRelativePath as string | undefined;
+  // webkitRelativePath is a non-standard File property available when using webkitdirectory.
+  const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
   if (relativePath) {
     formData.append("relative_path", relativePath);
   }
