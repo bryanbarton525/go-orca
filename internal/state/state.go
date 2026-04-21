@@ -590,6 +590,7 @@ type Attachment struct {
 	TenantID        string           `json:"tenant_id"`
 	ScopeID         string           `json:"scope_id"`
 	Filename        string           `json:"filename"`
+	RelativePath    string           `json:"relative_path,omitempty"`
 	ContentType     string           `json:"content_type"`
 	SizeBytes       int64            `json:"size_bytes"`
 	StoragePath     string           `json:"storage_path"`
@@ -637,6 +638,7 @@ type AttachmentProcessing struct {
 type InputDocument struct {
 	AttachmentID string `json:"attachment_id"`
 	Filename     string `json:"filename"`
+	RelativePath string `json:"relative_path,omitempty"`
 	ContentType  string `json:"content_type"`
 	SizeBytes    int64  `json:"size_bytes"`
 	Summary      string `json:"summary"`

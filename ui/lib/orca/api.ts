@@ -262,6 +262,13 @@ export function createUploadSession() {
 export async function uploadFile(sessionId: string, file: File): Promise<Attachment> {
   const formData = new FormData();
   formData.append("file", file);
+  
+  // Include relative path if available (from folder uploads with webkitdirectory).
+  // @ts-expect-error - webkitRelativePath is a non-standard property
+  const relativePath = file.webkitRelativePath as string | undefined;
+  if (relativePath) {
+    formData.append("relative_path", relativePath);
+  }
 
   const response = await fetch(`/api/orca/upload-sessions/${sessionId}/files`, {
     method: "POST",

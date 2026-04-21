@@ -147,7 +147,7 @@ func (e *Engine) processAttachment(ctx context.Context, ws *state.WorkflowState,
 	}
 
 	// Summarise the document via LLM.
-	summary, err := e.summariseDocument(ctx, prov, model, att.Filename, text)
+	summary, err := e.summariseDocument(ctx, prov, model, att.RelativePath, text)
 	if err != nil {
 		_ = e.opts.AttachmentStore.UpdateAttachmentStatus(ctx, att.ID, state.AttachmentFailed, "", len(chunks), err.Error())
 		return fmt.Errorf("summarise: %w", err)
@@ -222,13 +222,18 @@ func (e *Engine) finalizeIngestion(ctx context.Context, ws *state.WorkflowState,
 		docs = append(docs, state.InputDocument{
 			AttachmentID: a.ID,
 			Filename:     a.Filename,
+			RelativePath: a.RelativePath,
 			ContentType:  a.ContentType,
 			SizeBytes:    a.SizeBytes,
 			ChunkCount:   a.ChunkCount,
 			Summary:      a.Summary,
 		})
 		if a.Summary != "" {
-			summaryParts = append(summaryParts, fmt.Sprintf("- **%s**: %s", a.Filename, a.Summary))
+			displayPath := a.RelativePath
+			if displayPath == "" {
+				displayPath = a.Filename
+			}
+			summaryParts = append(summaryParts, fmt.Sprintf("- **%s**: %s", displayPath, a.Summary))
 		}
 	}
 

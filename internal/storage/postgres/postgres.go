@@ -637,12 +637,12 @@ func (s *Store) CreateAttachment(ctx context.Context, att *state.Attachment) err
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO attachments
 		  (id, upload_session_id, workflow_id, tenant_id, scope_id,
-		   filename, content_type, size_bytes, storage_path,
+		   filename, relative_path, content_type, size_bytes, storage_path,
 		   status, summary, chunk_count, error_message, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		att.ID, att.UploadSessionID, nullableString(att.WorkflowID),
 		att.TenantID, att.ScopeID,
-		att.Filename, att.ContentType, att.SizeBytes, att.StoragePath,
+		att.Filename, att.RelativePath, att.ContentType, att.SizeBytes, att.StoragePath,
 		att.Status, att.Summary, att.ChunkCount, att.ErrorMessage,
 		att.CreatedAt, att.UpdatedAt)
 	return err
@@ -651,13 +651,13 @@ func (s *Store) CreateAttachment(ctx context.Context, att *state.Attachment) err
 func (s *Store) GetAttachment(ctx context.Context, id string) (*state.Attachment, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
-		       filename, content_type, size_bytes, storage_path,
+		       filename, relative_path, content_type, size_bytes, storage_path,
 		       status, summary, chunk_count, error_message, created_at, updated_at
 		FROM attachments WHERE id=$1`, id)
 	att := &state.Attachment{}
 	if err := row.Scan(
 		&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
-		&att.Filename, &att.ContentType, &att.SizeBytes, &att.StoragePath,
+		&att.Filename, &att.RelativePath, &att.ContentType, &att.SizeBytes, &att.StoragePath,
 		&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
 		&att.CreatedAt, &att.UpdatedAt,
 	); err != nil {
@@ -669,7 +669,7 @@ func (s *Store) GetAttachment(ctx context.Context, id string) (*state.Attachment
 func (s *Store) ListAttachmentsBySession(ctx context.Context, sessionID string) ([]*state.Attachment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
-		       filename, content_type, size_bytes, storage_path,
+		       filename, relative_path, content_type, size_bytes, storage_path,
 		       status, summary, chunk_count, error_message, created_at, updated_at
 		FROM attachments WHERE upload_session_id=$1 ORDER BY created_at`, sessionID)
 	if err != nil {
@@ -682,7 +682,7 @@ func (s *Store) ListAttachmentsBySession(ctx context.Context, sessionID string) 
 func (s *Store) ListAttachmentsByWorkflow(ctx context.Context, workflowID string) ([]*state.Attachment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, upload_session_id, COALESCE(workflow_id,''), tenant_id, scope_id,
-		       filename, content_type, size_bytes, storage_path,
+		       filename, relative_path, content_type, size_bytes, storage_path,
 		       status, summary, chunk_count, error_message, created_at, updated_at
 		FROM attachments WHERE workflow_id=$1 ORDER BY created_at`, workflowID)
 	if err != nil {
@@ -760,7 +760,7 @@ func scanPGAttachments(rows interface {
 		att := &state.Attachment{}
 		if err := rows.Scan(
 			&att.ID, &att.UploadSessionID, &att.WorkflowID, &att.TenantID, &att.ScopeID,
-			&att.Filename, &att.ContentType, &att.SizeBytes, &att.StoragePath,
+			&att.Filename, &att.RelativePath, &att.ContentType, &att.SizeBytes, &att.StoragePath,
 			&att.Status, &att.Summary, &att.ChunkCount, &att.ErrorMessage,
 			&att.CreatedAt, &att.UpdatedAt,
 		); err != nil {

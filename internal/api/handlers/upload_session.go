@@ -104,6 +104,13 @@ func UploadFile(store storage.Store, cfg config.IngestionConfig, storagePath str
 		}
 		defer file.Close()
 
+		// Extract relative path if provided (for folder uploads).
+		relativePath := c.PostForm("relative_path")
+		if relativePath == "" {
+			// Fall back to just the filename for backwards compatibility.
+			relativePath = filepath.Base(header.Filename)
+		}
+
 		// Validate file size.
 		maxSize := cfg.MaxFileSize
 		if maxSize == 0 {
@@ -166,6 +173,7 @@ func UploadFile(store storage.Store, cfg config.IngestionConfig, storagePath str
 			TenantID:        tid,
 			ScopeID:         sid,
 			Filename:        filepath.Base(header.Filename),
+			RelativePath:    relativePath,
 			ContentType:     header.Header.Get("Content-Type"),
 			SizeBytes:       written,
 			StoragePath:     diskPath,
