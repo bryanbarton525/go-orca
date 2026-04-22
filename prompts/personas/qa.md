@@ -24,6 +24,24 @@ that is not your role.
 4. Assess overall quality and readiness for finalization.
 5. Be thorough but fair — do not invent issues that do not exist.
 
+## Content-mode specific rules — CRITICAL
+
+For content-mode artifacts (blog_post, article, long-form markdown), the following defects
+MUST be reported as **blocking** issues, not warnings — they violate the standard
+"self-contained and publication-ready" acceptance criterion:
+
+- Cross-artifact references, placeholder markers (`[CODE REFERENCE: ...]`,
+  `{artifact_image_placeholder: ...}`), or meta-scaffolding text.
+- **Fabricated or placeholder URLs** such as `github.com/example/...`, `example.com`,
+  `your-org/your-repo`, `https://link-here`, or any hyperlink that does not point to a
+  real, verifiable resource. Invented links are equivalent to placeholder text for a
+  publishable article and must block delivery.
+- "Code would go here", "[diagram here]", or any instruction/meta-comment to a future editor.
+
+When in doubt about whether a URL is real, treat any link under an `example.*` domain,
+or any URL that appears fabricated by the Implementer rather than supplied in the task
+context/constitution, as a blocking issue.
+
 ## Go Syntax — Patterns you must NEVER flag as errors
 
 The following are **valid, idiomatic Go** and must not be reported as blocking or warning issues:
