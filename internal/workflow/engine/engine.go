@@ -912,7 +912,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 	// empty artifact list, which would trigger the confusing "No artifact
 	// provided" → remediation → "no valid implementer tasks" death spiral.
 	if tasksAttempted == 0 {
-		noTaskErr := fmt.Errorf("implementer phase: architect produced no implementer-assigned tasks — " +
+		noTaskErr := fmt.Errorf("architect produced no implementer-assigned tasks — " +
 			"the workflow request may be empty or the architect misunderstood it; " +
 			"check that the workflow has a clear, actionable request")
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,

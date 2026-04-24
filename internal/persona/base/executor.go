@@ -134,11 +134,15 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 
 	// ── Phase B: structured JSON response ────────────────────────────────────
 	// Replace the system message with one that strips tool descriptions — the
-	// model must not emit freeform tool-call prose here. Then append an explicit
-	// JSON-only instruction as the final user turn so that providers which do not
-	// enforce output schemas (e.g. Copilot) still receive a strong text-level
-	// signal to produce only JSON.
-	phaseBMsgs := make([]common.Message, 0, len(msgs)+1)
+	// model must not emit freeform tool-call prose here. Append a JSON-only
+	// constraint to the LAST user message (rather than adding a new user turn)
+	// so that providers which only forward the last user message (e.g. Copilot)
+	// still see the full request context together with the output constraint.
+	// Providers that support full multi-turn history (OpenAI, Anthropic) also
+	// benefit because the constraint is co-located with the task description.
+	const jsonConstraint = "\n\nRespond with ONLY a valid JSON object matching the required output schema. " +
+		"Do not include any prose, markdown fences, tool calls, or commentary outside the JSON object."
+	phaseBMsgs := make([]common.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == common.RoleSystem {
 			phaseBMsgs = append(phaseBMsgs, common.Message{Role: common.RoleSystem, Content: phaseBSystem})
@@ -146,11 +150,13 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 			phaseBMsgs = append(phaseBMsgs, m)
 		}
 	}
-	phaseBMsgs = append(phaseBMsgs, common.Message{
-		Role: common.RoleUser,
-		Content: "Respond with ONLY a valid JSON object matching the required output schema. " +
-			"Do not include any prose, markdown fences, tool calls, or commentary outside the JSON object.",
-	})
+	// Append the JSON constraint to the last user turn in-place.
+	for i := len(phaseBMsgs) - 1; i >= 0; i-- {
+		if phaseBMsgs[i].Role == common.RoleUser {
+			phaseBMsgs[i].Content += jsonConstraint
+			break
+		}
+	}
 
 	resp, err := provider.Chat(ctx, common.ChatRequest{
 		Model:        packet.ModelName,
