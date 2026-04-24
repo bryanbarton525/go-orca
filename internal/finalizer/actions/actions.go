@@ -111,7 +111,7 @@ func (r *Registry) Execute(ctx context.Context, kind ActionKind, in Input) (*Out
 // APIResponseAction returns all workflow artifacts inline in the finalization
 // metadata with no external config required.  This is the zero-config default
 // for workflows that do not specify a delivery target — the caller reads the
-// result directly from GET /workflows/:id.
+// result directly from GET /api/v1/workflows/{id}.
 type APIResponseAction struct{}
 
 func (a *APIResponseAction) Kind() ActionKind { return ActionAPIResponse }

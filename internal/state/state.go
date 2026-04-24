@@ -115,7 +115,7 @@ type ProviderModelCatalog struct {
 
 // Execution holds the live execution progress for a running workflow.
 // It is overwritten by the engine at every persona/task transition and
-// persisted so that GET /workflows/:id reflects current in-flight state.
+// persisted so that GET /api/v1/workflows/{id} reflects current in-flight state.
 type Execution struct {
 	// CurrentPersona is the persona phase currently executing.
 	CurrentPersona PersonaKind `json:"current_persona,omitempty"`
@@ -197,7 +197,7 @@ type WorkflowState struct {
 	FinalizerAction string `json:"finalizer_action,omitempty"`
 
 	// DeliveryAction is the action key selected at workflow creation time
-	// (from the POST /workflows request body delivery.action field).
+	// (from the POST /api/v1/workflows request body delivery.action field).
 	// When set it overrides FinalizerAction, giving callers full control over
 	// how the Finalizer delivers its output.
 	DeliveryAction string `json:"delivery_action,omitempty"`
@@ -469,7 +469,7 @@ type HandoffPacket struct {
 	FinalizerAction string `json:"finalizer_action,omitempty"`
 
 	// DeliveryAction is the caller-supplied delivery action (from the
-	// POST /workflows request body), forwarded to the Finalizer so it can be
+	// POST /api/v1/workflows request body), forwarded to the Finalizer so it can be
 	// executed with the caller's config.  Overrides FinalizerAction when set.
 	DeliveryAction string `json:"delivery_action,omitempty"`
 

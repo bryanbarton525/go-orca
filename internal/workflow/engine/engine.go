@@ -127,7 +127,7 @@ type Options struct {
 	// PauseFunc, when non-nil, is called between persona phases.  If it
 	// returns true the engine transitions the workflow to WorkflowStatusPaused
 	// and returns ErrPaused.  The workflow can be re-enqueued via the
-	// POST /workflows/:id/resume endpoint.
+	// POST /api/v1/workflows/{id}/resume endpoint.
 	PauseFunc func() bool
 
 	// ImprovementsRoot is the directory where the Refiner writes improvement
@@ -551,7 +551,7 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	_ = e.store.AppendEvents(ctx, startEvt)
 
 	// Pre-announce: update current_persona in persisted state before the LLM
-	// call starts so that GET /workflows/:id reflects the in-flight persona
+	// call starts so that GET /api/v1/workflows/{id} reflects the in-flight persona
 	// immediately, not only after it completes.
 	ws.Execution.CurrentPersona = kind
 	_ = e.store.SaveWorkflow(ctx, ws)

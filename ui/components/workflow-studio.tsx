@@ -121,6 +121,14 @@ function shouldRefreshWorkflowSnapshot(workflow?: WorkflowState) {
   return !isWorkflowTerminal(workflow.status) || hasLingeringExecutionState(workflow);
 }
 
+function normalizeDeliveryConfig(config: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(config)
+      .map(([key, value]) => [key, typeof value === "string" ? value.trim() : value] as const)
+      .filter(([, value]) => value !== "")
+  );
+}
+
 function workflowCurrentPersonaLabel(workflow?: WorkflowState) {
   if (workflow?.execution?.current_persona) {
     return workflow.execution.current_persona;
@@ -1836,9 +1844,13 @@ export function WorkflowStudio() {
 
       let delivery: CreateWorkflowRequest["delivery"] | undefined;
       if (formState.deliveryAction) {
+        const config = formState.deliveryConfig
+          ? normalizeDeliveryConfig(JSON.parse(formState.deliveryConfig) as Record<string, unknown>)
+          : undefined;
+
         delivery = {
           action: formState.deliveryAction.trim(),
-          config: formState.deliveryConfig ? (JSON.parse(formState.deliveryConfig) as Record<string, unknown>) : undefined,
+          config: config && Object.keys(config).length > 0 ? config : undefined,
         };
       }
 
@@ -2191,7 +2203,7 @@ export function WorkflowStudio() {
                       className={textFieldClassName()}
                     />
                   </InputLabel>
-                  <InputLabel label="Org / owner" hint="Leave blank for authenticated user.">
+                  <InputLabel label="Organization" hint="Only enter a GitHub org. Leave blank for your user account.">
                     <input
                       value={(() => { try { return JSON.parse(formState.deliveryConfig || "{}").org ?? ""; } catch { return ""; } })()}
                       onChange={(event) => setFormState((current) => {
