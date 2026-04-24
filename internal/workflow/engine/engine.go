@@ -798,7 +798,9 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		t := &ws.Tasks[i]
 
 		// Only process Implementer-owned tasks that still need work.
-		if t.AssignedTo != state.PersonaImplementer {
+		// Normalise to lowercase before comparing so that model responses with
+		// "Implementer" (capital I) or other case variants are not silently skipped.
+		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaImplementer {
 			continue
 		}
 		if t.Status != state.TaskStatusReady &&
@@ -945,14 +947,19 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	// remediation.  Any task assigned to another persona is dropped with a warning.
 	validTasks := make([]state.Task, 0, len(out.Tasks))
 	for _, t := range out.Tasks {
-		if t.AssignedTo != state.PersonaImplementer && t.AssignedTo != "" {
+		// Normalise assigned_to to lowercase so that model responses with
+		// "Implementer" (capital I) or other case variants are accepted.
+		normAssigned := state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo))))
+		if normAssigned != state.PersonaImplementer && normAssigned != "" {
 			// Emit a suggestion so the issue is visible without aborting the cycle.
 			ws.AllSuggestions = append(ws.AllSuggestions,
 				fmt.Sprintf("[warning][remediation] Architect emitted task %q assigned to %q; only 'implementer' is valid during remediation — task dropped", t.Title, t.AssignedTo))
 			continue
 		}
-		if t.AssignedTo == "" {
+		if normAssigned == "" {
 			t.AssignedTo = state.PersonaImplementer
+		} else {
+			t.AssignedTo = normAssigned // store normalised lowercase form
 		}
 		t.Attempt = qaCycle
 		t.RemediationSource = "qa_remediation"

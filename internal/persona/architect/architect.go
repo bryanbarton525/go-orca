@@ -5,6 +5,7 @@ package architect
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -85,7 +86,11 @@ func (a *Architect) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 	now := base.Timestamp()
 	tasks := make([]state.Task, 0, len(out.Tasks))
 	for _, ts := range out.Tasks {
-		assigned := ts.AssignedTo
+		// Normalise assigned_to to lowercase so that model responses with
+		// "Implementer" (capital I) or other case variants are treated the same
+		// as the canonical "implementer" value.  Without this, tasks are silently
+		// skipped in runImplementerPhase and ws.Artifacts stays empty.
+		assigned := state.PersonaKind(strings.ToLower(strings.TrimSpace(string(ts.AssignedTo))))
 		if assigned == "" {
 			assigned = state.PersonaImplementer
 		}

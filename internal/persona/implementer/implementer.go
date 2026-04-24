@@ -90,6 +90,14 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 		return nil, fmt.Errorf("implementer: parse error: %w", err)
 	}
 
+	// Guard against an empty content field.  An artifact with no content is
+	// worse than a failed task because it silently reaches QA, which then
+	// raises a "No artifact provided" blocking issue that confuses the
+	// remediation loop.  Surface the failure here instead.
+	if strings.TrimSpace(out.Content) == "" {
+		return nil, fmt.Errorf("implementer: model produced an empty content field for task %q — check model output or prompt", task.Title)
+	}
+
 	now := base.Timestamp()
 	artifact := state.Artifact{
 		ID:          uuid.New().String(),
