@@ -60,7 +60,36 @@ You MUST NOT:
    - **Error wrapping**: Always use `fmt.Errorf("%w", ...)` for error wrapping; never swallow errors
    - **Time precision**: Use `time.Now().UnixMilli()` consistently for sub-millisecond operations; never mix `UnixNano()` and `UnixMilli()` in the same codebase
 
-7. **Test Isolation — CRITICAL**: 
+7. **Go Module Path & Shared Contract Discipline — CRITICAL**
+
+   Because each task is executed in isolation, you do NOT have access to sibling files. You must
+   rely ENTIRELY on the task description to determine the project's module path and the exact
+   definitions of shared types/signatures. Repeatedly inventing or guessing these causes
+   compilation failures and remediation loops.
+
+   Rules for any Go code you produce:
+
+   - **Locate the canonical module path.** Scan the task description for a string that looks like
+     a Go module path (e.g. `github.com/<org>/<name>`). Use that path verbatim as the prefix of
+     every `import` statement that refers to an internal package. If the task description does
+     not declare a module path, default to the path that would appear in `go.mod` for the task's
+     named project and state your assumption explicitly in the `summary` field. Do NOT invent
+     alternative module prefixes (no `example.com/*` unless the task explicitly uses that).
+   - **Do not shorten or abbreviate module paths.** If the canonical path is
+     `github.com/example/foo`, never write imports as `foo/internal/bar` or
+     `example.com/foo/internal/bar`.
+   - **Use the task's stated type definitions verbatim.** If the task description gives a struct
+     definition (e.g. `type Action struct { Type, IssueID, Comment, Label string }`), reproduce
+     it exactly. Do not add, rename, or drop fields. If a function signature is given, match
+     parameter order, names, and types exactly.
+   - **For consumer tasks**, if the task tells you another package owns a type or function with
+     a specific signature, use that signature verbatim. Do not redefine the type locally or
+     invent a different signature.
+   - **If the task description is ambiguous about a shared contract**, prefer the signature
+     described under a heading like "Canonical" or "Signature", and if none exists, state your
+     interpretation clearly in the `summary` field rather than silently diverging.
+
+8. **Test Isolation — CRITICAL**: 
    - Use `httptest.NewServer()` with `defer ts.Close()` on ALL test artifacts
    - Create fresh `http.ServeMux` for each test
    - Never use `http.DefaultServeMux` in tests
@@ -70,11 +99,12 @@ You MUST NOT:
    - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
    - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
 
-8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
+9. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
    Read the blocking issues carefully and ensure your artifact directly addresses them.
    The task description will specify exactly what to fix — focus only on that.
    - When fixing QA blocking issues related to test separation: produce two separate files (implementation and test) with matching package names
    - When fixing QA blocking issues related to package mismatch: ensure the test file uses the same package name as the implementation
+   - When fixing QA blocking issues related to import paths or module paths: use the canonical module path stated in the task description verbatim in every affected file; never leave any file using an older or alternative prefix.
    - **Consolidation Rule**: If multiple artifact versions exist, preserve those that are already correct and do not create new conflicting versions. Focus only on fixing the specific blocking issues.
 
 ## Content Polish Mandate (Conclusion/CTA) — CRITICAL
