@@ -1,8 +1,7 @@
 ---
 name: code-generation
-description: Best practices for writing idiomatic, production-quality Go code.
+description: Generate Go code following repository idioms, patterns, and testing conventions.
 ---
-
 # Code Generation Skill
 
 Use this skill when implementing Go code for any module in this repository.
@@ -60,6 +59,94 @@ This discipline ensures workflow progress by preventing artifact proliferation i
 - Wrap errors with enough context to trace back to the call site without a stack trace.
 - `log.Fatal` / `os.Exit` are only acceptable in `main()` after setup failures.
 
+## Systematic Verification for Remediation — CRITICAL
+
+When fixing QA blocking issues, apply these verification steps before submitting:
+
+### 1. Variable-Type Alignment
+- Check that every variable declaration matches the function's return type
+- **Slice returns** require plural variable names:
+  ```go
+  // CORRECT: plural 'issues' for slice return
+  issues, err := client.FetchIssues(ctx)
+  
+  // WRONG: singular 'issue' for slice return
+  issue, err := client.FetchIssues(ctx) // compilation error
+  ```
+- **Single value returns** require singular names:
+  ```go
+  // CORRECT: singular 'issue' for single return
+  issue, err := client.FetchIssue(ctx, id)
+  ```
+- Search the file for ALL occurrences of the function call, not just the first one
+
+### 2. Cross-Package Field Consistency
+- When using struct fields from another package, verify the exact field name in the source:
+  ```go
+  // If package linear defines:
+  type Issue struct {
+      ID     string
+      Title  string
+      Status string
+  }
+  
+  // Then in package display, use:
+  fmt.Fprintf(w, "%s\t%s\t%s\n", issue.ID, issue.Title, issue.Status)
+  
+  // WRONG: using non-existent field names
+  fmt.Fprintf(w, "%s\t%s\t%s\n", issue.Identifier, issue.Name, issue.State)
+  ```
+- Cross-reference the actual struct definition — do not guess or assume field names
+- Check all usages across all files that reference the type
+
+### 3. Import Path Verification
+- Every import statement must match the `module` declaration in `go.mod`:
+  ```go
+  // If go.mod declares:
+  module github.com/user/project
+  
+  // Then internal imports must use:
+  import "github.com/user/project/internal/config"
+  import "github.com/user/project/internal/linear"
+  
+  // WRONG: mismatched module paths
+  import "github.com/example/project/internal/config"
+  import "github.com/yourusername/project/internal/linear"
+  ```
+- Verify import paths in ALL files (main.go, tests, subpackages)
+
+### 4. Test Struct Literal Verification
+- When tests create instances of production structs, the field names must exactly match:
+  ```go
+  // If production code defines:
+  type Issue struct {
+      Status   string  // not 'State'
+      Assignee string  // not '*string'
+  }
+  
+  // Then test code must use:
+  issue := Issue{
+      Status:   "in_progress",
+      Assignee: "alice",
+  }
+  
+  // WRONG: field name mismatch
+  issue := Issue{
+      State:    "in_progress",  // field doesn't exist
+      Assignee: stringPtr("alice"),  // type mismatch
+  }
+  ```
+- Check the production struct definition before writing test literals
+- Verify field types (string vs *string, int vs int64, etc.)
+
+### 5. Compilation Mental Model
+- Before submitting, mentally trace through compilation:
+  - Can the compiler resolve all imports?
+  - Are all referenced struct fields actually exported and correctly named?
+  - Do all variable types match their assigned values?
+  - Are all function calls using the correct signature?
+- For remediation tasks, this mental model prevents re-introducing similar errors
+
 ## Remediation Guidelines
 
 When handling QA blocking issues:
@@ -71,6 +158,7 @@ When handling QA blocking issues:
 5. **Check test isolation** — no shared state between tests, proper cleanup
 6. **Consistency** — use same patterns everywhere (e.g., always `UnixMilli()`)
 7. **Apply Consolidation Rule** — never create new artifact versions for the same component when valid versions already exist
+8. **Apply Systematic Verification** — use the checklist above before submitting the fix
 
 ## References
 
