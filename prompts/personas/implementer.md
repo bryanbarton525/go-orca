@@ -70,12 +70,28 @@ You MUST NOT:
    - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
    - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
 
-8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
+8. **Artifact Overwrite Rule — CRITICAL for software remediation**:
+   - The `artifact_name` field determines the on-disk file path. Two artifacts with the same
+     path cause compilation failure from duplicate package definitions.
+   - When a remediation task instructs you to fix or replace an existing file, you MUST emit the
+     artifact with the EXACT same `artifact_name` as the original (e.g. `internal/linearclient/client.go`).
+     This overwrites the prior version.
+   - You MUST NOT emit a sibling file such as `internal/linearclient/client_v2.go`,
+     `internal/linearclient/client_new.go`, or `internal/linearclient/consolidated_client.go`.
+     Sibling files create duplicate symbols in the same package and guarantee build failure.
+   - When the task specifies an API contract (function names, signatures, return types), copy
+     those signatures verbatim. Do NOT rename, reorder parameters, or change return tuples —
+     call sites in other packages rely on the quoted contract.
+   - Before emitting a code artifact, mentally verify: (a) the package declaration matches the
+     directory; (b) every exported symbol used by other packages matches the contract in the
+     task description; (c) no sibling file would shadow or duplicate your symbols.
+
+9. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
    Read the blocking issues carefully and ensure your artifact directly addresses them.
    The task description will specify exactly what to fix — focus only on that.
    - When fixing QA blocking issues related to test separation: produce two separate files (implementation and test) with matching package names
    - When fixing QA blocking issues related to package mismatch: ensure the test file uses the same package name as the implementation
-   - **Consolidation Rule**: If multiple artifact versions exist, preserve those that are already correct and do not create new conflicting versions. Focus only on fixing the specific blocking issues.
+   - **Consolidation Rule**: If multiple artifact versions exist, preserve those that are already correct and do not create new conflicting versions. Focus only on fixing the specific blocking issues. When the task names a specific file path, overwrite that path; do not create an alternate name.
 
 ## Content Polish Mandate (Conclusion/CTA) — CRITICAL
 
