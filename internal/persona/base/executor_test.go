@@ -264,3 +264,55 @@ func TestBuildSystemContent_PhaseB_ExcludesTools(t *testing.T) {
 		t.Errorf("Phase B system content should still include SkillsContext; got:\n%s", got)
 	}
 }
+
+// ─── stripMarkdownFences ──────────────────────────────────────────────────────
+
+func TestStripMarkdownFences_JsonFence(t *testing.T) {
+	raw := "```json\n{\"artifact_kind\":\"code\",\"summary\":\"done\"}\n```"
+	got := stripMarkdownFences(raw)
+	want := `{"artifact_kind":"code","summary":"done"}`
+	if got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStripMarkdownFences_PlainFence(t *testing.T) {
+	raw := "```\n{\"key\":\"value\"}\n```"
+	got := stripMarkdownFences(raw)
+	want := `{"key":"value"}`
+	if got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestStripMarkdownFences_NoFence_Unchanged(t *testing.T) {
+	raw := `{"key":"value"}`
+	got := stripMarkdownFences(raw)
+	if got != raw {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestStripMarkdownFences_ProsePrefix_Unchanged(t *testing.T) {
+	// Prose before a fenced block is NOT stripped here — extractJSON handles it.
+	raw := "Here is the output:\n```json\n{\"key\":\"value\"}\n```"
+	got := stripMarkdownFences(raw)
+	if got != raw {
+		t.Errorf("expected unchanged when prose prefix present, got %q", got)
+	}
+}
+
+func TestParseJSON_MarkdownFencedResponse(t *testing.T) {
+	// Verify ParseJSON handles a response that is entirely wrapped in ```json.
+	type payload struct {
+		Kind string `json:"artifact_kind"`
+	}
+	raw := "```json\n{\"artifact_kind\":\"code\"}\n```"
+	var p payload
+	if err := ParseJSON(raw, &p); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Kind != "code" {
+		t.Errorf("expected artifact_kind %q, got %q", "code", p.Kind)
+	}
+}

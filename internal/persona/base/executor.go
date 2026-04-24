@@ -57,8 +57,16 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	// Phase A uses the full system content including tool descriptions.
 	// Phase B replaces the system message with a tools-stripped variant to
 	// prevent the model from emitting freeform tool-call prose instead of JSON.
+	// The "API endpoint" enforcement appended to phaseBSystem is a system-level
+	// JSON-only constraint (item 3 of the multi-layer defence). It is more
+	// authoritative than the final user-turn instruction because providers
+	// generally weight system messages higher than user turns.
 	phaseASystem := e.buildSystemContent(systemPrompt, packet, true)
-	phaseBSystem := e.buildSystemContent(systemPrompt, packet, false)
+	phaseBSystem := e.buildSystemContent(systemPrompt, packet, false) +
+		"\n\n---\n## Output format constraint\n" +
+		"You are acting as a JSON API endpoint. " +
+		"Your response must be valid, raw JSON only — no Markdown code fences, no backticks, no conversational text, no preambles. " +
+		"Your response must start exactly with { and end exactly with }."
 
 	msgs := []common.Message{
 		{Role: common.RoleSystem, Content: phaseASystem},
@@ -306,6 +314,12 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 // When the model truncated its output (hit token limit), it attempts to close
 // open JSON structures and retry — and always reports truncation clearly.
 func ParseJSON(raw string, target interface{}) error {
+	// Safety net (item 4 of the multi-layer JSON defence): strip any markdown
+	// code-block wrapper the model may have emitted despite the system-level
+	// constraint. E.g. "```json\n{...}\n```" → "{...}".
+	// This runs before lastJSONObject so that function always sees clean text.
+	raw = stripMarkdownFences(raw)
+
 	// Try the last complete JSON object first. Models that interleave tool-call
 	// prose with a final artifact always emit the artifact last. Picking the last
 	// balanced {...} block avoids mistaking an earlier small object (e.g.
@@ -463,6 +477,25 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// stripMarkdownFences removes a markdown code-block wrapper from an LLM
+// response when the entire response (after whitespace trimming) is fenced.
+// E.g. "```json\n{...}\n```" → "{...}".
+// Prose-mixed responses (leading text before a fenced block) are handled
+// downstream by extractJSON and lastJSONObject.
+func stripMarkdownFences(s string) string {
+	s = strings.TrimSpace(s)
+	for _, fence := range []string{"```json", "```"} {
+		if strings.HasPrefix(s, fence) {
+			s = strings.TrimPrefix(s, fence)
+			if end := strings.LastIndex(s, "```"); end != -1 {
+				s = s[:end]
+			}
+			return strings.TrimSpace(s)
+		}
+	}
+	return s
 }
 
 // extractJSON strips markdown code fences from a model response, then finds
