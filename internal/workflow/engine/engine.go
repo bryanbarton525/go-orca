@@ -790,6 +790,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 	_ = e.store.AppendEvents(ctx, implStartEvt)
 
 	var implErr error
+	var tasksAttempted int
 	for i := range ws.Tasks {
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
@@ -808,6 +809,8 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			t.Status != state.TaskStatusFailed {
 			continue
 		}
+
+		tasksAttempted++
 
 		// Update visible progress before calling LLM.
 		ws.Execution.CurrentPersona = state.PersonaImplementer
@@ -902,6 +905,22 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		_ = e.store.AppendEvents(ctx, implFailEvt)
 		_ = e.store.SaveWorkflow(ctx, ws)
 		return implErr
+	}
+
+	// If 0 tasks were attempted the architect produced nothing for the
+	// implementer.  Fail loudly here rather than letting QA run against an
+	// empty artifact list, which would trigger the confusing "No artifact
+	// provided" → remediation → "no valid implementer tasks" death spiral.
+	if tasksAttempted == 0 {
+		noTaskErr := fmt.Errorf("implementer phase: architect produced no implementer-assigned tasks — " +
+			"the workflow request may be empty or the architect misunderstood it; " +
+			"check that the workflow has a clear, actionable request")
+		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaFailed, state.PersonaImplementer,
+			events.PersonaFailedPayload{Persona: state.PersonaImplementer, Error: noTaskErr.Error()})
+		_ = e.store.AppendEvents(ctx, implFailEvt)
+		_ = e.store.SaveWorkflow(ctx, ws)
+		return noTaskErr
 	}
 
 	implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
