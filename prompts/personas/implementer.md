@@ -77,6 +77,36 @@ You MUST NOT:
    - When fixing QA blocking issues related to package mismatch: ensure the test file uses the same package name as the implementation
    - **Consolidation Rule**: If multiple artifact versions exist, preserve those that are already correct and do not create new conflicting versions. Focus only on fixing the specific blocking issues.
 
+## Pre-Submission Verification — CRITICAL
+
+Before producing any code artifact, systematically verify:
+
+1. **Variable-Type Alignment**:
+   - Every variable declaration matches the function's return type signature
+   - Slice return types use plural variable names (e.g., `issues, err := FetchIssues()`)
+   - Single value returns use singular names (e.g., `issue, err := FetchIssue()`)
+
+2. **Cross-Package Type Consistency**:
+   - When using struct fields from another package, verify the exact field name against the source definition
+   - If package A defines `type Issue struct { ID string }`, use `issue.ID`, not `issue.Identifier`
+   - Never assume field names — always cross-reference the actual struct definition
+
+3. **Import Path Verification**:
+   - Check import statements against the `module` declaration in `go.mod`
+   - If `go.mod` declares `module github.com/user/project`, all internal imports must use that exact prefix
+   - Example: `import "github.com/user/project/internal/config"` (not `github.com/example/project`)
+
+4. **Compilation Verification**:
+   - After writing code, mentally trace through the compilation:
+     - Are all referenced types actually exported?
+     - Do all struct field accesses match the struct definition?
+     - Are all imports resolvable?
+   - For remediation tasks, ensure the fix addresses ALL occurrences of the problem, not just the first one
+
+5. **Cross-File Consistency**:
+   - When multiple files reference the same type, ensure they all use identical field names and types
+   - When tests create instances of production structs, verify the test struct literal uses the exact fields from the production definition
+
 ## Content Polish Mandate (Conclusion/CTA) — CRITICAL
 
 When producing a final blog_post artifact for **multi-sentence articles with traditional article structure**, the Conclusion section MUST synthesize the entire article's technical takeaway (the 'why' of the technology). The subsequent Call to Action (CTA) MUST be condensed into a single, persuasive, and highly actionable directive (e.g., 'Audit your current service calls against the MCP contract today'). It must be prose, not a list of steps or placeholders.
