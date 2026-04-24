@@ -169,11 +169,30 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		return "", fmt.Errorf("executor: chat error: %w", err)
 	}
 
-	if resp.Truncated {
+	// If the model returned an empty or truncated response at Phase B, attempt
+	// one slim retry: drop all tool-call turns and send only the system message
+	// and the original user prompt. This shrinks the context substantially and
+	// often recovers from token-limit failures caused by large tool results.
+	if resp.Truncated || resp.Message.Content == "" {
+		slimMsgs := []common.Message{
+			{Role: common.RoleSystem, Content: phaseBSystem},
+			{Role: common.RoleUser, Content: userPrompt + jsonConstraint},
+		}
+		retryResp, retryErr := provider.Chat(ctx, common.ChatRequest{
+			Model:        packet.ModelName,
+			Messages:     slimMsgs,
+			JSONMode:     true,
+			OutputSchema: e.OutputSchema,
+			SchemaName:   e.SchemaName,
+		})
+		if retryErr == nil && retryResp.Message.Content != "" && !retryResp.Truncated {
+			return retryResp.Message.Content, nil
+		}
+		// Both attempts failed — return a clear error.
 		return resp.Message.Content, fmt.Errorf(
-			"executor: model %q truncated its response after %d output tokens (hit token limit) — "+
-				"try a model with a larger context window or simplify the request",
-			resp.Model, resp.OutputTokens,
+			"executor: model %q produced an empty/truncated Phase B response (slim retry also failed) — "+
+				"try a model with a larger context window or reduce the complexity of the task",
+			resp.Model,
 		)
 	}
 

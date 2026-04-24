@@ -148,11 +148,18 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 	reason := finishReason
 	mu.Unlock()
 
+	// The Copilot SDK does not expose a finish_reason equivalent for token-limit
+	// truncation. Treat an empty response as truncated so the executor can
+	// apply its recovery path (slim retry) instead of propagating a confusing
+	// "mid-JSON" parse error.
+	truncated := content == ""
+
 	return &common.ChatResponse{
 		ID:           fmt.Sprintf("copilot-%d", time.Now().UnixMilli()),
 		Model:        model,
 		Message:      common.Message{Role: common.RoleAssistant, Content: content},
 		FinishReason: reason,
+		Truncated:    truncated,
 		Latency:      time.Since(start),
 	}, nil
 }
