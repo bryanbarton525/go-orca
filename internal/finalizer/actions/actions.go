@@ -437,7 +437,31 @@ func (a *GitHubPRAction) Execute(ctx context.Context, in Input) (*Output, error)
 		return nil, fmt.Errorf("actions: github-pr requires config.repo (\"owner/repo\")")
 	}
 	if cfg.HeadBranch == "" {
-		return nil, fmt.Errorf("actions: github-pr requires config.head_branch")
+		// Auto-generate a branch name from the workflow title + short ID so
+		// callers that omit head_branch don't receive a hard failure.
+		slug := strings.ToLower(in.Workflow.Title)
+		slug = strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return '-'
+		}, slug)
+		// Collapse consecutive dashes and trim.
+		for strings.Contains(slug, "--") {
+			slug = strings.ReplaceAll(slug, "--", "-")
+		}
+		slug = strings.Trim(slug, "-")
+		if len(slug) > 40 {
+			slug = slug[:40]
+		}
+		shortID := in.Workflow.ID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		if slug == "" {
+			slug = "workflow"
+		}
+		cfg.HeadBranch = "workflow/" + slug + "-" + shortID
 	}
 	if cfg.BaseBranch == "" {
 		cfg.BaseBranch = "main"
