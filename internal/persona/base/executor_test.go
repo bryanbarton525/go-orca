@@ -92,6 +92,45 @@ func TestParseJSON_InvalidJSON_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestParseJSON_GarbledPrefixBeforeRealJSON(t *testing.T) {
+	// Models sometimes emit garbled tool-call text containing bare "{Jsii..."
+	// before the real JSON object. extractJSON must skip those false-positive
+	// braces and land on the actual {"artifact_kind":...} payload.
+	type payload struct {
+		Kind string `json:"artifact_kind"`
+	}
+	raw := `I'm reading files first.to=read_file{Jsiicommentary: path: /app/go.mod{ "artifact_kind": "code" }`
+	var p payload
+	if err := ParseJSON(raw, &p); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Kind != "code" {
+		t.Errorf("expected artifact_kind %q, got %q", "code", p.Kind)
+	}
+}
+
+func TestParseJSON_MultipleObjectsArtifactLast(t *testing.T) {
+	// Models that interleave tool-call prose emit small JSON objects like
+	// {"path":"..."} followed by the real artifact object. ParseJSON must
+	// return the last complete object, not the first.
+	type payload struct {
+		Kind    string `json:"artifact_kind"`
+		Summary string `json:"summary"`
+	}
+	raw := `Reading go.mod first.to=read_file json {"path":"go-orca-api/go.mod"}to=read_file json {"path":"go-orca-api/internal"}` +
+		`{"artifact_kind":"code","summary":"done","issues":[]}`
+	var p payload
+	if err := ParseJSON(raw, &p); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Kind != "code" {
+		t.Errorf("expected artifact_kind %q, got %q", "code", p.Kind)
+	}
+	if p.Summary != "done" {
+		t.Errorf("expected summary %q, got %q", "done", p.Summary)
+	}
+}
+
 // ─── BuildHandoffContext ──────────────────────────────────────────────────────
 
 func TestBuildHandoffContext_BasicFields(t *testing.T) {
@@ -190,5 +229,38 @@ func TestTrimToolResult_OverLimit_Truncated(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, strings.Repeat("a", maxToolResultBytes)) {
 		t.Errorf("expected first %d bytes preserved", maxToolResultBytes)
+	}
+}
+
+// ─── buildSystemContent ───────────────────────────────────────────────────────
+
+func TestBuildSystemContent_PhaseA_IncludesTools(t *testing.T) {
+	exec := NewExecutor("test", nil)
+	packet := state.HandoffPacket{
+		ToolsContext:  "## read_file\nReads a file",
+		SkillsContext: "## my_skill\nDoes something",
+	}
+	got := exec.buildSystemContent("base prompt", packet, true)
+	if !strings.Contains(got, "read_file") {
+		t.Errorf("Phase A system content should include ToolsContext; got:\n%s", got)
+	}
+	if !strings.Contains(got, "my_skill") {
+		t.Errorf("Phase A system content should include SkillsContext; got:\n%s", got)
+	}
+}
+
+func TestBuildSystemContent_PhaseB_ExcludesTools(t *testing.T) {
+	exec := NewExecutor("test", nil)
+	packet := state.HandoffPacket{
+		ToolsContext:  "## read_file\nReads a file",
+		SkillsContext: "## my_skill\nDoes something",
+	}
+	got := exec.buildSystemContent("base prompt", packet, false)
+	if strings.Contains(got, "read_file") {
+		t.Errorf("Phase B system content must NOT include ToolsContext; got:\n%s", got)
+	}
+	// Skills are not tool calls — they are contextual guidance and remain.
+	if !strings.Contains(got, "my_skill") {
+		t.Errorf("Phase B system content should still include SkillsContext; got:\n%s", got)
 	}
 }

@@ -54,10 +54,14 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		return "", fmt.Errorf("executor: provider %q not registered", packet.ProviderName)
 	}
 
-	systemContent := e.buildSystemContent(systemPrompt, packet)
+	// Phase A uses the full system content including tool descriptions.
+	// Phase B replaces the system message with a tools-stripped variant to
+	// prevent the model from emitting freeform tool-call prose instead of JSON.
+	phaseASystem := e.buildSystemContent(systemPrompt, packet, true)
+	phaseBSystem := e.buildSystemContent(systemPrompt, packet, false)
 
 	msgs := []common.Message{
-		{Role: common.RoleSystem, Content: systemContent},
+		{Role: common.RoleSystem, Content: phaseASystem},
 		{Role: common.RoleUser, Content: userPrompt},
 	}
 
@@ -121,11 +125,28 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	}
 
 	// ── Phase B: structured JSON response ────────────────────────────────────
-	// No tools in this call — the model now has full context and must produce
-	// the structured JSON output its persona schema requires.
+	// Replace the system message with one that strips tool descriptions — the
+	// model must not emit freeform tool-call prose here. Then append an explicit
+	// JSON-only instruction as the final user turn so that providers which do not
+	// enforce output schemas (e.g. Copilot) still receive a strong text-level
+	// signal to produce only JSON.
+	phaseBMsgs := make([]common.Message, 0, len(msgs)+1)
+	for _, m := range msgs {
+		if m.Role == common.RoleSystem {
+			phaseBMsgs = append(phaseBMsgs, common.Message{Role: common.RoleSystem, Content: phaseBSystem})
+		} else {
+			phaseBMsgs = append(phaseBMsgs, m)
+		}
+	}
+	phaseBMsgs = append(phaseBMsgs, common.Message{
+		Role: common.RoleUser,
+		Content: "Respond with ONLY a valid JSON object matching the required output schema. " +
+			"Do not include any prose, markdown fences, tool calls, or commentary outside the JSON object.",
+	})
+
 	resp, err := provider.Chat(ctx, common.ChatRequest{
 		Model:        packet.ModelName,
-		Messages:     msgs,
+		Messages:     phaseBMsgs,
 		JSONMode:     true,
 		OutputSchema: e.OutputSchema,
 		SchemaName:   e.SchemaName,
@@ -179,7 +200,12 @@ func trimToolResult(raw []byte) string {
 
 // buildSystemContent layers the base system prompt with any skill/agent
 // overlays baked into the HandoffPacket.
-func (e *Executor) buildSystemContent(systemPrompt string, packet state.HandoffPacket) string {
+//
+// includeTools controls whether ToolsContext is appended. Pass true for Phase A
+// (tool-call loop) so the model knows what tools are available. Pass false for
+// Phase B (structured JSON output) so the model cannot hallucinate freeform
+// tool-call prose instead of the required JSON artifact.
+func (e *Executor) buildSystemContent(systemPrompt string, packet state.HandoffPacket, includeTools bool) string {
 	var sb strings.Builder
 	sb.WriteString(systemPrompt)
 
@@ -191,7 +217,7 @@ func (e *Executor) buildSystemContent(systemPrompt string, packet state.HandoffP
 		sb.WriteString("\n\n---\n## Available skills\n")
 		sb.WriteString(packet.SkillsContext)
 	}
-	if packet.ToolsContext != "" {
+	if includeTools && packet.ToolsContext != "" {
 		sb.WriteString("\n\n---\n## Available tools\n")
 		sb.WriteString(packet.ToolsContext)
 	}
@@ -280,6 +306,17 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 // When the model truncated its output (hit token limit), it attempts to close
 // open JSON structures and retry — and always reports truncation clearly.
 func ParseJSON(raw string, target interface{}) error {
+	// Try the last complete JSON object first. Models that interleave tool-call
+	// prose with a final artifact always emit the artifact last. Picking the last
+	// balanced {...} block avoids mistaking an earlier small object (e.g.
+	// {"path":"..."}) for the artifact, which would fail with "invalid character
+	// 't' after top-level value" when the trailing text follows it.
+	if last := lastJSONObject(raw); last != "" {
+		if err := json.Unmarshal([]byte(last), target); err == nil {
+			return nil
+		}
+	}
+
 	cleaned := extractJSON(raw)
 
 	if err := json.Unmarshal([]byte(cleaned), target); err != nil {
@@ -302,6 +339,65 @@ func ParseJSON(raw string, target interface{}) error {
 		return fmt.Errorf("base: could not parse model response as JSON: %w\nRaw content:\n%s", err, raw)
 	}
 	return nil
+}
+
+// lastJSONObject returns the last complete, balanced JSON object ({...}) found
+// in s. It tracks JSON string boundaries so that { and } inside string values
+// are not counted as depth. Returns "" if no complete object is found.
+func lastJSONObject(s string) string {
+	var result string
+	i := 0
+	for i < len(s) {
+		if s[i] != '{' {
+			i++
+			continue
+		}
+		end := findMatchingClose(s, i)
+		if end < 0 {
+			i++
+			continue
+		}
+		result = s[i : end+1]
+		i = end + 1
+	}
+	return result
+}
+
+// findMatchingClose returns the index of the } that closes the { at position
+// start. It tracks JSON string boundaries (including \ escapes) so that braces
+// inside string values are not counted. Returns -1 if not found.
+func findMatchingClose(s string, start int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		b := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if b == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if b == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch b {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // repairTruncatedJSON attempts to close any unclosed JSON objects and arrays
@@ -414,8 +510,18 @@ func extractJSON(s string) string {
 	}
 
 	// Advance past any leading prose to the first { or [.
+	// For {, verify the next non-whitespace character is " or } — the only
+	// valid starts for a JSON object. This skips false positives such as
+	// "{Jsii" that appear in garbled model output before the real payload.
 	for i, ch := range s {
-		if ch == '{' || ch == '[' {
+		if ch == '{' {
+			rest := strings.TrimSpace(s[i+1:])
+			if len(rest) > 0 && rest[0] != '"' && rest[0] != '}' {
+				continue
+			}
+			return s[i:]
+		}
+		if ch == '[' {
 			return s[i:]
 		}
 	}
