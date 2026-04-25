@@ -273,7 +273,7 @@ func buildPersonaPromptContext(snapshot map[string]string) string {
 		{"director", "director.md"},
 		{"project_manager", "project_manager.md"},
 		{"architect", "architect.md"},
-		{"implementer", "implementer.md"},
+		{"pod", "pod.md"},
 		{"qa", "qa.md"},
 		{"finalizer", "finalizer.md"},
 	}

@@ -141,15 +141,15 @@ func TestBuildPacketUsesPersonaAssignmentsForDownstreamPhases(t *testing.T) {
 		},
 	}
 	ws.PersonaModels = state.PersonaModelAssignments{
-		state.PersonaImplementer: "code-model",
+		state.PersonaPod: "code-model",
 		state.PersonaQA:          "review-model",
 	}
 
 	if got := eng.buildPacket(ws, state.PersonaDirector, nil).ModelName; got != "bootstrap-model" {
 		t.Fatalf("director model: got %q", got)
 	}
-	if got := eng.buildPacket(ws, state.PersonaImplementer, nil).ModelName; got != "code-model" {
-		t.Fatalf("implementer model: got %q", got)
+	if got := eng.buildPacket(ws, state.PersonaPod, nil).ModelName; got != "code-model" {
+		t.Fatalf("pod model: got %q", got)
 	}
 	if got := eng.buildPacket(ws, state.PersonaQA, nil).ModelName; got != "review-model" {
 		t.Fatalf("qa model: got %q", got)
@@ -187,7 +187,7 @@ func TestApplyOutputNormalizesDirectorPersonaSelections(t *testing.T) {
 	eng.applyOutput(ws, &state.PersonaOutput{
 		Persona:    state.PersonaDirector,
 		Summary:    "use specialized downstream models",
-		RawContent: `{"mode":"software","title":"Route models","provider":"catalog-mock","model":"plan-model","persona_models":{"project_manager":"plan-model","implementer":"code-model","qa":"blocked-model"},"finalizer_action":"artifact-bundle","required_personas":["project_manager","architect","implementer","qa","finalizer"],"rationale":"Route coding separately.","summary":"Use the coding model for implementer only."}`,
+		RawContent: `{"mode":"software","title":"Route models","provider":"catalog-mock","model":"plan-model","persona_models":{"project_manager":"plan-model","pod":"code-model","qa":"blocked-model"},"finalizer_action":"artifact-bundle","required_personas":["project_manager","architect","pod","qa","finalizer"],"rationale":"Route coding separately.","summary":"Use the coding model for pod only."}`,
 	})
 
 	if ws.ProviderName != "catalog-mock" {
@@ -196,8 +196,8 @@ func TestApplyOutputNormalizesDirectorPersonaSelections(t *testing.T) {
 	if ws.ModelName != "plan-model" {
 		t.Fatalf("ModelName: got %q", ws.ModelName)
 	}
-	if got := ws.PersonaModels[state.PersonaImplementer]; got != "code-model" {
-		t.Fatalf("implementer persona model: got %q", got)
+	if got := ws.PersonaModels[state.PersonaPod]; got != "code-model" {
+		t.Fatalf("pod persona model: got %q", got)
 	}
 	if got := ws.PersonaModels[state.PersonaQA]; got != "plan-model" {
 		t.Fatalf("qa persona model fallback: got %q", got)
@@ -321,7 +321,7 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 	}
 
 	requested := state.PersonaModelAssignments{
-		state.PersonaImplementer: "codegemma:7b",    // no tools
+		state.PersonaPod: "codegemma:7b",    // no tools
 		state.PersonaQA:          "codegemma:7b",    // no tools
 		state.PersonaArchitect:   "codegemma:7b",    // no tools (architect doesn't need tools)
 		state.PersonaFinalizer:   "bootstrap-model", // no tools (finalizer doesn't need tools)
@@ -329,9 +329,9 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 
 	out := eng.normalizePersonaModels("catalog-mock", requested, "bootstrap-model", catalogs)
 
-	// Implementer and QA must be swapped to a tool-capable model.
-	if got := out[state.PersonaImplementer]; got != "qwen2.5-coder:7b" {
-		t.Fatalf("implementer: want qwen2.5-coder:7b, got %q", got)
+	// Pod and QA must be swapped to a tool-capable model.
+	if got := out[state.PersonaPod]; got != "qwen2.5-coder:7b" {
+		t.Fatalf("pod: want qwen2.5-coder:7b, got %q", got)
 	}
 	if got := out[state.PersonaQA]; got != "qwen2.5-coder:7b" {
 		t.Fatalf("qa: want qwen2.5-coder:7b, got %q", got)

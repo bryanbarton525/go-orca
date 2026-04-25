@@ -23,7 +23,7 @@ Improvement component types: agent | skill | prompt | persona | workflow | provi
 
 Field requirements — all required fields must be non-empty:
 - component_type: must be one of the types listed above
-- component_name: the exact name of the component (e.g. "implementer", "my-skill")
+- component_name: the exact name of the component (e.g. "pod", "my-skill")
 - problem: a clear, concrete description of what went wrong
 - proposed_fix: a concrete, actionable change to make
 - change_type: "create" | "update" | "advisory"
@@ -42,7 +42,7 @@ Always respond with valid JSON matching this schema:
       "proposed_fix": "...",
       "change_type": "create|update|advisory",
       "files": [
-        { "path": "prompts/personas/implementer.md", "content": "<full updated file content>" }
+        { "path": "prompts/personas/pod.md", "content": "<full updated file content>" }
       ],
       "example": "...",
       "priority": "high|medium|low"

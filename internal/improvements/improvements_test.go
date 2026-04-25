@@ -41,7 +41,7 @@ func TestRoute_Advisory_WhenNoFilesOrContent(t *testing.T) {
 func TestRoute_Workflow_ForPersona(t *testing.T) {
 	imp := state.RefinerImprovement{
 		ComponentType: "persona",
-		ComponentName: "implementer",
+		ComponentName: "pod",
 		ChangeType:    "update",
 		Priority:      "low",
 		Content:       "x",
@@ -279,7 +279,7 @@ func TestValidatePath_BlocksAbsolutePaths(t *testing.T) {
 }
 
 func TestValidatePath_BlocksPersonasPrefix(t *testing.T) {
-	if err := improvements.ValidatePath("personas/implementer.md"); err == nil {
+	if err := improvements.ValidatePath("personas/pod.md"); err == nil {
 		t.Error("expected personas/ path to be blocked")
 	}
 }

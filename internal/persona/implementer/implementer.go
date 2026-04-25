@@ -39,23 +39,23 @@ var outputSchema = map[string]any{
 }
 
 // Implementer implements persona.Persona.
-type Implementer struct {
+type Pod struct {
 	exec base.Executor
 }
 
 // New returns a new Implementer persona.
-func New() *Implementer {
-	return &Implementer{exec: base.NewExecutor("implementer_output", outputSchema)}
+func New() *Pod {
+	return &Pod{exec: base.NewExecutor("pod_output", outputSchema)}
 }
 
 // Kind implements Persona.
-func (im *Implementer) Kind() state.PersonaKind { return state.PersonaImplementer }
+func (im *Pod) Kind() state.PersonaKind { return state.PersonaPod }
 
 // Name implements Persona.
-func (im *Implementer) Name() string { return "Implementer" }
+func (im *Pod) Name() string { return "Pod" }
 
 // Description implements Persona.
-func (im *Implementer) Description() string {
+func (im *Pod) Description() string {
 	return "Executes tasks from the task graph and produces typed artifacts."
 }
 
@@ -64,15 +64,15 @@ func (im *Implementer) Description() string {
 // The Implementer runs once per ready task.  The engine is responsible for
 // calling Execute repeatedly until all implementer tasks are complete.
 // The HandoffPacket.Tasks slice should contain the single task being executed.
-func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	_ = time.Now()
 
 	if len(packet.Tasks) == 0 {
-		return nil, fmt.Errorf("implementer: no task in handoff packet")
+		return nil, fmt.Errorf("pod: no task in handoff packet")
 	}
 	task := packet.Tasks[0]
 
-	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyImplementer]
+	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyPod]
 
 	ctx_ := buildContext(packet)
 	userPrompt := fmt.Sprintf(
@@ -82,12 +82,12 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 
 	raw, err := im.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {
-		return nil, fmt.Errorf("implementer: execution error: %w", err)
+		return nil, fmt.Errorf("pod: execution error: %w", err)
 	}
 
 	var out implOutput
 	if err := base.ParseJSON(raw, &out); err != nil {
-		return nil, fmt.Errorf("implementer: parse error: %w", err)
+		return nil, fmt.Errorf("pod: parse error: %w", err)
 	}
 
 	// Guard against an empty content field.  An artifact with no content is
@@ -95,7 +95,7 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 	// raises a "No artifact provided" blocking issue that confuses the
 	// remediation loop.  Surface the failure here instead.
 	if strings.TrimSpace(out.Content) == "" {
-		return nil, fmt.Errorf("implementer: model produced an empty content field for task %q — check model output or prompt", task.Title)
+		return nil, fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", task.Title)
 	}
 
 	now := base.Timestamp()
@@ -107,12 +107,12 @@ func (im *Implementer) Execute(ctx context.Context, packet state.HandoffPacket) 
 		Name:        out.ArtifactName,
 		Description: out.ArtifactDescription,
 		Content:     out.Content,
-		CreatedBy:   state.PersonaImplementer,
+		CreatedBy:   state.PersonaPod,
 		CreatedAt:   now,
 	}
 
 	return &state.PersonaOutput{
-		Persona:     state.PersonaImplementer,
+		Persona:     state.PersonaPod,
 		Summary:     out.Summary,
 		RawContent:  raw,
 		Artifacts:   []state.Artifact{artifact},

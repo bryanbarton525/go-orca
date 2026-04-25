@@ -9,20 +9,20 @@ import (
 func TestRefinerNormalize_DropsBlankComponentName(t *testing.T) {
 	imps := []Improvement{
 		{ComponentType: "persona", ComponentName: "", Problem: "p", ProposedFix: "f", Priority: "high"},
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "high"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "high"},
 	}
 	result := normalizeImprovements(imps)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 improvement, got %d", len(result))
 	}
-	if result[0].ComponentName != "implementer" {
+	if result[0].ComponentName != "pod" {
 		t.Errorf("wrong improvement retained: %+v", result[0])
 	}
 }
 
 func TestRefinerNormalize_DropsInvalidPriority(t *testing.T) {
 	imps := []Improvement{
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "critical"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "critical"},
 		{ComponentType: "persona", ComponentName: "director", Problem: "p", ProposedFix: "f", Priority: "low"},
 	}
 	result := normalizeImprovements(imps)

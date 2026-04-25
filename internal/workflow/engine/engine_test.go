@@ -93,7 +93,7 @@ func (p *artifactPersona) Execute(_ context.Context, packet state.HandoffPacket)
 			Kind:       state.ArtifactKindCode,
 			Name:       "main.go",
 			Content:    "package main\n",
-			CreatedBy:  state.PersonaImplementer,
+			CreatedBy:  state.PersonaPod,
 			CreatedAt:  time.Now().UTC(),
 		}},
 	}, nil
@@ -232,8 +232,8 @@ func TestMockStoreAppendEvents(t *testing.T) {
 }
 
 func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
-	persona.Register(&artifactPersona{kind: state.PersonaImplementer})
-	t.Cleanup(func() { persona.Unregister(state.PersonaImplementer) })
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
 	persona.Register(&noopPersona{kind: state.PersonaQA})
 	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
 	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
@@ -247,14 +247,14 @@ func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
 	ws := state.NewWorkflowState("t1", "s1", "build a go app")
 	ws.Mode = state.WorkflowModeSoftware
 	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
-	ws.RequiredPersonas = []state.PersonaKind{state.PersonaImplementer, state.PersonaQA, state.PersonaFinalizer}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
 	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
 	ws.Tasks = []state.Task{{
 		ID:         "task-123456789",
 		WorkflowID: ws.ID,
 		Title:      "write main",
 		Status:     state.TaskStatusPending,
-		AssignedTo: state.PersonaImplementer,
+		AssignedTo: state.PersonaPod,
 		CreatedAt:  time.Now().UTC(),
 	}}
 	ms.workflows[ws.ID] = ws
@@ -296,8 +296,8 @@ func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
 // run fails, the engine emits validation.gate.blocked, marks the workflow
 // failed, and skips the Finalizer.
 func TestEnforceValidationGate_BlocksFinalizerOnFailedValidation(t *testing.T) {
-	persona.Register(&artifactPersona{kind: state.PersonaImplementer})
-	t.Cleanup(func() { persona.Unregister(state.PersonaImplementer) })
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
 	persona.Register(&noopPersona{kind: state.PersonaQA})
 	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
 	// Finalizer must NOT run.  Register a sentinel that fails the test if it does.
@@ -313,14 +313,14 @@ func TestEnforceValidationGate_BlocksFinalizerOnFailedValidation(t *testing.T) {
 	ws := state.NewWorkflowState("t1", "s1", "build a go app")
 	ws.Mode = state.WorkflowModeSoftware
 	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
-	ws.RequiredPersonas = []state.PersonaKind{state.PersonaImplementer, state.PersonaQA, state.PersonaFinalizer}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
 	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
 	ws.Tasks = []state.Task{{
 		ID:         "task-fail-1",
 		WorkflowID: ws.ID,
 		Title:      "write main",
 		Status:     state.TaskStatusPending,
-		AssignedTo: state.PersonaImplementer,
+		AssignedTo: state.PersonaPod,
 		CreatedAt:  time.Now().UTC(),
 	}}
 	ms.workflows[ws.ID] = ws

@@ -200,9 +200,9 @@ func (a *ArtifactBundleAction) Execute(_ context.Context, in Input) (*Output, er
 //
 // Selection rule (newest-to-oldest):
 //  1. Latest artifact with kind blog_post — preferred; produced when the
-//     Implementer is mode-aware and may have been updated via remediation.
+//     Pod is mode-aware and may have been updated via remediation.
 //  2. Latest textual artifact with kind markdown, document, or a plain-text
-//     alias — fallback for workflows where the Implementer produced a generic
+//     alias — fallback for workflows where the Pod produced a generic
 //     text artifact instead of explicitly tagging it as blog_post.
 //
 // Scanning newest-to-oldest ensures that a later remediation or synthesis
@@ -229,7 +229,7 @@ func (a *BlogDraftAction) Execute(_ context.Context, in Input) (*Output, error) 
 		}
 	}
 	// Fall back to the latest textual artifact when no blog_post is present.
-	// This handles content-mode workflows where the Implementer produced a
+	// This handles content-mode workflows where the Pod produced a
 	// generic text artifact instead of explicitly tagging it as blog_post.
 	for i := len(in.Artifacts) - 1; i >= 0; i-- {
 		art := in.Artifacts[i]

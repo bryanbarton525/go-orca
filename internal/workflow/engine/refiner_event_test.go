@@ -206,7 +206,7 @@ func TestRefinerSuggestionEvents_NoAppliedPathWhenContentEmpty(t *testing.T) {
 	imps := []state.RefinerImprovement{
 		{
 			ComponentType: "persona",
-			ComponentName: "implementer",
+			ComponentName: "pod",
 			Problem:       "uses CTA language",
 			ProposedFix:   "remove CTA phrases",
 			Priority:      "medium",

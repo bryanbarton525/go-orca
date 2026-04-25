@@ -29,9 +29,9 @@ const DefaultRoot = "prompts/personas"
 const (
 	KeyDirector         = "director"
 	KeyProjectManager   = "project_manager"
-	KeyEngineerProxy    = "engineer_proxy"
+	KeyMatriarch        = "matriarch"
 	KeyArchitect        = "architect"
-	KeyImplementer      = "implementer"
+	KeyPod              = "pod"
 	KeyQA               = "qa"
 	KeyFinalizer        = "finalizer"
 	KeyFinalizerRefiner = "finalizer_refiner"
@@ -42,9 +42,9 @@ const (
 var requiredFiles = map[string]string{
 	KeyDirector:         "director.md",
 	KeyProjectManager:   "project_manager.md",
-	KeyEngineerProxy:    "engineer_proxy.md",
+	KeyMatriarch:        "matriarch.md",
 	KeyArchitect:        "architect.md",
-	KeyImplementer:      "implementer.md",
+	KeyPod:              "pod.md",
 	KeyQA:               "qa.md",
 	KeyFinalizer:        "finalizer.md",
 	KeyFinalizerRefiner: "finalizer_refiner.md",
@@ -91,9 +91,9 @@ func Keys() []string {
 	return []string{
 		KeyDirector,
 		KeyProjectManager,
-		KeyEngineerProxy,
+		KeyMatriarch,
 		KeyArchitect,
-		KeyImplementer,
+		KeyPod,
 		KeyQA,
 		KeyFinalizer,
 		KeyFinalizerRefiner,

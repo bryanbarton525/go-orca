@@ -51,16 +51,16 @@ func TestApplyOutputDirectorEnforcesSoftwarePipeline(t *testing.T) {
 		RawContent: `{
 			"mode":"software",
 			"title":"Software workflow",
-			"required_personas":["implementer"],
+			"required_personas":["pod"],
 			"summary":"handoff"
 		}`,
 	})
 
 	want := []state.PersonaKind{
 		state.PersonaProjectMgr,
-		state.PersonaEngineer,
+		state.PersonaMatriarch,
 		state.PersonaArchitect,
-		state.PersonaImplementer,
+		state.PersonaPod,
 		state.PersonaQA,
 		state.PersonaFinalizer,
 	}
@@ -88,16 +88,16 @@ func TestApplyOutputDirectorDefaultsContentPipeline(t *testing.T) {
 		RawContent: `{
 			"mode":"software",
 			"title":"Wrong mode",
-			"required_personas":["implementer"],
+			"required_personas":["pod"],
 			"summary":"handoff"
 		}`,
 	})
 
 	want := []state.PersonaKind{
 		state.PersonaProjectMgr,
-		state.PersonaEngineer,
+		state.PersonaMatriarch,
 		state.PersonaArchitect,
-		state.PersonaImplementer,
+		state.PersonaPod,
 		state.PersonaQA,
 		state.PersonaFinalizer,
 	}

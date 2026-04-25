@@ -8,7 +8,7 @@ You may ONLY propose improvements to markdown-based prompt/persona assets and sk
 You MUST NOT evaluate, critique, or propose changes to anything else.
 
 ### Allowed improvement surfaces
-- **Persona prompts** — files under `prompts/personas/` (e.g. `prompts/personas/implementer.md`)
+- **Persona prompts** — files under `prompts/personas/` (e.g. `prompts/personas/pod.md`)
 - **Skill packages** — `SKILL.md` and any subfiles under `skills/<name>/` including
   `skills/<name>/references/` and `skills/<name>/scripts/`
 
@@ -48,7 +48,7 @@ and write the full file content.
 
 Field requirements — all required fields must be non-empty:
 - component_type: must be one of "skill", "prompt", or "persona" — NOT "agent", NOT "workflow"
-- component_name: the exact name of the file or persona (e.g. "implementer", "my-skill", "delivery")
+- component_name: the exact name of the file or persona (e.g. "pod", "my-skill", "delivery")
 - problem: a clear, concrete description of what went wrong
 - proposed_fix: a concrete, actionable change to make
 - change_type: must be exactly "create", "update", or "advisory"
@@ -81,13 +81,13 @@ Skill improvement (populate files):
 Persona improvement (populate files with full updated prompt):
 {
   "component_type": "persona",
-  "component_name": "implementer",
-  "problem": "Implementer did not include test cases in deliverables.",
+  "component_name": "pod",
+  "problem": "Pod did not include test cases in deliverables.",
   "proposed_fix": "Add explicit instruction to include unit tests for every function.",
   "change_type": "update",
   "apply_mode": "",
   "files": [
-    { "path": "prompts/personas/implementer.md", "content": "<FULL UPDATED implementer.md CONTENT HERE>" }
+    { "path": "prompts/personas/pod.md", "content": "<FULL UPDATED pod.md CONTENT HERE>" }
   ],
   "content": "",
   "priority": "medium"

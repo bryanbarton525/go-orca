@@ -56,9 +56,9 @@ type PersonaKind string
 const (
 	PersonaDirector    PersonaKind = "director"
 	PersonaProjectMgr  PersonaKind = "project_manager"
-	PersonaEngineer    PersonaKind = "engineer_proxy"
+	PersonaMatriarch   PersonaKind = "matriarch"
 	PersonaArchitect   PersonaKind = "architect"
-	PersonaImplementer PersonaKind = "implementer"
+	PersonaPod         PersonaKind = "pod"
 	PersonaQA          PersonaKind = "qa"
 	PersonaFinalizer   PersonaKind = "finalizer"
 	PersonaRefiner     PersonaKind = "refiner"
@@ -69,9 +69,9 @@ const (
 func DownstreamPersonaKinds() []PersonaKind {
 	return []PersonaKind{
 		PersonaProjectMgr,
-		PersonaEngineer,
+		PersonaMatriarch,
 		PersonaArchitect,
-		PersonaImplementer,
+		PersonaPod,
 		PersonaQA,
 		PersonaFinalizer,
 	}
@@ -121,13 +121,13 @@ type ProviderModelCatalog struct {
 type Execution struct {
 	// CurrentPersona is the persona phase currently executing.
 	CurrentPersona PersonaKind `json:"current_persona,omitempty"`
-	// ActiveTaskID is the ID of the task being executed by the Implementer.
+	// ActiveTaskID is the ID of the task being executed by the Pod.
 	ActiveTaskID string `json:"active_task_id,omitempty"`
 	// ActiveTaskTitle is the title of that task for display purposes.
 	ActiveTaskTitle string `json:"active_task_title,omitempty"`
 	// QACycle is the current QA/remediation pass number (1-based).
 	QACycle int `json:"qa_cycle,omitempty"`
-	// RemediationAttempt is the Implementer re-run count within the current QA cycle.
+	// RemediationAttempt is the Pod re-run count within the current QA cycle.
 	RemediationAttempt int `json:"remediation_attempt,omitempty"`
 	// WorkflowKind distinguishes standard workflow runs from improvement workflows
 	// spawned by the self-improvement pipeline.

@@ -271,7 +271,7 @@ func (e *Engine) resolvePersonaModel(ws *state.WorkflowState, kind state.Persona
 // loop (implementer, QA) and therefore must be assigned a model that
 // advertises tool support.
 func personaRequiresTools(kind state.PersonaKind) bool {
-	return kind == state.PersonaImplementer || kind == state.PersonaQA
+	return kind == state.PersonaPod || kind == state.PersonaQA
 }
 
 // modelHasTools checks whether a model in the catalog advertises tools=yes.

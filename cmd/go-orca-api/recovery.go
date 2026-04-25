@@ -86,7 +86,7 @@ func markWorkflowInterrupted(ctx context.Context, store storage.Store, ws *state
 	eventsToAppend := make([]*events.Event, 0, len(runningTasks)+2)
 	for _, task := range runningTasks {
 		evt, err := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventTaskFailed, state.PersonaImplementer,
+			events.EventTaskFailed, state.PersonaPod,
 			events.TaskFailedPayload{TaskID: task.ID, Title: task.Title, Error: interruptedWorkflowError})
 		if err != nil {
 			return fmt.Errorf("build task failure event: %w", err)

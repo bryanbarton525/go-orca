@@ -89,7 +89,7 @@ func TestFinalizerRunRefiner_EmitsNestedPersonaProgress(t *testing.T) {
 			Name:        "go-definition.md",
 			Description: "single sentence definition",
 			Content:     "Go is a programming language.",
-			CreatedBy:   state.PersonaImplementer,
+			CreatedBy:   state.PersonaPod,
 			CreatedAt:   time.Now().UTC(),
 		}},
 		PersonaPromptSnapshot: map[string]string{
@@ -162,13 +162,13 @@ func TestFinalizerRunRefiner_EmitsNestedPersonaProgress(t *testing.T) {
 func TestNormalizeImprovements_DropsBlankComponentName(t *testing.T) {
 	imps := []state.RefinerImprovement{
 		{ComponentType: "persona", ComponentName: "", Problem: "p", ProposedFix: "f", Priority: "high"},
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "high"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "high"},
 	}
 	result := normalizeImprovements(imps)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 improvement, got %d", len(result))
 	}
-	if result[0].ComponentName != "implementer" {
+	if result[0].ComponentName != "pod" {
 		t.Errorf("wrong improvement retained: %+v", result[0])
 	}
 }
@@ -205,7 +205,7 @@ func TestNormalizeImprovements_DropsBlankProposedFix(t *testing.T) {
 
 func TestNormalizeImprovements_DropsInvalidPriority(t *testing.T) {
 	imps := []state.RefinerImprovement{
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "urgent"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "urgent"},
 		{ComponentType: "persona", ComponentName: "director", Problem: "p", ProposedFix: "f", Priority: "medium"},
 	}
 	result := normalizeImprovements(imps)
@@ -249,7 +249,7 @@ func TestNormalizeImprovements_EmptyInput(t *testing.T) {
 
 func TestNormalizeImprovements_TrimsWhitespace(t *testing.T) {
 	imps := []state.RefinerImprovement{
-		{ComponentType: "  persona  ", ComponentName: "  implementer  ", Problem: "  p  ", ProposedFix: "  f  ", Priority: "  high  "},
+		{ComponentType: "  persona  ", ComponentName: "  pod  ", Problem: "  p  ", ProposedFix: "  f  ", Priority: "  high  "},
 	}
 	result := normalizeImprovements(imps)
 	if len(result) != 1 {
@@ -258,7 +258,7 @@ func TestNormalizeImprovements_TrimsWhitespace(t *testing.T) {
 	if result[0].ComponentType != "persona" {
 		t.Errorf("ComponentType not trimmed: %q", result[0].ComponentType)
 	}
-	if result[0].ComponentName != "implementer" {
+	if result[0].ComponentName != "pod" {
 		t.Errorf("ComponentName not trimmed: %q", result[0].ComponentName)
 	}
 	if result[0].Priority != "high" {
@@ -268,7 +268,7 @@ func TestNormalizeImprovements_TrimsWhitespace(t *testing.T) {
 
 func TestNormalizeImprovements_NormalizesPriorityCase(t *testing.T) {
 	imps := []state.RefinerImprovement{
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "HIGH"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "HIGH"},
 		{ComponentType: "persona", ComponentName: "director", Problem: "p", ProposedFix: "f", Priority: "Medium"},
 		{ComponentType: "persona", ComponentName: "architect", Problem: "p", ProposedFix: "f", Priority: "LOW"},
 	}
@@ -334,7 +334,7 @@ func TestNormalizeImprovements_DeduplicateKeepsHigherPriority(t *testing.T) {
 func TestNormalizeImprovements_DifferentComponentsNotDeduped(t *testing.T) {
 	imps := []state.RefinerImprovement{
 		{ComponentType: "persona", ComponentName: "architect", Problem: "p", ProposedFix: "f", Priority: "high"},
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "high"},
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "high"},
 		{ComponentType: "skill", ComponentName: "architect", Problem: "p", ProposedFix: "f", Priority: "high"},
 	}
 	result := normalizeImprovements(imps)
@@ -396,9 +396,9 @@ func TestNormalizeImprovements_DropsGoSourceFilePath(t *testing.T) {
 
 func TestNormalizeImprovements_KeepsPersonaWithAllowedPath(t *testing.T) {
 	imps := []state.RefinerImprovement{
-		{ComponentType: "persona", ComponentName: "implementer", Problem: "p", ProposedFix: "f", Priority: "high",
+		{ComponentType: "persona", ComponentName: "pod", Problem: "p", ProposedFix: "f", Priority: "high",
 			ChangeType: "update",
-			Files:      []state.ImprovementFile{{Path: "prompts/personas/implementer.md", Content: "# impl"}}},
+			Files:      []state.ImprovementFile{{Path: "prompts/personas/pod.md", Content: "# impl"}}},
 	}
 	result := normalizeImprovements(imps)
 	if len(result) != 1 {

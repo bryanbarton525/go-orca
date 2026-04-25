@@ -273,7 +273,7 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		sb.WriteString("\n## Prior Phase Summaries\n")
 		order := []state.PersonaKind{
 			state.PersonaDirector, state.PersonaProjectMgr,
-			state.PersonaEngineer, state.PersonaArchitect, state.PersonaImplementer,
+			state.PersonaMatriarch, state.PersonaArchitect, state.PersonaPod,
 			state.PersonaQA,
 		}
 		for _, k := range order {

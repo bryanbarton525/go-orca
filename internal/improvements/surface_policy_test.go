@@ -12,13 +12,13 @@ import (
 func validPersonaImp() state.RefinerImprovement {
 	return state.RefinerImprovement{
 		ComponentType: "persona",
-		ComponentName: "implementer",
+		ComponentName: "pod",
 		Problem:       "p",
 		ProposedFix:   "f",
 		Priority:      "high",
 		ChangeType:    "update",
 		Files: []state.ImprovementFile{
-			{Path: "prompts/personas/implementer.md", Content: "# impl"},
+			{Path: "prompts/personas/pod.md", Content: "# impl"},
 		},
 	}
 }
@@ -171,14 +171,14 @@ func TestValidateSurface_LegacyContentPersona(t *testing.T) {
 	// Legacy single-file improvement using Content field, no Files slice.
 	imp := state.RefinerImprovement{
 		ComponentType: "persona",
-		ComponentName: "implementer",
+		ComponentName: "pod",
 		Problem:       "p",
 		ProposedFix:   "f",
 		Priority:      "high",
 		ChangeType:    "update",
 		Content:       "# impl",
 	}
-	// legacyRelPath derives "personas/implementer.md" — that does NOT start
+	// legacyRelPath derives "personas/pod.md" — that does NOT start
 	// with "prompts/personas/", so it should be rejected.
 	if err := improvements.ValidateSurface(imp); err == nil {
 		t.Error("expected error for legacy persona path (personas/ not prompts/personas/), got nil")

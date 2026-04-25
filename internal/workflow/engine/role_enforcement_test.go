@@ -3,10 +3,10 @@ package engine_test
 // role_enforcement_test.go validates the per-persona output contracts and
 // task-ownership rules introduced to fix the QA role-drift bug:
 //
-//  1. applyOutput discards Artifacts produced by non-Implementer personas.
+//  1. applyOutput discards Artifacts produced by non-Pod personas.
 //  2. applyOutput discards Tasks/Design produced by non-Architect personas.
-//  3. runImplementerPhase skips tasks whose AssignedTo is not "implementer".
-//  4. BlockingIssues appear in BuildHandoffContext so Implementer knows what QA rejected.
+//  3. runPodPhase skips tasks whose AssignedTo is not "pod".
+//  4. BlockingIssues appear in BuildHandoffContext so Pod knows what QA rejected.
 //  5. Execution.CurrentPersona is populated after a persona runs.
 
 import (
@@ -82,9 +82,9 @@ func TestRoleEnforcement_QACannotInjectTasks(t *testing.T) {
 	ws := baseWorkflow(state.PersonaProjectMgr, state.PersonaQA)
 	ws.Summaries[state.PersonaProjectMgr] = "pm done"
 	ws.Summaries[state.PersonaArchitect] = "arch done"
-	ws.Summaries[state.PersonaImplementer] = "impl done"
+	ws.Summaries[state.PersonaPod] = "impl done"
 	ws.Tasks = []state.Task{
-		{ID: "arch-t1", Title: "original task", AssignedTo: state.PersonaImplementer, Status: state.TaskStatusCompleted},
+		{ID: "arch-t1", Title: "original task", AssignedTo: state.PersonaPod, Status: state.TaskStatusCompleted},
 	}
 
 	cleanup := registerPersonas(t,
@@ -96,7 +96,7 @@ func TestRoleEnforcement_QACannotInjectTasks(t *testing.T) {
 			Summary: "qa done",
 			// QA should never return Tasks — engine must reject this.
 			Tasks: []state.Task{
-				{ID: "qa-injected", Title: "injected by QA", AssignedTo: state.PersonaImplementer, Status: state.TaskStatusPending},
+				{ID: "qa-injected", Title: "injected by QA", AssignedTo: state.PersonaPod, Status: state.TaskStatusPending},
 			},
 			BlockingIssues: nil,
 		}},
@@ -144,7 +144,7 @@ func TestRoleEnforcement_QACannotInjectArtifacts(t *testing.T) {
 	ws := baseWorkflow(state.PersonaQA)
 	ws.Summaries[state.PersonaProjectMgr] = "pm done"
 	ws.Summaries[state.PersonaArchitect] = "arch done"
-	ws.Summaries[state.PersonaImplementer] = "impl done"
+	ws.Summaries[state.PersonaPod] = "impl done"
 
 	cleanup := registerPersonas(t,
 		&fixedPersona{kind: state.PersonaQA, out: &state.PersonaOutput{
@@ -180,23 +180,23 @@ func TestRoleEnforcement_QACannotInjectArtifacts(t *testing.T) {
 	}
 }
 
-// ─── Test: Implementer skips tasks assigned to QA ────────────────────────────
+// ─── Test: Pod skips tasks assigned to QA ────────────────────────────
 
-func TestRunImplementerPhase_SkipsQAAssignedTasks(t *testing.T) {
+func TestRunPodPhase_SkipsQAAssignedTasks(t *testing.T) {
 	ms := newMockStore()
 	ctx := context.Background()
 
-	ws := baseWorkflow(state.PersonaImplementer)
+	ws := baseWorkflow(state.PersonaPod)
 	ws.Summaries[state.PersonaProjectMgr] = "pm done"
 	ws.Summaries[state.PersonaArchitect] = "arch done"
 	ws.Tasks = []state.Task{
-		{ID: "impl-t1", Title: "valid implementer task", AssignedTo: state.PersonaImplementer, Status: state.TaskStatusPending},
+		{ID: "impl-t1", Title: "valid pod task", AssignedTo: state.PersonaPod, Status: state.TaskStatusPending},
 		{ID: "qa-t1", Title: "task wrongly assigned to qa", AssignedTo: state.PersonaQA, Status: state.TaskStatusPending},
 	}
 
 	cleanup := registerPersonas(t,
-		&fixedPersona{kind: state.PersonaImplementer, out: &state.PersonaOutput{
-			Persona:   state.PersonaImplementer,
+		&fixedPersona{kind: state.PersonaPod, out: &state.PersonaOutput{
+			Persona:   state.PersonaPod,
 			Summary:   "impl done",
 			Artifacts: []state.Artifact{{Name: "out.md", Kind: state.ArtifactKindMarkdown, Content: "hello"}},
 		}},
@@ -225,10 +225,10 @@ func TestRunImplementerPhase_SkipsQAAssignedTasks(t *testing.T) {
 	for _, task := range final.Tasks {
 		if task.ID == "qa-t1" {
 			if task.Status == state.TaskStatusCompleted {
-				t.Errorf("QA-assigned task was completed by Implementer — ownership enforcement failed")
+				t.Errorf("QA-assigned task was completed by Pod — ownership enforcement failed")
 			}
 			if task.Status == state.TaskStatusRunning {
-				t.Errorf("QA-assigned task was set to Running by Implementer — ownership enforcement failed")
+				t.Errorf("QA-assigned task was set to Running by Pod — ownership enforcement failed")
 			}
 		}
 	}

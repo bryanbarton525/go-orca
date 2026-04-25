@@ -2,14 +2,14 @@
 //
 // The Engine drives a single workflow run through the canonical persona sequence:
 //
-//	Director → ProjectManager → Architect → Implementer(s) → QA → Finalizer
+//	Director → ProjectManager → Architect → Pod(s) → QA → Finalizer
 //
 // When QA reports blocking issues the Architect is re-invoked to produce a
-// targeted remediation task set, then the Implementer executes those tasks,
+// targeted remediation task set, then the Pod executes those tasks,
 // and QA runs again.  This loop repeats up to MaxQARetries times.  Each
-// persona is enforcement-gated: only Implementer may produce Artifacts, only
-// Architect may produce Design/Tasks, and Implementer only executes tasks
-// whose AssignedTo field is "implementer".  The engine writes all state
+// persona is enforcement-gated: only Pod may produce Artifacts, only
+// Architect may produce Design/Tasks, and Pod only executes tasks
+// whose AssignedTo field is "pod".  The engine writes all state
 // transitions and persona events to the journal.
 package engine
 
@@ -84,7 +84,7 @@ type ImprovementDispatcher interface {
 
 // Options configures the Engine.
 type Options struct {
-	// MaxQARetries is the maximum number of times the Implementer will be
+	// MaxQARetries is the maximum number of times the Pod will be
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	MaxQARetries int
 
@@ -459,11 +459,11 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		}
 	}
 
-	// Phase 2.5: Engineer Proxy — captures pragmatic engineering defaults for
+	// Phase 2.5: Matriarch — captures pragmatic engineering defaults for
 	// architectural decisions without requiring a human interruption.
-	if personaRequired(state.PersonaEngineer) && !phaseComplete(state.PersonaEngineer) {
-		if err := e.runPersona(ctx, ws, state.PersonaEngineer, snap); err != nil {
-			return fmt.Errorf("engineer proxy phase: %w", err)
+	if personaRequired(state.PersonaMatriarch) && !phaseComplete(state.PersonaMatriarch) {
+		if err := e.runPersona(ctx, ws, state.PersonaMatriarch, snap); err != nil {
+			return fmt.Errorf("matriarch phase: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
@@ -480,10 +480,10 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		}
 	}
 
-	// Phase 4: Implementer — runs once per ready/pending task.
-	if personaRequired(state.PersonaImplementer) {
-		if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
-			return fmt.Errorf("implementer phase: %w", err)
+	// Phase 4: Pod — runs once per ready/pending task.
+	if personaRequired(state.PersonaPod) {
+		if err := e.runPodPhase(ctx, ws, snap); err != nil {
+			return fmt.Errorf("pod phase: %w", err)
 		}
 		validationIssues, err := e.runToolchainValidation(ctx, ws, "implementation")
 		if err != nil {
@@ -503,8 +503,8 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	// On each QA pass:
 	//   1. QA validates; if no blocking issues, advance to Finalizer.
 	//   2. On blockers, Architect is called with the issues to produce
-	//      a targeted remediation task set assigned to Implementer only.
-	//   3. Implementer runs those new tasks.
+	//      a targeted remediation task set assigned to Pod only.
+	//   3. Pod runs those new tasks.
 	//   4. QA runs again.  Repeats up to MaxQARetries times.
 	if personaRequired(state.PersonaQA) {
 		if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
@@ -543,7 +543,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 				// PM-led triage before Architect remediation. The PM classifies whether
 				// blockers are requirement, design, implementation, or environment issues;
-				// the Architect then uses that brief to produce targeted implementer tasks.
+				// the Architect then uses that brief to produce targeted pod tasks.
 				if personaRequired(state.PersonaProjectMgr) {
 					ws.Execution.CurrentPersona = state.PersonaProjectMgr
 					ws.Execution.RemediationAttempt = qaCycle
@@ -558,7 +558,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				}
 
 				// Architect-led remediation: re-plan with the PM brief and current blocking issues.
-				if personaRequired(state.PersonaArchitect) && personaRequired(state.PersonaImplementer) {
+				if personaRequired(state.PersonaArchitect) && personaRequired(state.PersonaPod) {
 					ws.Execution.CurrentPersona = state.PersonaArchitect
 					ws.Execution.RemediationAttempt = qaCycle
 					_ = e.store.SaveWorkflow(ctx, ws)
@@ -570,11 +570,11 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 						return err
 					}
 
-					ws.Execution.CurrentPersona = state.PersonaImplementer
+					ws.Execution.CurrentPersona = state.PersonaPod
 					_ = e.store.SaveWorkflow(ctx, ws)
 
-					if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
-						return fmt.Errorf("implementer remediation (cycle %d): %w", qaCycle, err)
+					if err := e.runPodPhase(ctx, ws, snap); err != nil {
+						return fmt.Errorf("pod remediation (cycle %d): %w", qaCycle, err)
 					}
 					validationIssues, err := e.runToolchainValidation(ctx, ws, fmt.Sprintf("remediation-%d", qaCycle))
 					if err != nil {
@@ -590,7 +590,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					// engine validation failures so QA reviews the current repo state.
 					ws.BlockingIssues = validationIssues
 				}
-				if !personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaImplementer) {
+				if !personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaPod) {
 					// Clear blocking issues accumulated in this pass so QA evaluates
 					// any non-implementation remediation fresh. Retain suggestions.
 					ws.BlockingIssues = nil
@@ -894,29 +894,29 @@ func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowSta
 	return nil
 }
 
-// runImplementerPhase runs the Implementer against every runnable task that is
-// assigned to the Implementer persona.  Tasks assigned to any other persona are
+// runPodPhase runs the Pod against every runnable task that is
+// assigned to the Pod persona.  Tasks assigned to any other persona are
 // silently skipped so role boundaries are maintained at the engine layer
 // regardless of what the LLM's Architect output said.
-func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {
+func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {
 	if err := e.checkControlState(ctx, ws); err != nil {
 		return err
 	}
 
-	p, ok := persona.Get(state.PersonaImplementer)
+	p, ok := persona.Get(state.PersonaPod)
 	if !ok {
-		return fmt.Errorf("implementer persona not registered")
+		return fmt.Errorf("pod persona not registered")
 	}
 
 	// Resolve the provider and model once for the whole phase so persona events
 	// carry accurate routing information even though tasks run serially.
-	implPacket := e.buildPacket(ws, state.PersonaImplementer, snap)
+	implPacket := e.buildPacket(ws, state.PersonaPod, snap)
 	implPhaseStart := time.Now()
 
 	implStartEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-		events.EventPersonaStarted, state.PersonaImplementer,
+		events.EventPersonaStarted, state.PersonaPod,
 		events.PersonaStartedPayload{
-			Persona:      state.PersonaImplementer,
+			Persona:      state.PersonaPod,
 			ProviderName: implPacket.ProviderName,
 			ModelName:    implPacket.ModelName,
 		})
@@ -931,10 +931,10 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 
 		t := &ws.Tasks[i]
 
-		// Only process Implementer-owned tasks that still need work.
+		// Only process Pod-owned tasks that still need work.
 		// Normalise to lowercase before comparing so that model responses with
-		// "Implementer" (capital I) or other case variants are not silently skipped.
-		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaImplementer {
+		// "Pod" (capital I) or other case variants are not silently skipped.
+		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
 			continue
 		}
 		if t.Status != state.TaskStatusReady &&
@@ -946,22 +946,22 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		tasksAttempted++
 
 		// Update visible progress before calling LLM.
-		ws.Execution.CurrentPersona = state.PersonaImplementer
+		ws.Execution.CurrentPersona = state.PersonaPod
 		ws.Execution.ActiveTaskID = t.ID
 		ws.Execution.ActiveTaskTitle = t.Title
 
 		// Build a packet scoped to this single task.
-		packet := e.buildPacket(ws, state.PersonaImplementer, snap)
+		packet := e.buildPacket(ws, state.PersonaPod, snap)
 		packet.Tasks = []state.Task{*t}
 
 		// Mark task running before LLM call so callers see the transition.
 		t.Status = state.TaskStatusRunning
 		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
-			return fmt.Errorf("save before implementer task %s: %w", t.ID[:8], err)
+			return fmt.Errorf("save before pod task %s: %w", t.ID[:8], err)
 		}
 
 		startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventTaskStarted, state.PersonaImplementer,
+			events.EventTaskStarted, state.PersonaPod,
 			events.TaskStartedPayload{TaskID: t.ID, Title: t.Title})
 		_ = e.store.AppendEvents(ctx, startEvt)
 
@@ -978,11 +978,11 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 			ws.Execution.ActiveTaskID = ""
 			ws.Execution.ActiveTaskTitle = ""
 			failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventTaskFailed, state.PersonaImplementer,
+				events.EventTaskFailed, state.PersonaPod,
 				events.TaskFailedPayload{TaskID: t.ID, Title: t.Title, Error: err.Error()})
 			_ = e.store.AppendEvents(ctx, failEvt)
 			_ = e.store.SaveWorkflow(ctx, ws)
-			implErr = fmt.Errorf("implementer task %s: %w", t.ID[:8], err)
+			implErr = fmt.Errorf("pod task %s: %w", t.ID[:8], err)
 			break
 		}
 
@@ -993,7 +993,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		for _, art := range out.Artifacts {
 			ws.Artifacts = mergeOrAppendArtifact(ws.Mode, ws.Artifacts, art)
 			artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventArtifactProduced, state.PersonaImplementer,
+				events.EventArtifactProduced, state.PersonaPod,
 				events.ArtifactProducedPayload{
 					TaskID:        t.ID,
 					ArtifactName:  art.Name,
@@ -1011,10 +1011,10 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		if len(shortID) > 8 {
 			shortID = shortID[:8]
 		}
-		ws.Summaries[state.PersonaImplementer] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
+		ws.Summaries[state.PersonaPod] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
 
 		doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventTaskCompleted, state.PersonaImplementer,
+			events.EventTaskCompleted, state.PersonaPod,
 			events.TaskCompletedPayload{
 				TaskID:     t.ID,
 				Title:      t.Title,
@@ -1024,7 +1024,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 		_ = e.store.AppendEvents(ctx, doneEvt)
 	}
 
-	// Emit persona.completed (or persona.failed) for the implementer phase as a whole.
+	// Emit persona.completed (or persona.failed) for the pod phase as a whole.
 	implElapsed := time.Since(implPhaseStart)
 	ws.Execution.ActiveTaskID = ""
 	ws.Execution.ActiveTaskTitle = ""
@@ -1033,35 +1033,35 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 	}
 	if implErr != nil {
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventPersonaFailed, state.PersonaImplementer,
-			events.PersonaFailedPayload{Persona: state.PersonaImplementer, Error: implErr.Error()})
+			events.EventPersonaFailed, state.PersonaPod,
+			events.PersonaFailedPayload{Persona: state.PersonaPod, Error: implErr.Error()})
 		_ = e.store.AppendEvents(ctx, implFailEvt)
 		_ = e.store.SaveWorkflow(ctx, ws)
 		return implErr
 	}
 
 	// If 0 tasks were attempted the architect produced nothing for the
-	// implementer.  Fail loudly here rather than letting QA run against an
+	// pod.  Fail loudly here rather than letting QA run against an
 	// empty artifact list, which would trigger the confusing "No artifact
-	// provided" → remediation → "no valid implementer tasks" death spiral.
+	// provided" → remediation → "no valid pod tasks" death spiral.
 	if tasksAttempted == 0 {
-		noTaskErr := fmt.Errorf("architect produced no implementer-assigned tasks — " +
+		noTaskErr := fmt.Errorf("architect produced no pod-assigned tasks — " +
 			"the workflow request may be empty or the architect misunderstood it; " +
 			"check that the workflow has a clear, actionable request")
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventPersonaFailed, state.PersonaImplementer,
-			events.PersonaFailedPayload{Persona: state.PersonaImplementer, Error: noTaskErr.Error()})
+			events.EventPersonaFailed, state.PersonaPod,
+			events.PersonaFailedPayload{Persona: state.PersonaPod, Error: noTaskErr.Error()})
 		_ = e.store.AppendEvents(ctx, implFailEvt)
 		_ = e.store.SaveWorkflow(ctx, ws)
 		return noTaskErr
 	}
 
 	implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-		events.EventPersonaCompleted, state.PersonaImplementer,
+		events.EventPersonaCompleted, state.PersonaPod,
 		events.PersonaCompletedPayload{
-			Persona:    state.PersonaImplementer,
+			Persona:    state.PersonaPod,
 			DurationMs: implElapsed.Milliseconds(),
-			Summary:    ws.Summaries[state.PersonaImplementer],
+			Summary:    ws.Summaries[state.PersonaPod],
 		})
 	_ = e.store.AppendEvents(ctx, implDoneEvt)
 
@@ -1069,7 +1069,7 @@ func (e *Engine) runImplementerPhase(ctx context.Context, ws *state.WorkflowStat
 }
 
 // runRemediationPlanning invokes the Architect with the current blocking issues
-// so it can produce a targeted set of implementer-only remediation tasks.
+// so it can produce a targeted set of pod-only remediation tasks.
 // The new tasks are appended to the task graph (existing completed tasks are
 // preserved for audit) with Attempt and RemediationSource set.
 func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
@@ -1095,21 +1095,21 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		return fmt.Errorf("architect remediation: %w", err)
 	}
 
-	// Validate: Architect must only produce Implementer-assigned tasks during
+	// Validate: Architect must only produce Pod-assigned tasks during
 	// remediation.  Any task assigned to another persona is dropped with a warning.
 	validTasks := make([]state.Task, 0, len(out.Tasks))
 	for _, t := range out.Tasks {
 		// Normalise assigned_to to lowercase so that model responses with
-		// "Implementer" (capital I) or other case variants are accepted.
+		// "Pod" (capital I) or other case variants are accepted.
 		normAssigned := state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo))))
-		if normAssigned != state.PersonaImplementer && normAssigned != "" {
+		if normAssigned != state.PersonaPod && normAssigned != "" {
 			// Emit a suggestion so the issue is visible without aborting the cycle.
 			ws.AllSuggestions = append(ws.AllSuggestions,
-				fmt.Sprintf("[warning][remediation] Architect emitted task %q assigned to %q; only 'implementer' is valid during remediation — task dropped", t.Title, t.AssignedTo))
+				fmt.Sprintf("[warning][remediation] Architect emitted task %q assigned to %q; only 'pod' is valid during remediation — task dropped", t.Title, t.AssignedTo))
 			continue
 		}
 		if normAssigned == "" {
-			t.AssignedTo = state.PersonaImplementer
+			t.AssignedTo = state.PersonaPod
 		} else {
 			t.AssignedTo = normAssigned // store normalised lowercase form
 		}
@@ -1119,7 +1119,7 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	}
 
 	if len(validTasks) == 0 {
-		return fmt.Errorf("architect produced no valid implementer tasks for remediation cycle %d (blocking issues: %v)", qaCycle, ws.BlockingIssues)
+		return fmt.Errorf("architect produced no valid pod tasks for remediation cycle %d (blocking issues: %v)", qaCycle, ws.BlockingIssues)
 	}
 
 	// Append new tasks; existing tasks (including completed ones) are retained.
@@ -1553,7 +1553,7 @@ func (e *Engine) emitMCPToolEvent(ctx context.Context, ws *state.WorkflowState, 
 
 // lastValidationFailed reports whether the most recent validation run on the
 // workflow failed.  Returns (false, nil) when there are no validation runs
-// (no toolchain configured, or implementer never reached) so that workflows
+// (no toolchain configured, or pod never reached) so that workflows
 // without toolchains are not blocked by the gate.
 func lastValidationFailed(ws *state.WorkflowState) (bool, *state.ValidationRun) {
 	if ws == nil || len(ws.Execution.ValidationRuns) == 0 {
@@ -1592,7 +1592,7 @@ func trimValidationOutput(s string) string {
 
 // applyOutput merges a PersonaOutput into the WorkflowState.
 // Role contracts are enforced here:
-//   - Only Implementer may append Artifacts (other personas use task-level path).
+//   - Only Pod may append Artifacts (other personas use task-level path).
 //   - Only Architect may set Design or replace Tasks.
 //   - Only QA may set BlockingIssues (Finalizer/Refiner may suggest).
 //   - Violations are recorded as AllSuggestions warnings, not hard failures,
@@ -1633,11 +1633,11 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 				fmt.Sprintf("[warning][role-enforcement] persona %q attempted to write Tasks — ignored", out.Persona))
 		}
 	}
-	// Only Implementer may append Artifacts via applyOutput; other personas
+	// Only Pod may append Artifacts via applyOutput; other personas
 	// that legitimately produce artifacts (e.g. Refiner) use direct ws.Artifacts
 	// writes in their own runner paths.  QA must not create artifacts.
 	if len(out.Artifacts) > 0 {
-		if out.Persona == state.PersonaImplementer {
+		if out.Persona == state.PersonaPod {
 			ws.Artifacts = append(ws.Artifacts, out.Artifacts...)
 		} else {
 			ws.AllSuggestions = append(ws.AllSuggestions,
@@ -1838,11 +1838,11 @@ func isContentSynthesisKind(kind state.ArtifactKind) bool {
 
 // mergeOrAppendArtifact handles content-mode artifact accumulation.
 //
-// In content-mode workflows the implementer executes multiple tasks (e.g.
+// In content-mode workflows the pod executes multiple tasks (e.g.
 // "write intro", "write body", "write conclusion") that all contribute to a
 // single evolving document.  Rather than storing each task's output as a
 // separate artifact, we find the existing synthesis artifact and **replace**
-// its content with the new (cumulative) output.  The implementer prompt
+// its content with the new (cumulative) output.  The pod prompt
 // already injects the latest document so the model appends to / patches it.
 //
 // For non-content modes, or non-synthesis artifact kinds, the artifact is

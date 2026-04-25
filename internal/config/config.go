@@ -236,7 +236,7 @@ type WorkflowConfig struct {
 	// PersonaRetryBackoff is the base wait before the first retry.  Each
 	// subsequent retry doubles the wait (exponential backoff).
 	PersonaRetryBackoff time.Duration `mapstructure:"persona_retry_backoff"`
-	// MaxQARetries is the maximum number of times the Implementer will be
+	// MaxQARetries is the maximum number of times the Pod will be
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	MaxQARetries int `mapstructure:"max_qa_retries"`
 
