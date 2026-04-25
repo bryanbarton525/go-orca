@@ -143,6 +143,9 @@ jobs:
           - name: mcp-node-toolchain
             image: bryanbarton525/mcp-node-toolchain
             dockerfile: deploy/docker/mcp-node-toolchain.Dockerfile
+          - name: mcp-nextjs-toolchain
+            image: bryanbarton525/mcp-nextjs-toolchain
+            dockerfile: deploy/docker/mcp-nextjs-toolchain.Dockerfile
           - name: mcp-python-toolchain
             image: bryanbarton525/mcp-python-toolchain
             dockerfile: deploy/docker/mcp-python-toolchain.Dockerfile

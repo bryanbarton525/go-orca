@@ -8,6 +8,7 @@
 # Dockerfiles, so they should never be committed.
 /mcp-go-toolchain
 /mcp-node-toolchain
+/mcp-nextjs-toolchain
 /mcp-python-toolchain
 /mcp-rust-toolchain
 /mcp-java-toolchain
