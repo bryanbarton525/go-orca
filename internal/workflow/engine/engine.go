@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1193,6 +1194,11 @@ func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.Work
 			CreatedBy: "engine",
 		}
 	}
+	if ws.Execution.Workspace != nil && ws.Execution.Workspace.RepoURL == "" {
+		if err := e.ensureRequestedRepository(ctx, ws); err != nil {
+			return err
+		}
+	}
 	if ws.Execution.Toolchain == nil {
 		if tc, language, ok := e.selectToolchain(ws); ok {
 			profile := "default"
@@ -1224,6 +1230,99 @@ func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.Work
 		}
 	}
 	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) ensureRequestedRepository(ctx context.Context, ws *state.WorkflowState) error {
+	cfg, ok := requestedRepositoryConfig(ws)
+	if !ok {
+		return nil
+	}
+	fullName := requestedRepositoryFullName(cfg)
+	repoURL := "https://github.com/" + fullName
+	rawCfg, _ := json.Marshal(cfg)
+	out, err := actions.Global.Execute(ctx, actions.ActionCreateRepo, actions.Input{
+		Workflow: ws,
+		Config:   rawCfg,
+	})
+	if err != nil {
+		// Treat "already exists" as attach-to-existing. GitHub returns 422 for
+		// duplicate repository creation, and attaching is safer than burning the
+		// workflow before implementation has a chance to checkpoint locally.
+		if strings.Contains(err.Error(), "422") || strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			ws.Execution.Workspace.RepoURL = repoURL
+			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[workspace] attached existing repository %s", repoURL))
+			return nil
+		}
+		return fmt.Errorf("create requested repository %s: %w", fullName, err)
+	}
+	if out != nil && out.Metadata != nil && out.Metadata["repo_url"] != "" {
+		repoURL = out.Metadata["repo_url"]
+	}
+	ws.Execution.Workspace.RepoURL = repoURL
+	ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[workspace] created repository %s before implementation", repoURL))
+	return nil
+}
+
+type repositoryConfig struct {
+	Name        string `json:"name"`
+	Org         string `json:"org,omitempty"`
+	Description string `json:"description,omitempty"`
+	Private     bool   `json:"private,omitempty"`
+	Owner       string `json:"-"`
+}
+
+func requestedRepositoryConfig(ws *state.WorkflowState) (repositoryConfig, bool) {
+	if ws == nil {
+		return repositoryConfig{}, false
+	}
+	if strings.EqualFold(ws.DeliveryAction, string(actions.ActionCreateRepo)) && len(ws.DeliveryConfig) > 0 {
+		var cfg repositoryConfig
+		if err := json.Unmarshal(ws.DeliveryConfig, &cfg); err == nil && cfg.Name != "" {
+			cfg.Owner = cfg.Org
+			if cfg.Description == "" {
+				cfg.Description = firstNonEmpty(ws.Title, "go-orca workflow "+ws.ID)
+			}
+			return cfg, true
+		}
+	}
+	owner, repo, ok := githubRepoFromText(ws.Request)
+	if !ok {
+		return repositoryConfig{}, false
+	}
+	return repositoryConfig{
+		Name:        repo,
+		Owner:       owner,
+		Description: firstNonEmpty(ws.Title, "go-orca workflow "+ws.ID),
+		Private:     mentionsPrivateRepo(ws.Request),
+	}, true
+}
+
+func requestedRepositoryFullName(cfg repositoryConfig) string {
+	owner := firstNonEmpty(cfg.Owner, cfg.Org)
+	if owner == "" {
+		return cfg.Name
+	}
+	return owner + "/" + cfg.Name
+}
+
+var githubRepoPattern = regexp.MustCompile(`(?i)github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`)
+
+func githubRepoFromText(s string) (string, string, bool) {
+	m := githubRepoPattern.FindStringSubmatch(s)
+	if len(m) != 3 {
+		return "", "", false
+	}
+	repo := strings.TrimSuffix(m[2], ".git")
+	repo = strings.TrimRight(repo, ".,);]}")
+	if m[1] == "" || repo == "" {
+		return "", "", false
+	}
+	return m[1], repo, true
+}
+
+func mentionsPrivateRepo(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "private repo") || strings.Contains(lower, "private repository")
 }
 
 func workflowNeedsToolchain(mode state.WorkflowMode) bool {
@@ -1373,19 +1472,30 @@ func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowS
 		pushed                     bool
 	)
 	if e.opts.MCPRegistry != nil {
-		cr, rerr := e.opts.MCPRegistry.CallCapability(ctx, tc.ID, capability, args)
+		checkpointToolchainID := tc.ID
+		cr, rerr := e.opts.MCPRegistry.CallCapability(ctx, checkpointToolchainID, capability, args)
+		if rerr != nil && tc.ID != "git" && strings.HasPrefix(capability, "git_") {
+			checkpointToolchainID = "git"
+			cr, rerr = e.opts.MCPRegistry.CallCapability(ctx, checkpointToolchainID, capability, args)
+		}
 		if rerr != nil {
-			e.emitMCPCapabilityMissing(ctx, ws, tc, capability, phase, rerr.Error())
+			eventTC := tc
+			eventTC.ID = checkpointToolchainID
+			e.emitMCPCapabilityMissing(ctx, ws, eventTC, capability, phase, rerr.Error())
 			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s", rerr.Error()))
 			return e.store.SaveWorkflow(ctx, ws)
 		}
 		if cr.Error != "" {
-			e.emitMCPToolEvent(ctx, ws, tc, capability, cr.ToolName, phase, false, cr.Error, time.Since(callStart))
+			eventTC := tc
+			eventTC.ID = checkpointToolchainID
+			e.emitMCPToolEvent(ctx, ws, eventTC, capability, cr.ToolName, phase, false, cr.Error, time.Since(callStart))
 			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s failed: %s", cr.ToolName, cr.Error))
 			return e.store.SaveWorkflow(ctx, ws)
 		}
 		commitSHA, branch, message, pushed = parseCheckpointResult(cr.Raw)
-		e.emitMCPToolEvent(ctx, ws, tc, capability, cr.ToolName, phase, true, "", time.Since(callStart))
+		eventTC := tc
+		eventTC.ID = checkpointToolchainID
+		e.emitMCPToolEvent(ctx, ws, eventTC, capability, cr.ToolName, phase, true, "", time.Since(callStart))
 	} else {
 		if _, ok := e.opts.ToolRegistry.Get(toolName); !ok {
 			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] tool %q not registered; checkpoint skipped", toolName))
@@ -1436,7 +1546,7 @@ func (e *Engine) toolchainArgs(ws *state.WorkflowState, tc ToolchainConfig, phas
 		"push":         push,
 	}
 	if ws.Execution.Workspace != nil {
-		args["workspace_path"] = ws.Execution.Workspace.Path
+		args["workspace_path"] = ws.ID
 		args["repo_url"] = ws.Execution.Workspace.RepoURL
 		args["branch"] = ws.Execution.Workspace.Branch
 	}

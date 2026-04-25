@@ -112,6 +112,20 @@ func (t fakeTool) Call(context.Context, json.RawMessage) (json.RawMessage, error
 	return t.out, t.err
 }
 
+type captureTool struct {
+	name string
+	out  json.RawMessage
+	args json.RawMessage
+}
+
+func (t *captureTool) Name() string                { return t.name }
+func (t *captureTool) Description() string         { return "capture tool" }
+func (t *captureTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *captureTool) Call(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	t.args = append(t.args[:0], args...)
+	return t.out, nil
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -288,6 +302,63 @@ func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
 	}
 	if len(stored.Execution.Checkpoints) != 1 || stored.Execution.Checkpoints[0].CommitSHA != "abc123" {
 		t.Fatalf("expected checkpoint metadata, got %+v", stored.Execution.Checkpoints)
+	}
+}
+
+func TestToolchainArgsUseWorkflowRelativeWorkspacePath(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	runTests := &captureTool{name: "run_tests", out: json.RawMessage(`{"passed":true}`)}
+	reg := tools.NewRegistry()
+	reg.Register(runTests)
+	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc123","branch":"workflow/test","message":"checkpoint"}`)})
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-relative",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaPod,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+		ToolRegistry:    reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go"},
+			Capabilities:         []string{"run_tests", "git_checkpoint"},
+			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
+			CheckpointCapability: "git_checkpoint",
+		}},
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var args struct {
+		WorkspacePath string `json:"workspace_path"`
+	}
+	if err := json.Unmarshal(runTests.args, &args); err != nil {
+		t.Fatalf("unmarshal args: %v", err)
+	}
+	if args.WorkspacePath != ws.ID {
+		t.Fatalf("workspace_path = %q, want workflow ID %q", args.WorkspacePath, ws.ID)
 	}
 }
 

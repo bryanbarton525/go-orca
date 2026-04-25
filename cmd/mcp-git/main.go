@@ -40,7 +40,7 @@ func main() {
 	defer logger.Sync() //nolint:errcheck
 
 	allow := policy.Allowlist{
-		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout"},
+		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout", "remote"},
 	}
 	auditor := &zapAuditor{logger: logger}
 
@@ -116,8 +116,17 @@ func doCheckpoint(ctx context.Context, root string, args capabilities.Args, push
 	if push {
 		cap = capabilities.GitPushCheckpoint
 	}
+	askpassPath := ""
 
 	run := func(timeout time.Duration, argv ...string) capabilities.Result {
+		env := gitEnv()
+		if askpassPath != "" {
+			env = append(env,
+				"GIT_ASKPASS="+askpassPath,
+				"GIT_TERMINAL_PROMPT=0",
+				"GOORCA_GITHUB_TOKEN="+os.Getenv("GOORCA_GITHUB_TOKEN"),
+			)
+		}
 		return policy.Run(ctx, policy.RunOptions{
 			Argv:       argv,
 			WorkingDir: workdir,
@@ -126,7 +135,7 @@ func doCheckpoint(ctx context.Context, root string, args capabilities.Args, push
 			WorkflowID: args.WorkflowID,
 			Allow:      allow,
 			Auditor:    auditor,
-			Env:        gitEnv(),
+			Env:        env,
 		})
 	}
 
@@ -137,6 +146,22 @@ func doCheckpoint(ctx context.Context, root string, args capabilities.Args, push
 		}
 		_ = run(5*time.Second, "git", "config", "user.email", authorEmail)
 		_ = run(5*time.Second, "git", "config", "user.name", authorName)
+	}
+	if targetBranch := strings.TrimSpace(args.Branch); targetBranch != "" {
+		if r := run(15*time.Second, "git", "checkout", "-B", targetBranch); !r.Success {
+			return capabilities.CheckpointResult{}, fmt.Errorf("git checkout: %s", firstErr(r))
+		}
+	}
+	if repoURL := strings.TrimSpace(args.RepoURL); repoURL != "" {
+		if r := run(5*time.Second, "git", "remote", "get-url", "origin"); r.Success {
+			if strings.TrimSpace(r.Stdout) != repoURL {
+				if sr := run(5*time.Second, "git", "remote", "set-url", "origin", repoURL); !sr.Success {
+					return capabilities.CheckpointResult{}, fmt.Errorf("git remote set-url: %s", firstErr(sr))
+				}
+			}
+		} else if ar := run(5*time.Second, "git", "remote", "add", "origin", repoURL); !ar.Success {
+			return capabilities.CheckpointResult{}, fmt.Errorf("git remote add: %s", firstErr(ar))
+		}
 	}
 
 	// Stage all.
@@ -182,6 +207,13 @@ func doCheckpoint(ctx context.Context, root string, args capabilities.Args, push
 	}
 
 	if push && sha != "" {
+		if os.Getenv("GOORCA_GITHUB_TOKEN") != "" {
+			var askErr error
+			askpassPath, askErr = ensureGitHubAskPass(workdir)
+			if askErr != nil {
+				return res, fmt.Errorf("git push auth: %w", askErr)
+			}
+		}
 		// Effective branch fallback: explicit Branch from args wins.
 		target := strings.TrimSpace(args.Branch)
 		if target == "" {
@@ -199,6 +231,20 @@ func doCheckpoint(ctx context.Context, root string, args capabilities.Args, push
 	return res, nil
 }
 
+func ensureGitHubAskPass(workdir string) (string, error) {
+	path := filepath.Join(workdir, ".git", "go-orca-askpass.sh")
+	script := `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' 'x-access-token' ;;
+  *) printf '%s\n' "$GOORCA_GITHUB_TOKEN" ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func firstErr(r capabilities.Result) string {
 	if r.Error != "" {
 		return r.Error
@@ -209,9 +255,8 @@ func firstErr(r capabilities.Result) string {
 	return r.Stdout
 }
 
-// gitEnv returns the minimal environment git needs.  We forward HOME, PATH,
-// SSH_AUTH_SOCK (for push) and a small set of standard git env vars; secrets
-// are not propagated.
+// gitEnv returns the minimal environment git needs.  Push auth is added only
+// for git_push_checkpoint calls after an askpass helper has been prepared.
 func gitEnv() []string {
 	keep := []string{"PATH", "HOME", "SSH_AUTH_SOCK", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"}
 	return policy.FilterEnv(os.Environ(), keep)

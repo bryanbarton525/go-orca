@@ -119,6 +119,50 @@ func TestCheckpoint_NoChanges(t *testing.T) {
 	}
 }
 
+func TestCheckpoint_ConfiguresBranchAndOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH; skipping integration test")
+	}
+
+	root := t.TempDir()
+	workspace := filepath.Join(root, "wf-remote")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, root)
+	session := connectClient(t, srv)
+	defer session.Close()
+
+	args := map[string]any{
+		"workflow_id":    "wf-remote",
+		"workspace_path": "wf-remote",
+		"phase":          "implementation",
+		"branch":         "workflow/wf-remote",
+		"repo_url":       "https://github.com/example/repo.git",
+	}
+	r, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "git_checkpoint", Arguments: args})
+	if err != nil || r.IsError {
+		t.Fatalf("checkpoint failed: err=%v result=%+v", err, r)
+	}
+	cp := decodeCheckpoint(t, r)
+	if cp.Branch != "workflow/wf-remote" {
+		t.Fatalf("branch = %q, want workflow/wf-remote", cp.Branch)
+	}
+	remote := exec.Command("git", "remote", "get-url", "origin")
+	remote.Dir = workspace
+	out, err := remote.Output()
+	if err != nil {
+		t.Fatalf("git remote get-url: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "https://github.com/example/repo.git" {
+		t.Fatalf("origin = %q", got)
+	}
+}
+
 // TestStatus_PorcelainOutput verifies git_status returns the expected
 // porcelain output.  `?? ` lines indicate untracked files.
 func TestStatus_PorcelainOutput(t *testing.T) {
@@ -206,7 +250,7 @@ func newTestServer(t *testing.T, root string) *server.Server {
 	t.Helper()
 	srv := server.New(server.Options{Name: "mcp-git", Version: "test"})
 	allow := policy.Allowlist{
-		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout"},
+		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout", "remote"},
 	}
 	register(srv, root, "t@x", "t", allow, policy.NopAuditor{})
 	return srv
