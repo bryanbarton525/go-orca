@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Activity, Boxes, Cable, ChevronRight, House, Plug, ShieldEllipsis } from "lucide-react";
@@ -66,9 +67,19 @@ export function AppShell({ children, userName }: { children: React.ReactNode; us
         <aside className="hidden lg:block">
           <Surface className="sticky top-4 space-y-6 p-6">
             <div className="space-y-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-shell-border/40 bg-shell-panel/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">
-                <span className="h-2 w-2 rounded-full bg-ember" />
-                go-orca UI
+              <div className="flex items-center gap-3">
+                <Image
+                  src="/go-orca.png"
+                  alt="go-orca"
+                  width={52}
+                  height={52}
+                  className="rounded-xl"
+                  priority
+                />
+                <div className="inline-flex items-center gap-2 rounded-full border border-shell-border/40 bg-shell-panel/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">
+                  <span className="h-2 w-2 rounded-full bg-ember" />
+                  go-orca UI
+                </div>
               </div>
               <div>
                 <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">Control Center</h1>

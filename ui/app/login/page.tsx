@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { SignInButton } from "../../components/sign-in-button";
 import { ThemeToggle } from "../../components/theme-toggle";
@@ -26,7 +27,17 @@ export default async function LoginPage({
       <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-10 lg:grid-cols-[1.15fr_0.85fr]">
         <section className="space-y-8">
           <div className="space-y-4">
-            <p className="eyebrow">Homelab Portal Link</p>
+            <div className="flex items-center gap-4">
+              <Image
+                src="/go-orca.png"
+                alt="go-orca"
+                width={72}
+                height={72}
+                className="rounded-2xl shadow-aura"
+                priority
+              />
+              <p className="eyebrow">Homelab Portal Link</p>
+            </div>
             <h1 className="max-w-3xl font-display text-5xl font-bold tracking-tight text-ink sm:text-6xl">
               Operate go-orca from a secure control surface instead of a raw API.
             </h1>

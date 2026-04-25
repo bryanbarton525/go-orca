@@ -52,9 +52,9 @@ import {
 const workflowPhases = [
   { id: "director", label: "Director", caption: "Intent routing" },
   { id: "project manager", label: "Project Manager", caption: "Requirements cut" },
-  { id: "engineer_proxy", label: "Engineer Proxy", caption: "Pragmatic defaults" },
+  { id: "matriarch", label: "Matriarch", caption: "Pragmatic defaults" },
   { id: "architect", label: "Architect", caption: "Plan and design" },
-  { id: "implementer", label: "Implementer", caption: "Artifact execution" },
+  { id: "pod", label: "Pod", caption: "Artifact execution" },
   { id: "qa", label: "QA", caption: "Validation loop" },
   { id: "finalizer", label: "Finalizer", caption: "Delivery handoff" },
   { id: "refiner", label: "Refiner", caption: "Improvement pass" },
@@ -2801,7 +2801,7 @@ export function WorkflowStudio() {
                       title="No artifacts yet"
                       body={
                         selectedWorkflow
-                          ? "Artifacts appear here as the Implementer generates them. Check the Status tab for progress."
+                          ? "Artifacts appear here as the Pod generates them. Check the Status tab for progress."
                           : "Pick a workflow from the selector on the left."
                       }
                     />
