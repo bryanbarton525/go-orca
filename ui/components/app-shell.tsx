@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Boxes, Cable, ChevronRight, House, ShieldEllipsis } from "lucide-react";
+import { Activity, Boxes, Cable, ChevronRight, House, Plug, ShieldEllipsis } from "lucide-react";
 import { LogoutButton } from "./logout-button";
 import { ThemeToggle } from "./theme-toggle";
 import { Surface, textFieldClassName } from "./ui";
@@ -13,6 +13,7 @@ const navigation = [
   { href: "/workflows", label: "Workflows", icon: Cable },
   { href: "/providers", label: "Providers", icon: Boxes },
   { href: "/administration", label: "Admin", icon: ShieldEllipsis },
+  { href: "/mcp", label: "MCP", icon: Plug },
   { href: "/health", label: "Health", icon: Activity },
 ] as const;
 

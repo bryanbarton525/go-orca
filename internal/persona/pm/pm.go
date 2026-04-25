@@ -58,10 +58,11 @@ func (p *ProjectManager) Execute(ctx context.Context, packet state.HandoffPacket
 	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyProjectManager]
 
 	ctx_ := base.BuildHandoffContext(packet)
-	userPrompt := fmt.Sprintf(
-		"%s\n\nProduce the Constitution and Requirements JSON for this workflow.",
-		ctx_,
-	)
+	instruction := "Produce the Constitution and Requirements JSON for this workflow."
+	if packet.IsRemediation {
+		instruction = "This is a QA remediation triage pass. Review the blocking issues and classify whether they are requirement gaps, design gaps, implementation defects, or validation/environment failures. Keep the original acceptance baseline intact unless a requirement is genuinely missing. In the summary, provide a concise remediation brief for the Architect."
+	}
+	userPrompt := fmt.Sprintf("%s\n\n%s", ctx_, instruction)
 
 	raw, err := p.exec.Run(ctx, packet, systemPrompt, userPrompt)
 	if err != nil {

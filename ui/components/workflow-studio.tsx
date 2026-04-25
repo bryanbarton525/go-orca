@@ -52,6 +52,7 @@ import {
 const workflowPhases = [
   { id: "director", label: "Director", caption: "Intent routing" },
   { id: "project manager", label: "Project Manager", caption: "Requirements cut" },
+  { id: "engineer_proxy", label: "Engineer Proxy", caption: "Pragmatic defaults" },
   { id: "architect", label: "Architect", caption: "Plan and design" },
   { id: "implementer", label: "Implementer", caption: "Artifact execution" },
   { id: "qa", label: "QA", caption: "Validation loop" },
@@ -751,8 +752,8 @@ function WorkflowVisualization({
   onSelectPersona?: (personaId: string) => void;
   onSelectObject?: (objectId: string) => void;
 }) {
-  const planningPhases = workflowPhases.slice(0, 3);
-  const executionPhases = workflowPhases.slice(3);
+  const planningPhases = workflowPhases.slice(0, 4);
+  const executionPhases = workflowPhases.slice(4);
   const taskTotal = workflow.tasks?.length ?? 0;
   const taskDone = completedTaskCount(workflow.tasks);
   const artifactTotal = workflow.artifacts?.length ?? 0;
@@ -1020,6 +1021,26 @@ function WorkflowExplorer({
         label: "Suggestions",
         caption: "Refinement ideas and follow-up",
         count: workflow.all_suggestions?.length ?? 0,
+      },
+      {
+        id: "toolchain",
+        label: "Toolchain",
+        caption: "Workspace and MCP toolchain selection",
+        count:
+          (workflow.execution?.toolchain ? 1 : 0) +
+          (workflow.execution?.workspace ? 1 : 0),
+      },
+      {
+        id: "validation",
+        label: "Validation",
+        caption: "Toolchain validation runs",
+        count: workflow.execution?.validation_runs?.length ?? 0,
+      },
+      {
+        id: "checkpoints",
+        label: "Checkpoints",
+        caption: "Repo checkpoint commits",
+        count: workflow.execution?.checkpoints?.length ?? 0,
       },
     ],
     [workflow]
@@ -1415,6 +1436,144 @@ function WorkflowExplorer({
                 </div>
               ) : (
                 <EmptyState title="No suggestions" body="No refinement suggestions were persisted for this run." />
+              )
+            ) : null}
+
+            {selectedObject.id === "toolchain" ? (
+              workflow.execution?.toolchain || workflow.execution?.workspace ? (
+                <div className="space-y-3">
+                  {workflow.execution?.toolchain ? (
+                    <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Selected toolchain</p>
+                      <p className="mt-2 text-sm font-medium text-ink">{workflow.execution.toolchain.id || "unspecified"}</p>
+                      <div className="mt-2 grid gap-2 text-xs text-shell-muted sm:grid-cols-2">
+                        <span><span className="font-semibold text-shell-soft">Language:</span> {workflow.execution.toolchain.language || "auto"}</span>
+                        <span><span className="font-semibold text-shell-soft">Profile:</span> {workflow.execution.toolchain.profile || "default"}</span>
+                      </div>
+                      {(workflow.execution.toolchain.tools?.length ?? 0) > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {workflow.execution.toolchain.tools?.map((toolName) => (
+                            <span key={toolName} className="rounded-full border border-lagoon/30 bg-lagoon/10 px-2.5 py-1 text-[0.68rem] font-medium uppercase tracking-[0.12em] text-lagoon">
+                              {toolName}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {workflow.execution?.workspace ? (
+                    <div className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lagoon">Workspace</p>
+                      <div className="mt-2 grid gap-1 text-xs text-shell-muted">
+                        <span><span className="font-semibold text-shell-soft">Path:</span> <span className="break-all">{workflow.execution.workspace.path || "—"}</span></span>
+                        <span><span className="font-semibold text-shell-soft">Repo:</span> <span className="break-all">{workflow.execution.workspace.repo_url || "engine-managed"}</span></span>
+                        <span><span className="font-semibold text-shell-soft">Branch:</span> <span className="break-all">{workflow.execution.workspace.branch || "—"}</span></span>
+                        <span><span className="font-semibold text-shell-soft">Created by:</span> {workflow.execution.workspace.created_by || "engine"}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <EmptyState title="No toolchain selected" body="This workflow did not select an MCP-backed toolchain. Software workflows require tools.toolchains to be configured." />
+              )
+            ) : null}
+
+            {selectedObject.id === "validation" ? (
+              (workflow.execution?.validation_runs?.length ?? 0) > 0 ? (
+                <div className="space-y-3">
+                  {workflow.execution?.validation_runs?.map((run, index) => (
+                    <div
+                      key={run.id ?? `${run.phase}-${index}`}
+                      className={`rounded-3xl border p-4 ${
+                        run.passed
+                          ? "border-shell-success/30 bg-shell-success/8"
+                          : "border-shell-warning/40 bg-shell-warning/10"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">{run.phase || "validation"}</p>
+                          <p className="mt-1 text-xs text-shell-soft">
+                            {run.toolchain_id || "toolchain"} · {run.profile || "default"}
+                          </p>
+                        </div>
+                        <StatusBadge status={run.passed ? "completed" : "failed"} />
+                      </div>
+                      {run.summary ? (
+                        <p className="mt-2 text-sm leading-6 text-shell-muted">{run.summary}</p>
+                      ) : null}
+                      {(run.steps?.length ?? 0) > 0 ? (
+                        <div className="mt-3 space-y-2">
+                          {run.steps?.map((step, stepIndex) => (
+                            <div
+                              key={`${step.capability}-${stepIndex}`}
+                              className="rounded-2xl border border-shell-border/40 bg-shell-panel/80 p-3"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-xs font-semibold text-ink">
+                                  {step.capability}
+                                  {step.tool ? <span className="ml-2 text-shell-soft">via {step.tool}</span> : null}
+                                </p>
+                                <StatusBadge status={step.passed ? "completed" : "failed"} />
+                              </div>
+                              {step.error ? (
+                                <p className="mt-2 text-xs leading-5 text-shell-danger-text">{step.error}</p>
+                              ) : null}
+                              {step.output ? (
+                                <pre className="thin-scrollbar mt-2 overflow-x-auto rounded-xl bg-shell-code p-2 text-[11px] leading-5 text-shell-code-text">
+                                  {step.output}
+                                </pre>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState title="No validation runs" body="The engine has not yet executed toolchain validation for this workflow." />
+              )
+            ) : null}
+
+            {selectedObject.id === "checkpoints" ? (
+              (workflow.execution?.checkpoints?.length ?? 0) > 0 ? (
+                <div className="space-y-3">
+                  {workflow.execution?.checkpoints?.map((checkpoint, index) => (
+                    <div
+                      key={checkpoint.id ?? `${checkpoint.phase}-${index}`}
+                      className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">{checkpoint.phase || "checkpoint"}</p>
+                          <p className="mt-1 text-xs text-shell-soft">{checkpoint.toolchain_id || "toolchain"}</p>
+                        </div>
+                        {checkpoint.pushed ? (
+                          <span className="rounded-full border border-shell-success/35 bg-shell-success/10 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-shell-success">
+                            Pushed
+                          </span>
+                        ) : (
+                          <span className="rounded-full border border-shell-border/40 bg-shell-subtle px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-shell-soft">
+                            Local
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 grid gap-1 text-xs text-shell-muted">
+                        <span><span className="font-semibold text-shell-soft">SHA:</span> <span className="break-all">{checkpoint.commit_sha || "—"}</span></span>
+                        <span><span className="font-semibold text-shell-soft">Branch:</span> <span className="break-all">{checkpoint.branch || "—"}</span></span>
+                        {checkpoint.message ? (
+                          <span><span className="font-semibold text-shell-soft">Message:</span> {checkpoint.message}</span>
+                        ) : null}
+                        {checkpoint.created_at ? (
+                          <span><span className="font-semibold text-shell-soft">Created:</span> {formatDate(checkpoint.created_at)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState title="No checkpoints" body="No repo checkpoint commits have been recorded for this run." />
               )
             ) : null}
           </div>

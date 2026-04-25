@@ -37,6 +37,21 @@ const (
 	EventStateTransition   EventType = "state.transition"
 	EventProviderCall      EventType = "provider.call"
 	EventRefinerSuggestion EventType = "refiner.suggestion"
+	EventValidationRun     EventType = "validation.run"
+	EventCheckpointCreated EventType = "checkpoint.created"
+
+	// MCP registry events.  Lifecycle events (server connected / unreachable)
+	// are emitted as structured logs at startup; the events below are scoped
+	// to a workflow and recorded when the engine resolves or invokes an MCP
+	// capability via the registry.
+	EventMCPCapabilityMissing EventType = "mcp.capability.missing"
+	EventMCPToolInvoked       EventType = "mcp.tool.invoked"
+	EventMCPToolFailed        EventType = "mcp.tool.failed"
+
+	// EventValidationGateBlocked is emitted when the engine refuses to
+	// finalize a software workflow because the most recent toolchain
+	// validation run failed.  See Engine.Options.EnforceValidationGate.
+	EventValidationGateBlocked EventType = "validation.gate.blocked"
 
 	// EventQAExhausted is emitted when the QA remediation loop hits
 	// MaxQARetries with blocking issues still present.  The workflow
@@ -185,6 +200,62 @@ type RefinerSuggestionPayload struct {
 type QAExhaustedPayload struct {
 	RetriesAllowed int      `json:"retries_allowed"`
 	BlockingIssues []string `json:"blocking_issues"`
+}
+
+// ValidationRunPayload is the payload for EventValidationRun.
+type ValidationRunPayload struct {
+	Phase       string   `json:"phase"`
+	ToolchainID string   `json:"toolchain_id,omitempty"`
+	Profile     string   `json:"profile,omitempty"`
+	Passed      bool     `json:"passed"`
+	Issues      []string `json:"issues,omitempty"`
+}
+
+// CheckpointCreatedPayload is the payload for EventCheckpointCreated.
+type CheckpointCreatedPayload struct {
+	Phase       string `json:"phase"`
+	ToolchainID string `json:"toolchain_id,omitempty"`
+	CommitSHA   string `json:"commit_sha,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Pushed      bool   `json:"pushed,omitempty"`
+}
+
+// MCPCapabilityMissingPayload is the payload for EventMCPCapabilityMissing.
+type MCPCapabilityMissingPayload struct {
+	ToolchainID string `json:"toolchain_id"`
+	Capability  string `json:"capability"`
+	MCPServer   string `json:"mcp_server,omitempty"`
+	Reason      string `json:"reason"`
+	Phase       string `json:"phase,omitempty"`
+}
+
+// MCPToolInvokedPayload is the payload for EventMCPToolInvoked.
+type MCPToolInvokedPayload struct {
+	ToolchainID string `json:"toolchain_id"`
+	Capability  string `json:"capability"`
+	Tool        string `json:"tool"`
+	MCPServer   string `json:"mcp_server,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	Passed      bool   `json:"passed"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+}
+
+// ValidationGateBlockedPayload is the payload for EventValidationGateBlocked.
+type ValidationGateBlockedPayload struct {
+	ToolchainID string   `json:"toolchain_id,omitempty"`
+	Profile     string   `json:"profile,omitempty"`
+	Phase       string   `json:"phase,omitempty"`
+	Issues      []string `json:"issues,omitempty"`
+}
+
+// MCPToolFailedPayload is the payload for EventMCPToolFailed.
+type MCPToolFailedPayload struct {
+	ToolchainID string `json:"toolchain_id"`
+	Capability  string `json:"capability"`
+	Tool        string `json:"tool,omitempty"`
+	MCPServer   string `json:"mcp_server,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	Error       string `json:"error"`
 }
 
 // ─── Attachment ingestion payloads ────────────────────────────────────────────

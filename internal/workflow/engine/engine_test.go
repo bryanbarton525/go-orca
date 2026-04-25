@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/state"
+	"github.com/go-orca/go-orca/internal/tools"
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 )
 
@@ -74,6 +76,40 @@ func (p *noopPersona) Description() string     { return "" }
 func (p *noopPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	_ = packet
 	return &state.PersonaOutput{Persona: p.kind, Summary: "noop"}, nil
+}
+
+type artifactPersona struct{ kind state.PersonaKind }
+
+func (p *artifactPersona) Kind() state.PersonaKind { return p.kind }
+func (p *artifactPersona) Name() string            { return string(p.kind) }
+func (p *artifactPersona) Description() string     { return "" }
+func (p *artifactPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	return &state.PersonaOutput{
+		Persona: p.kind,
+		Summary: "implemented",
+		Artifacts: []state.Artifact{{
+			WorkflowID: packet.WorkflowID,
+			TaskID:     packet.Tasks[0].ID,
+			Kind:       state.ArtifactKindCode,
+			Name:       "main.go",
+			Content:    "package main\n",
+			CreatedBy:  state.PersonaImplementer,
+			CreatedAt:  time.Now().UTC(),
+		}},
+	}, nil
+}
+
+type fakeTool struct {
+	name string
+	out  json.RawMessage
+	err  error
+}
+
+func (t fakeTool) Name() string                { return t.name }
+func (t fakeTool) Description() string         { return "fake tool" }
+func (t fakeTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t fakeTool) Call(context.Context, json.RawMessage) (json.RawMessage, error) {
+	return t.out, t.err
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -193,6 +229,155 @@ func TestMockStoreAppendEvents(t *testing.T) {
 	if len(ms.events) != 2 {
 		t.Errorf("events len: got %d, want 2", len(ms.events))
 	}
+}
+
+func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaImplementer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaImplementer) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	reg := tools.NewRegistry()
+	reg.Register(fakeTool{name: "run_tests", out: json.RawMessage(`{"passed":true,"output":"tests passed"}`)})
+	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc123","branch":"workflow/test","message":"checkpoint","pushed":true}`)})
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaImplementer, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-123456789",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaImplementer,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+		ToolRegistry:    reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go"},
+			Capabilities:         []string{"run_tests", "git_checkpoint"},
+			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
+			CheckpointCapability: "git_checkpoint",
+		}},
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if stored.Execution.Workspace == nil || stored.Execution.Workspace.Path == "" {
+		t.Fatal("expected workspace metadata")
+	}
+	if stored.Execution.Toolchain == nil || stored.Execution.Toolchain.ID != "go" {
+		t.Fatalf("expected go toolchain, got %+v", stored.Execution.Toolchain)
+	}
+	if len(stored.Execution.ValidationRuns) != 1 || !stored.Execution.ValidationRuns[0].Passed {
+		t.Fatalf("expected one passing validation run, got %+v", stored.Execution.ValidationRuns)
+	}
+	if len(stored.Execution.Checkpoints) != 1 || stored.Execution.Checkpoints[0].CommitSHA != "abc123" {
+		t.Fatalf("expected checkpoint metadata, got %+v", stored.Execution.Checkpoints)
+	}
+}
+
+// TestEnforceValidationGate_BlocksFinalizerOnFailedValidation verifies that
+// when EnforceValidationGate is set and the most recent toolchain validation
+// run fails, the engine emits validation.gate.blocked, marks the workflow
+// failed, and skips the Finalizer.
+func TestEnforceValidationGate_BlocksFinalizerOnFailedValidation(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaImplementer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaImplementer) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	// Finalizer must NOT run.  Register a sentinel that fails the test if it does.
+	persona.Register(&forbiddenPersona{t: t, kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	reg := tools.NewRegistry()
+	// run_tests deliberately reports passed=false so the validation gate fires.
+	reg.Register(fakeTool{name: "run_tests", out: json.RawMessage(`{"passed":false,"error":"test suite failed"}`)})
+	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc","branch":"x","pushed":false}`)})
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaImplementer, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-fail-1",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaImplementer,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider:       "mock",
+		DefaultModel:          "mock-model",
+		WorkspaceRoot:         t.TempDir(),
+		ToolRegistry:          reg,
+		EnforceValidationGate: true,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go"},
+			Capabilities:         []string{"run_tests", "git_checkpoint"},
+			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
+			CheckpointCapability: "git_checkpoint",
+		}},
+	})
+
+	err := eng.Run(context.Background(), ws.ID)
+	if err == nil {
+		t.Fatal("expected validation gate to return an error")
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if stored.Status != state.WorkflowStatusFailed {
+		t.Errorf("expected status=failed, got %q", stored.Status)
+	}
+	// Validation runs should still be recorded for observability.
+	if len(stored.Execution.ValidationRuns) == 0 || stored.Execution.ValidationRuns[len(stored.Execution.ValidationRuns)-1].Passed {
+		t.Errorf("expected last validation run to be failed, got %+v", stored.Execution.ValidationRuns)
+	}
+	// validation.gate.blocked event should be present.
+	found := false
+	for _, e := range ms.events {
+		if e.Type == events.EventValidationGateBlocked {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected validation.gate.blocked event in journal")
+	}
+}
+
+// forbiddenPersona fails the test if invoked.  Used to assert a phase is
+// skipped (rather than relying on absence of side effects).
+type forbiddenPersona struct {
+	t    *testing.T
+	kind state.PersonaKind
+}
+
+func (p *forbiddenPersona) Kind() state.PersonaKind { return p.kind }
+func (p *forbiddenPersona) Name() string            { return string(p.kind) + "-forbidden" }
+func (p *forbiddenPersona) Description() string     { return "" }
+func (p *forbiddenPersona) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.t.Errorf("persona %q should not have been invoked", p.kind)
+	return &state.PersonaOutput{Persona: p.kind}, nil
 }
 
 // blockingQAPersona is a QA persona that always reports one blocking issue.

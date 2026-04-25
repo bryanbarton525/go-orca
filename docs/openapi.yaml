@@ -147,6 +147,7 @@ components:
       enum:
         - director
         - project_manager
+        - engineer_proxy
         - architect
         - implementer
         - qa
@@ -525,6 +526,160 @@ components:
           type: string
           nullable: true
           description: LLM-generated summary of all attached documents.
+        execution:
+          $ref: '#/components/schemas/WorkflowExecution'
+          nullable: true
+          description: Live execution metadata updated by the engine at every persona/task boundary.
+
+    WorkflowExecution:
+      type: object
+      description: >
+        Live execution metadata for a running workflow. Updated by the engine at
+        every persona/task boundary and persisted so that `GET /workflows/{id}`
+        reflects in-flight state.
+      properties:
+        current_persona:
+          $ref: '#/components/schemas/PersonaKind'
+        active_task_id:
+          type: string
+        active_task_title:
+          type: string
+        qa_cycle:
+          type: integer
+          description: 1-based QA/remediation pass number.
+        remediation_attempt:
+          type: integer
+          description: Implementer re-run count within the current QA cycle.
+        workflow_kind:
+          type: string
+          description: '`standard` or `improvement`.'
+        parent_workflow_id:
+          type: string
+          format: uuid
+          nullable: true
+        improvement_depth:
+          type: integer
+          description: 0 for standard workflows, 1+ for improvement child workflows.
+        workspace:
+          $ref: '#/components/schemas/WorkspaceInfo'
+          nullable: true
+          description: Engine-owned repo/worktree context for this workflow.
+        toolchain:
+          $ref: '#/components/schemas/ToolchainSelection'
+          nullable: true
+          description: Selected MCP-backed validation/build toolchain.
+        validation_runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationRun'
+          description: Engine-owned validation passes invoked after implementation/remediation phases.
+        checkpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/Checkpoint'
+          description: Source-control checkpoint commits created by the toolchain after implementation/remediation phases.
+
+    WorkspaceInfo:
+      type: object
+      description: Materialized repo/worktree mounted by toolchain MCP servers.
+      properties:
+        path:
+          type: string
+          description: Filesystem path on the deployment's shared workspace volume.
+        repo_url:
+          type: string
+        branch:
+          type: string
+          description: Branch the workflow operates on (engine creates `workflow/{id}` by default).
+        created_by:
+          type: string
+          description: Subsystem that created the workspace (e.g. `engine`).
+
+    ToolchainSelection:
+      type: object
+      description: The toolchain registry entry the engine selected for this workflow.
+      properties:
+        id:
+          type: string
+          description: Toolchain registry id (e.g. `go`, `python`).
+        language:
+          type: string
+        profile:
+          type: string
+          description: Validation profile name (e.g. `default`).
+        tools:
+          type: array
+          items:
+            type: string
+          description: Tool/capability names the toolchain advertises.
+
+    ValidationStep:
+      type: object
+      description: Single capability invocation inside a validation run.
+      properties:
+        capability:
+          type: string
+          description: Capability name (e.g. `run_tests`, `format_code`).
+        tool:
+          type: string
+          description: MCP tool that backs the capability.
+        passed:
+          type: boolean
+        output:
+          type: string
+        error:
+          type: string
+
+    ValidationRun:
+      type: object
+      description: One engine-owned validation pass over the workspace.
+      properties:
+        id:
+          type: string
+        phase:
+          type: string
+          description: Workflow phase the run was executed in (e.g. `implementation`, `remediation-1`).
+        toolchain_id:
+          type: string
+        profile:
+          type: string
+        passed:
+          type: boolean
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationStep'
+        summary:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    Checkpoint:
+      type: object
+      description: Source-control checkpoint returned by the toolchain.
+      properties:
+        id:
+          type: string
+        phase:
+          type: string
+        toolchain_id:
+          type: string
+        commit_sha:
+          type: string
+        branch:
+          type: string
+        message:
+          type: string
+        pushed:
+          type: boolean
+          description: True when the toolchain pushed the checkpoint to a remote.
+        created_at:
+          type: string
+          format: date-time
 
     Tenant:
       type: object
@@ -586,12 +741,16 @@ components:
         - persona.started
         - persona.completed
         - persona.failed
+        - persona.retrying
         - task.started
         - task.completed
         - task.failed
         - task.created
         - artifact.produced
         - refiner.suggestion
+        - validation.run
+        - checkpoint.created
+        - qa.exhausted
 
     Event:
       type: object
@@ -632,6 +791,12 @@ components:
             **task.started** / **task.completed**: `{ "task_id": uuid, "title": string }`
 
             **refiner.suggestion**: `{ "component": string, "name": string, "suggestion": string, "applied_path": string }`
+
+            **validation.run**: `{ "phase": string, "toolchain_id": string, "profile": string, "passed": boolean, "issues": string[] }`
+
+            **checkpoint.created**: `{ "phase": string, "toolchain_id": string, "commit_sha": string, "branch": string, "pushed": boolean }`
+
+            **qa.exhausted**: `{ "retries_allowed": integer, "blocking_issues": string[] }`
           additionalProperties: true
         created_at:
           type: string

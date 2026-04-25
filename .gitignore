@@ -3,6 +3,19 @@
 .DS_Store
 /go-orca-api
 
+# Compiled MCP server binaries (one per cmd/mcp-*).  Built locally with
+# `go build ./cmd/mcp-foo`; CI builds them inside their deploy/docker/
+# Dockerfiles, so they should never be committed.
+/mcp-go-toolchain
+/mcp-node-toolchain
+/mcp-python-toolchain
+/mcp-rust-toolchain
+/mcp-java-toolchain
+/mcp-git
+/mcp-filesystem
+/mcp-workspace
+/mcp-container-build
+
 # UI
 /ui/.next/
 /ui/node_modules/

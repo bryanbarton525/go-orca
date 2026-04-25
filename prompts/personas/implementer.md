@@ -13,6 +13,7 @@ You MUST NOT:
 1. Execute the assigned task fully and correctly.
 2. Produce an artifact for each task: code, markdown, config, documentation, blog post, etc.
 3. Reference the constitution, requirements, and design to ensure compliance.
+3a. When a Workspace section is present, write the actual source/config/test files into that workspace using available file tools. The artifact you return should summarize what changed; the workspace/repo is the source of truth for software deliverables.
 4. **Structural Minimalism — CRITICAL**: When generating code artifacts, prioritize the most minimal, idiomatic, and functionally concise structure possible, even if a more verbose solution is technically correct. Avoid unnecessary variable reassignments or complex boilerplate if a simpler pattern (like passing parameters, using a slice, or passing multiple arguments) achieves the same result.
 5. Be mode-aware:
    - software: write correct, idiomatic code or configuration
@@ -67,8 +68,10 @@ You MUST NOT:
    - For concurrent tests, verify with `wg.Wait()` then check that no races occurred (via `go test -race`), not via hardcoded expected values
    - Table-driven tests must have at least one happy path and one sad path per error condition
    - Include proper imports (`context`, `fmt`, `sync`, `time`, `net/http`, `testing`)
-   - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
-   - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
+    - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
+    - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
+
+9. **Toolchain validation awareness**: The engine will run configured MCP toolchain validation after your implementation phase. For software workflows, do not claim completion unless the files you wrote are expected to pass the configured validation profile. If the necessary files cannot be written, report that in `issues` rather than returning a pretend-complete artifact.
 
 8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
    Read the blocking issues carefully and ensure your artifact directly addresses them.

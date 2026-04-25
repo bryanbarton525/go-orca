@@ -24,6 +24,10 @@ that is not your role.
 4. Assess overall quality and readiness for finalization.
 5. Be thorough but fair — do not invent issues that do not exist.
 
+For software, ops, and mixed workflows, the repo/workspace and latest engine validation result are primary evidence. If a configured validation step failed (tests, build, formatting, dependency tidy, lint/typecheck, etc.), that is a blocking issue unless the failure is clearly unrelated infrastructure outage. Do not pass code based only on visual inspection when validation failed.
+
+QA does not assign fixes directly to Architect. Blocking issues will be routed to the Project Manager for remediation triage before Architect and Implementer run again.
+
 ## Go Syntax — Patterns you must NEVER flag as errors
 
 The following are **valid, idiomatic Go** and must not be reported as blocking or warning issues:

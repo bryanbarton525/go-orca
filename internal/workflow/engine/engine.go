@@ -15,8 +15,10 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
+	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
@@ -135,6 +138,15 @@ type Options struct {
 	// When empty, improvements are stored as suggestion strings only.
 	// Defaults to empty (disabled).
 	ImprovementsRoot string
+	// WorkspaceRoot is the base directory for engine-owned workflow workspaces.
+	// Toolchain MCP servers should mount the same path when using shared-volume
+	// deployment. Defaults to empty (workspace setup disabled).
+	WorkspaceRoot string
+
+	// Toolchains describes governed MCP-backed language/build toolchains. When
+	// configured, software workflows are validated through these capabilities
+	// after each implementation phase before QA/finalization.
+	Toolchains []ToolchainConfig
 
 	// ImprovementDispatcher, when set, is called after the Finalizer phase
 	// completes to route each RefinerImprovement to direct-apply or a child
@@ -152,6 +164,19 @@ type Options struct {
 	// ## Available tools section.
 	// When nil, no tool context is injected.
 	ToolRegistry *tools.Registry
+
+	// MCPRegistry, when set, becomes the sole resolution path for toolchain
+	// capability invocations.  When nil, the engine falls back to direct
+	// dispatch via ToolRegistry by tool name (legacy path).
+	MCPRegistry *mcpregistry.Registry
+
+	// EnforceValidationGate, when true, prevents software/mixed/ops
+	// workflows from running the Finalizer phase when the most recent
+	// toolchain validation run failed.  An EventValidationGateBlocked is
+	// emitted and the workflow is marked failed instead.  Default false to
+	// preserve existing behaviour; operators opt in via
+	// workflow.enforce_validation_gate in go-orca.yaml.
+	EnforceValidationGate bool
 
 	// AttachmentStore provides access to upload sessions, attachments, and
 	// chunks for the pre-Director ingestion stage.  When nil, ingestion is
@@ -173,6 +198,19 @@ type Options struct {
 	// IngestionChunkSize is the max character count per attachment chunk.
 	// Defaults to 4000.
 	IngestionChunkSize int
+}
+
+// ToolchainConfig maps a language stack to MCP tools that implement build/test
+// capabilities. Tools must already be present in Options.ToolRegistry.
+type ToolchainConfig struct {
+	ID                   string
+	Languages            []string
+	MCPServer            string
+	Capabilities         []string
+	CapabilityTools      map[string]string
+	ValidationProfiles   map[string][]string
+	CheckpointCapability string
+	PushCheckpoints      bool
 }
 
 func (o *Options) applyDefaults() {
@@ -400,15 +438,32 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
 			return fmt.Errorf("director phase: %w", err)
 		}
+		if err := e.ensureWorkspaceAndToolchain(ctx, ws); err != nil {
+			return fmt.Errorf("workspace setup: %w", err)
+		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
+	}
+	if err := e.ensureWorkspaceAndToolchain(ctx, ws); err != nil {
+		return fmt.Errorf("workspace setup: %w", err)
 	}
 
 	// Phase 2: Project Manager
 	if personaRequired(state.PersonaProjectMgr) && !phaseComplete(state.PersonaProjectMgr) {
 		if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
 			return fmt.Errorf("pm phase: %w", err)
+		}
+		if err := e.checkControlState(ctx, ws); err != nil {
+			return err
+		}
+	}
+
+	// Phase 2.5: Engineer Proxy — captures pragmatic engineering defaults for
+	// architectural decisions without requiring a human interruption.
+	if personaRequired(state.PersonaEngineer) && !phaseComplete(state.PersonaEngineer) {
+		if err := e.runPersona(ctx, ws, state.PersonaEngineer, snap); err != nil {
+			return fmt.Errorf("engineer proxy phase: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
@@ -429,6 +484,14 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	if personaRequired(state.PersonaImplementer) {
 		if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
 			return fmt.Errorf("implementer phase: %w", err)
+		}
+		validationIssues, err := e.runToolchainValidation(ctx, ws, "implementation")
+		if err != nil {
+			return fmt.Errorf("implementation validation: %w", err)
+		}
+		ws.BlockingIssues = append(ws.BlockingIssues, validationIssues...)
+		if err := e.runToolchainCheckpoint(ctx, ws, "implementation"); err != nil {
+			return fmt.Errorf("implementation checkpoint: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
@@ -478,7 +541,23 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					break
 				}
 
-				// Architect-led remediation: re-plan with the current blocking issues.
+				// PM-led triage before Architect remediation. The PM classifies whether
+				// blockers are requirement, design, implementation, or environment issues;
+				// the Architect then uses that brief to produce targeted implementer tasks.
+				if personaRequired(state.PersonaProjectMgr) {
+					ws.Execution.CurrentPersona = state.PersonaProjectMgr
+					ws.Execution.RemediationAttempt = qaCycle
+					_ = e.store.SaveWorkflow(ctx, ws)
+
+					if err := e.runRemediationTriage(ctx, ws, snap, qaCycle); err != nil {
+						return fmt.Errorf("remediation triage (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.checkControlState(ctx, ws); err != nil {
+						return err
+					}
+				}
+
+				// Architect-led remediation: re-plan with the PM brief and current blocking issues.
 				if personaRequired(state.PersonaArchitect) && personaRequired(state.PersonaImplementer) {
 					ws.Execution.CurrentPersona = state.PersonaArchitect
 					ws.Execution.RemediationAttempt = qaCycle
@@ -497,14 +576,25 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runImplementerPhase(ctx, ws, snap); err != nil {
 						return fmt.Errorf("implementer remediation (cycle %d): %w", qaCycle, err)
 					}
+					validationIssues, err := e.runToolchainValidation(ctx, ws, fmt.Sprintf("remediation-%d", qaCycle))
+					if err != nil {
+						return fmt.Errorf("remediation validation (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-%d", qaCycle)); err != nil {
+						return fmt.Errorf("remediation checkpoint (cycle %d): %w", qaCycle, err)
+					}
 					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
 					}
+					// Clear previous QA findings after remediation, but preserve fresh
+					// engine validation failures so QA reviews the current repo state.
+					ws.BlockingIssues = validationIssues
 				}
-
-				// Clear blocking issues accumulated in this pass so QA evaluates
-				// the remediation fresh.  Retain AllSuggestions for history.
-				ws.BlockingIssues = nil
+				if !personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaImplementer) {
+					// Clear blocking issues accumulated in this pass so QA evaluates
+					// any non-implementation remediation fresh. Retain suggestions.
+					ws.BlockingIssues = nil
+				}
 			}
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
@@ -513,6 +603,49 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	}
 
 	// Phase 6: Finalizer (includes inline Refiner retrospective)
+	//
+	// Hard validation gate: if EnforceValidationGate is set and the most
+	// recent validation run for a software-class workflow failed, refuse to
+	// finalize.  This stops workflows where QA gave a visual-only pass but
+	// the toolchain reported real failures.
+	if e.opts.EnforceValidationGate && workflowNeedsToolchain(ws.Mode) {
+		if blocked, run := lastValidationFailed(ws); blocked {
+			issues := []string{}
+			if run != nil {
+				issues = append(issues, run.Summary)
+				for _, step := range run.Steps {
+					if !step.Passed {
+						issues = append(issues, fmt.Sprintf("%s: %s", step.Capability, firstNonEmpty(step.Error, step.Output)))
+					}
+				}
+			}
+			toolchainID := ""
+			if run != nil {
+				toolchainID = run.ToolchainID
+			}
+			profile := ""
+			if run != nil {
+				profile = run.Profile
+			}
+			evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventValidationGateBlocked, "",
+				events.ValidationGateBlockedPayload{
+					ToolchainID: toolchainID,
+					Profile:     profile,
+					Phase:       "finalizer-gate",
+					Issues:      issues,
+				})
+			_ = e.store.AppendEvents(ctx, evt)
+			ws.Status = state.WorkflowStatusFailed
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				"[validation-gate] finalizer blocked: most recent toolchain validation failed")
+			if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+				return err
+			}
+			return fmt.Errorf("validation gate: most recent toolchain validation failed (%s)", toolchainID)
+		}
+	}
+
 	if personaRequired(state.PersonaFinalizer) && !phaseComplete(state.PersonaFinalizer) {
 		if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
 			return fmt.Errorf("finalizer phase: %w", err)
@@ -1007,6 +1140,454 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	return e.store.SaveWorkflow(ctx, ws)
 }
 
+// runRemediationTriage routes QA failures through the Project Manager before
+// Architect remediation. The PM's structured requirements are not applied here;
+// this pass is used as a decision brief so the Architect receives PM-owned
+// classification without mutating the original acceptance baseline mid-loop.
+func (e *Engine) runRemediationTriage(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
+
+	p, ok := persona.Get(state.PersonaProjectMgr)
+	if !ok {
+		return fmt.Errorf("project manager persona not registered")
+	}
+
+	packet := e.buildPacket(ws, state.PersonaProjectMgr, snap)
+	packet.IsRemediation = true
+
+	pmCtx, pmCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+	out, err := p.Execute(pmCtx, packet)
+	pmCancel()
+	if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
+		return controlErr
+	}
+	if err != nil {
+		return fmt.Errorf("pm remediation triage: %w", err)
+	}
+
+	if ws.Summaries == nil {
+		ws.Summaries = make(map[state.PersonaKind]string)
+	}
+	ws.Summaries[state.PersonaProjectMgr] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
+	if len(out.Suggestions) > 0 {
+		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
+	}
+
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.WorkflowState) error {
+	if !workflowNeedsToolchain(ws.Mode) || len(e.opts.Toolchains) == 0 {
+		return nil
+	}
+	if ws.Execution.Workspace == nil && strings.TrimSpace(e.opts.WorkspaceRoot) != "" {
+		workspacePath := filepath.Join(e.opts.WorkspaceRoot, ws.ID)
+		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+			return fmt.Errorf("create workspace %q: %w", workspacePath, err)
+		}
+		ws.Execution.Workspace = &state.WorkspaceInfo{
+			Path:      workspacePath,
+			Branch:    "workflow/" + ws.ID,
+			CreatedBy: "engine",
+		}
+	}
+	if ws.Execution.Toolchain == nil {
+		if tc, language, ok := e.selectToolchain(ws); ok {
+			profile := "default"
+			if _, exists := tc.ValidationProfiles[profile]; !exists {
+				for name := range tc.ValidationProfiles {
+					profile = name
+					break
+				}
+			}
+			ws.Execution.Toolchain = &state.ToolchainSelection{
+				ID:       tc.ID,
+				Language: language,
+				Profile:  profile,
+				Tools:    tc.Capabilities,
+			}
+		}
+	}
+
+	// Refuse to proceed when the selected toolchain's MCP server is required
+	// but unreachable — without it, every validation/checkpoint call would
+	// fail and the workflow would burn QA retries before discovering the
+	// underlying infrastructure problem.
+	if ws.Execution.Toolchain != nil && e.opts.MCPRegistry != nil {
+		if err := e.opts.MCPRegistry.ToolchainReachable(ws.Execution.Toolchain.ID); err != nil {
+			e.emitMCPCapabilityMissing(ctx, ws,
+				ToolchainConfig{ID: ws.Execution.Toolchain.ID},
+				"workflow_start", "preflight", err.Error())
+			return fmt.Errorf("toolchain preflight: %w", err)
+		}
+	}
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func workflowNeedsToolchain(mode state.WorkflowMode) bool {
+	switch mode {
+	case state.WorkflowModeSoftware, state.WorkflowModeMixed, state.WorkflowModeOps:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) selectToolchain(ws *state.WorkflowState) (ToolchainConfig, string, bool) {
+	haystack := strings.ToLower(ws.Request + " " + ws.Title)
+	if ws.Design != nil {
+		haystack += " " + strings.ToLower(strings.Join(ws.Design.TechStack, " "))
+	}
+	for _, tc := range e.opts.Toolchains {
+		for _, lang := range tc.Languages {
+			needle := strings.ToLower(strings.TrimSpace(lang))
+			if needle != "" && strings.Contains(haystack, needle) {
+				return tc, needle, true
+			}
+		}
+	}
+	if len(e.opts.Toolchains) > 0 {
+		return e.opts.Toolchains[0], "", true
+	}
+	return ToolchainConfig{}, "", false
+}
+
+func (e *Engine) runToolchainValidation(ctx context.Context, ws *state.WorkflowState, phase string) ([]string, error) {
+	if ws.Execution.Toolchain == nil || e.opts.ToolRegistry == nil {
+		return nil, nil
+	}
+	tc, ok := e.toolchainByID(ws.Execution.Toolchain.ID)
+	if !ok {
+		return []string{fmt.Sprintf("toolchain %q is selected but not configured", ws.Execution.Toolchain.ID)}, nil
+	}
+	profileName := ws.Execution.Toolchain.Profile
+	if profileName == "" {
+		profileName = "default"
+	}
+	profile := tc.ValidationProfiles[profileName]
+	if len(profile) == 0 {
+		return nil, nil
+	}
+
+	run := state.ValidationRun{
+		ID:          fmt.Sprintf("validation-%d", len(ws.Execution.ValidationRuns)+1),
+		Phase:       phase,
+		ToolchainID: tc.ID,
+		Profile:     profileName,
+		Passed:      true,
+		StartedAt:   time.Now().UTC(),
+	}
+	issues := make([]string, 0)
+
+	for _, capability := range profile {
+		capability = strings.TrimSpace(capability)
+		if capability == "" {
+			continue
+		}
+		toolName := tc.CapabilityTools[capability]
+		if toolName == "" {
+			toolName = capability
+		}
+		step := state.ValidationStep{Capability: capability, Tool: toolName, Passed: true}
+		args := e.toolchainArgs(ws, tc, phase, capability, false)
+		callStart := time.Now()
+
+		if e.opts.MCPRegistry != nil {
+			cr, rerr := e.opts.MCPRegistry.CallCapability(ctx, tc.ID, capability, args)
+			if rerr != nil {
+				step.Passed = false
+				step.Error = rerr.Error()
+				e.emitMCPCapabilityMissing(ctx, ws, tc, capability, phase, rerr.Error())
+			} else {
+				step.Tool = cr.ToolName
+				step.Passed = cr.Passed
+				step.Output = trimValidationOutput(firstNonEmpty(cr.Output, cr.Stdout))
+				if cr.Stderr != "" && step.Output != "" {
+					step.Output += "\n" + cr.Stderr
+				} else if cr.Stderr != "" {
+					step.Output = trimValidationOutput(cr.Stderr)
+				}
+				step.Error = cr.Error
+			}
+			e.emitMCPToolEvent(ctx, ws, tc, capability, step.Tool, phase, step.Passed, step.Error, time.Since(callStart))
+		} else if _, ok := e.opts.ToolRegistry.Get(toolName); !ok {
+			step.Passed = false
+			step.Error = fmt.Sprintf("tool %q not registered", toolName)
+		} else {
+			res := e.opts.ToolRegistry.Call(ctx, toolName, args)
+			if res.Error != "" {
+				step.Passed = false
+				step.Error = res.Error
+			} else {
+				toolPassed, output, errMsg := parseToolchainResult(res.Output)
+				step.Passed = toolPassed
+				step.Output = output
+				step.Error = errMsg
+			}
+		}
+		if !step.Passed {
+			run.Passed = false
+			issue := fmt.Sprintf("validation %s failed via %s: %s", capability, toolName, firstNonEmpty(step.Error, step.Output))
+			issues = append(issues, issue)
+		}
+		run.Steps = append(run.Steps, step)
+	}
+	run.CompletedAt = time.Now().UTC()
+	if run.Passed {
+		run.Summary = fmt.Sprintf("%s validation passed (%d step(s))", tc.ID, len(run.Steps))
+	} else {
+		run.Summary = fmt.Sprintf("%s validation failed (%d issue(s))", tc.ID, len(issues))
+	}
+	ws.Execution.ValidationRuns = append(ws.Execution.ValidationRuns, run)
+
+	evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventValidationRun, "",
+		events.ValidationRunPayload{Phase: phase, ToolchainID: tc.ID, Profile: profileName, Passed: run.Passed, Issues: issues})
+	_ = e.store.AppendEvents(ctx, evt)
+
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return issues, err
+	}
+	return issues, nil
+}
+
+func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowState, phase string) error {
+	if ws.Execution.Toolchain == nil || e.opts.ToolRegistry == nil {
+		return nil
+	}
+	tc, ok := e.toolchainByID(ws.Execution.Toolchain.ID)
+	if !ok || strings.TrimSpace(tc.CheckpointCapability) == "" {
+		return nil
+	}
+	capability := strings.TrimSpace(tc.CheckpointCapability)
+	toolName := tc.CapabilityTools[capability]
+	if toolName == "" {
+		toolName = capability
+	}
+	args := e.toolchainArgs(ws, tc, phase, capability, tc.PushCheckpoints)
+	callStart := time.Now()
+	var (
+		commitSHA, branch, message string
+		pushed                     bool
+	)
+	if e.opts.MCPRegistry != nil {
+		cr, rerr := e.opts.MCPRegistry.CallCapability(ctx, tc.ID, capability, args)
+		if rerr != nil {
+			e.emitMCPCapabilityMissing(ctx, ws, tc, capability, phase, rerr.Error())
+			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s", rerr.Error()))
+			return e.store.SaveWorkflow(ctx, ws)
+		}
+		if cr.Error != "" {
+			e.emitMCPToolEvent(ctx, ws, tc, capability, cr.ToolName, phase, false, cr.Error, time.Since(callStart))
+			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s failed: %s", cr.ToolName, cr.Error))
+			return e.store.SaveWorkflow(ctx, ws)
+		}
+		commitSHA, branch, message, pushed = parseCheckpointResult(cr.Raw)
+		e.emitMCPToolEvent(ctx, ws, tc, capability, cr.ToolName, phase, true, "", time.Since(callStart))
+	} else {
+		if _, ok := e.opts.ToolRegistry.Get(toolName); !ok {
+			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] tool %q not registered; checkpoint skipped", toolName))
+			return e.store.SaveWorkflow(ctx, ws)
+		}
+		res := e.opts.ToolRegistry.Call(ctx, toolName, args)
+		if res.Error != "" {
+			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s failed: %s", toolName, res.Error))
+			return e.store.SaveWorkflow(ctx, ws)
+		}
+		commitSHA, branch, message, pushed = parseCheckpointResult(res.Output)
+	}
+	checkpoint := state.Checkpoint{
+		ID:          fmt.Sprintf("checkpoint-%d", len(ws.Execution.Checkpoints)+1),
+		Phase:       phase,
+		ToolchainID: tc.ID,
+		CommitSHA:   commitSHA,
+		Branch:      firstNonEmpty(branch, workspaceBranch(ws)),
+		Message:     message,
+		Pushed:      pushed,
+		CreatedAt:   time.Now().UTC(),
+	}
+	ws.Execution.Checkpoints = append(ws.Execution.Checkpoints, checkpoint)
+
+	evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventCheckpointCreated, "",
+		events.CheckpointCreatedPayload{Phase: phase, ToolchainID: tc.ID, CommitSHA: commitSHA, Branch: checkpoint.Branch, Pushed: pushed})
+	_ = e.store.AppendEvents(ctx, evt)
+
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) toolchainByID(id string) (ToolchainConfig, bool) {
+	for _, tc := range e.opts.Toolchains {
+		if tc.ID == id {
+			return tc, true
+		}
+	}
+	return ToolchainConfig{}, false
+}
+
+func (e *Engine) toolchainArgs(ws *state.WorkflowState, tc ToolchainConfig, phase, capability string, push bool) json.RawMessage {
+	args := map[string]any{
+		"workflow_id":  ws.ID,
+		"phase":        phase,
+		"capability":   capability,
+		"toolchain_id": tc.ID,
+		"push":         push,
+	}
+	if ws.Execution.Workspace != nil {
+		args["workspace_path"] = ws.Execution.Workspace.Path
+		args["repo_url"] = ws.Execution.Workspace.RepoURL
+		args["branch"] = ws.Execution.Workspace.Branch
+	}
+	b, _ := json.Marshal(args)
+	return b
+}
+
+func parseToolchainResult(raw json.RawMessage) (bool, string, string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return true, "", ""
+	}
+	var obj struct {
+		Success *bool  `json:"success"`
+		Passed  *bool  `json:"passed"`
+		Output  string `json:"output"`
+		Stdout  string `json:"stdout"`
+		Stderr  string `json:"stderr"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		passed := true
+		if obj.Success != nil {
+			passed = *obj.Success
+		}
+		if obj.Passed != nil {
+			passed = *obj.Passed
+		}
+		output := trimValidationOutput(firstNonEmpty(obj.Output, obj.Stdout, obj.Message))
+		if obj.Stderr != "" && output != "" {
+			output += "\n" + obj.Stderr
+		} else if obj.Stderr != "" {
+			output = obj.Stderr
+		}
+		if obj.Error != "" {
+			passed = false
+		}
+		return passed, trimValidationOutput(output), obj.Error
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return true, trimValidationOutput(text), ""
+	}
+	return true, trimValidationOutput(string(raw)), ""
+}
+
+func parseCheckpointResult(raw json.RawMessage) (commitSHA, branch, message string, pushed bool) {
+	var obj struct {
+		CommitSHA string `json:"commit_sha"`
+		SHA       string `json:"sha"`
+		Branch    string `json:"branch"`
+		Message   string `json:"message"`
+		Pushed    bool   `json:"pushed"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return firstNonEmpty(obj.CommitSHA, obj.SHA), obj.Branch, obj.Message, obj.Pushed
+	}
+	return "", "", trimValidationOutput(string(raw)), false
+}
+
+// emitMCPCapabilityMissing records a workflow event when registry resolution
+// fails for (toolchain, capability).  Best-effort; storage errors are logged
+// by the underlying store and not returned.
+func (e *Engine) emitMCPCapabilityMissing(ctx context.Context, ws *state.WorkflowState, tc ToolchainConfig, capability, phase, reason string) {
+	evt, err := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventMCPCapabilityMissing, "",
+		events.MCPCapabilityMissingPayload{
+			ToolchainID: tc.ID,
+			Capability:  capability,
+			MCPServer:   tc.MCPServer,
+			Reason:      reason,
+			Phase:       phase,
+		})
+	if err != nil {
+		return
+	}
+	_ = e.store.AppendEvents(ctx, evt)
+}
+
+// emitMCPToolEvent records mcp.tool.invoked or mcp.tool.failed depending on
+// whether the call passed.
+func (e *Engine) emitMCPToolEvent(ctx context.Context, ws *state.WorkflowState, tc ToolchainConfig, capability, tool, phase string, passed bool, errMsg string, dur time.Duration) {
+	if passed {
+		evt, err := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventMCPToolInvoked, "",
+			events.MCPToolInvokedPayload{
+				ToolchainID: tc.ID,
+				Capability:  capability,
+				Tool:        tool,
+				MCPServer:   tc.MCPServer,
+				Phase:       phase,
+				Passed:      true,
+				DurationMS:  dur.Milliseconds(),
+			})
+		if err == nil {
+			_ = e.store.AppendEvents(ctx, evt)
+		}
+		return
+	}
+	evt, err := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+		events.EventMCPToolFailed, "",
+		events.MCPToolFailedPayload{
+			ToolchainID: tc.ID,
+			Capability:  capability,
+			Tool:        tool,
+			MCPServer:   tc.MCPServer,
+			Phase:       phase,
+			Error:       errMsg,
+		})
+	if err == nil {
+		_ = e.store.AppendEvents(ctx, evt)
+	}
+}
+
+// lastValidationFailed reports whether the most recent validation run on the
+// workflow failed.  Returns (false, nil) when there are no validation runs
+// (no toolchain configured, or implementer never reached) so that workflows
+// without toolchains are not blocked by the gate.
+func lastValidationFailed(ws *state.WorkflowState) (bool, *state.ValidationRun) {
+	if ws == nil || len(ws.Execution.ValidationRuns) == 0 {
+		return false, nil
+	}
+	last := &ws.Execution.ValidationRuns[len(ws.Execution.ValidationRuns)-1]
+	return !last.Passed, last
+}
+
+func workspaceBranch(ws *state.WorkflowState) string {
+	if ws.Execution.Workspace == nil {
+		return ""
+	}
+	return ws.Execution.Workspace.Branch
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func trimValidationOutput(s string) string {
+	s = strings.TrimSpace(s)
+	const max = 4000
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + fmt.Sprintf("\n[... truncated: %d bytes omitted ...]", len(s)-max)
+}
+
 // ─── State helpers ────────────────────────────────────────────────────────────
 
 // applyOutput merges a PersonaOutput into the WorkflowState.
@@ -1158,6 +1739,10 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		RemediationAttempt:         ws.Execution.RemediationAttempt,
 		InputDocuments:             ws.InputDocuments,
 		InputDocumentCorpusSummary: ws.InputDocumentCorpusSummary,
+		Workspace:                  ws.Execution.Workspace,
+		Toolchain:                  ws.Execution.Toolchain,
+		ValidationRuns:             ws.Execution.ValidationRuns,
+		Checkpoints:                ws.Execution.Checkpoints,
 	}
 
 	// Populate customization context from the workflow-start snapshot.

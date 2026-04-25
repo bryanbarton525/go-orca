@@ -18,17 +18,17 @@ import (
 
 	"go.uber.org/zap"
 
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/go-orca/go-orca/internal/api/routes"
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/improvements"
 	"github.com/go-orca/go-orca/internal/logger"
+	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/architect"
 	"github.com/go-orca/go-orca/internal/persona/director"
+	"github.com/go-orca/go-orca/internal/persona/engineer"
 	"github.com/go-orca/go-orca/internal/persona/finalizer"
 	"github.com/go-orca/go-orca/internal/persona/implementer"
 	"github.com/go-orca/go-orca/internal/persona/pm"
@@ -45,7 +45,6 @@ import (
 	"github.com/go-orca/go-orca/internal/tenant"
 	"github.com/go-orca/go-orca/internal/tools"
 	"github.com/go-orca/go-orca/internal/tools/builtin"
-	mcptools "github.com/go-orca/go-orca/internal/tools/mcp"
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
 )
@@ -108,6 +107,7 @@ func main() {
 	// ── Register personas ─────────────────────────────────────────────────────
 	persona.Register(director.New())
 	persona.Register(pm.New())
+	persona.Register(engineer.New())
 	persona.Register(architect.New())
 	persona.Register(implementer.New())
 	persona.Register(qa.New())
@@ -121,13 +121,23 @@ func main() {
 	builtin.RegisterAttachmentTools(toolReg, store)
 	log.Info("builtin tools registered", zap.Int("count", len(toolReg.All())))
 
-	// ── Load MCP tools from config ────────────────────────────────────────────
-	mcpSessions := loadMCPTools(ctx, cfg, toolReg, log)
+	// ── Build MCP registry (servers + toolchains) ────────────────────────────
+	mcpReg := mcpregistry.New(toolReg, log)
+	mcpReg.LoadServers(ctx, cfg.Tools.MCP)
+	mcpReg.LoadToolchains(buildRegistryToolchains(cfg))
+	mcpReg.Probe(ctx)
 	defer func() {
-		for _, s := range mcpSessions {
+		for _, s := range mcpReg.Sessions() {
 			_ = s.Close()
 		}
 	}()
+	if len(cfg.Tools.MCP) > 0 {
+		log.Info("mcp registry built",
+			zap.Int("servers", len(cfg.Tools.MCP)),
+			zap.Int("toolchains", len(cfg.Tools.Toolchains)),
+			zap.Int("total_tools", len(toolReg.All())),
+		)
+	}
 
 	// ── Build customization registry ──────────────────────────────────────────
 	customReg := buildCustomizationRegistry(cfg, log)
@@ -157,7 +167,11 @@ func main() {
 		PersonaMaxRetries:     cfg.Workflow.PersonaMaxRetries,
 		PersonaRetryBackoff:   cfg.Workflow.PersonaRetryBackoff,
 		ImprovementsRoot:      improvementsRoot,
+		WorkspaceRoot:         cfg.Workflow.WorkspaceRoot,
+		Toolchains:            buildToolchainConfigs(cfg),
 		ToolRegistry:          toolReg,
+		MCPRegistry:           mcpReg,
+		EnforceValidationGate: cfg.Workflow.EnforceValidationGate,
 		AttachmentStore:       store,
 		IngestionProvider:     cfg.Workflow.Ingestion.Provider,
 		IngestionModel:        cfg.Workflow.Ingestion.Model,
@@ -192,6 +206,7 @@ func main() {
 		DefaultTenantID:       defaultTenant.ID,
 		DefaultScopeID:        defaultScope.ID,
 		CustomizationRegistry: customReg,
+		MCPRegistry:           mcpReg,
 		IngestionCfg:          cfg.Workflow.Ingestion,
 		ArtifactStoragePath:   cfg.Workflow.ArtifactStoragePath,
 		GinMode:               cfg.Server.Mode,
@@ -313,6 +328,42 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 	}
 }
 
+func buildToolchainConfigs(cfg *config.Config) []engine.ToolchainConfig {
+	out := make([]engine.ToolchainConfig, 0, len(cfg.Tools.Toolchains))
+	for _, tc := range cfg.Tools.Toolchains {
+		out = append(out, engine.ToolchainConfig{
+			ID:                   strings.TrimSpace(tc.ID),
+			Languages:            tc.Languages,
+			MCPServer:            tc.MCPServer,
+			Capabilities:         tc.Capabilities,
+			CapabilityTools:      tc.CapabilityTools,
+			ValidationProfiles:   tc.ValidationProfiles,
+			CheckpointCapability: tc.CheckpointCapability,
+			PushCheckpoints:      tc.PushCheckpoints,
+		})
+	}
+	return out
+}
+
+// buildRegistryToolchains converts toolchain config entries into the MCP
+// registry's internal Toolchain shape.
+func buildRegistryToolchains(cfg *config.Config) []mcpregistry.Toolchain {
+	out := make([]mcpregistry.Toolchain, 0, len(cfg.Tools.Toolchains))
+	for _, tc := range cfg.Tools.Toolchains {
+		out = append(out, mcpregistry.Toolchain{
+			ID:                   strings.TrimSpace(tc.ID),
+			Languages:            tc.Languages,
+			MCPServer:            tc.MCPServer,
+			Capabilities:         tc.Capabilities,
+			CapabilityTools:      tc.CapabilityTools,
+			ValidationProfiles:   tc.ValidationProfiles,
+			CheckpointCapability: tc.CheckpointCapability,
+			PushCheckpoints:      tc.PushCheckpoints,
+		})
+	}
+	return out
+}
+
 // checkProviderReachability performs a best-effort connectivity check against a
 // registered provider. A failure is logged as a warning but never prevents
 // startup — the provider may become reachable after the server is up.
@@ -423,49 +474,3 @@ func buildCustomizationRegistry(cfg *config.Config, log *zap.Logger) *customizat
 	return reg
 }
 
-// loadMCPTools connects to each configured MCP server, registers its tools
-// into reg, and returns the live sessions.  Sessions must be closed at
-// shutdown.  Failures are logged as warnings and do not prevent startup.
-func loadMCPTools(ctx context.Context, cfg *config.Config, reg *tools.Registry, log *zap.Logger) []*sdkmcp.ClientSession {
-	sessions := make([]*sdkmcp.ClientSession, 0, len(cfg.Tools.MCP))
-	for _, srv := range cfg.Tools.MCP {
-		opts := mcptools.LoaderOptions{
-			HTTPTimeout:   srv.HTTPTimeout,
-			TLSSkipVerify: srv.TLSSkipVerify,
-		}
-
-		var (
-			session *sdkmcp.ClientSession
-			err     error
-		)
-		switch srv.Transport {
-		case "sse":
-			opts.HTTPTransport = mcptools.TransportSSE
-			session, err = mcptools.Load(ctx, reg, srv.Endpoint, opts)
-		case "command", "stdio":
-			session, err = mcptools.LoadCommand(ctx, reg, srv.Command, srv.Args, opts)
-		default: // "streamable" or ""
-			session, err = mcptools.Load(ctx, reg, srv.Endpoint, opts)
-		}
-
-		if err != nil {
-			log.Warn("mcp server load failed — tools from this server are unavailable",
-				zap.String("name", srv.Name),
-				zap.Error(err),
-			)
-			continue
-		}
-		log.Info("mcp server loaded",
-			zap.String("name", srv.Name),
-			zap.String("transport", srv.Transport),
-		)
-		sessions = append(sessions, session)
-	}
-	if len(cfg.Tools.MCP) > 0 {
-		log.Info("mcp tools registered",
-			zap.Int("servers", len(cfg.Tools.MCP)),
-			zap.Int("total_tools", len(reg.All())),
-		)
-	}
-	return sessions
-}

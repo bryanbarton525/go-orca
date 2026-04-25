@@ -29,6 +29,7 @@ const DefaultRoot = "prompts/personas"
 const (
 	KeyDirector         = "director"
 	KeyProjectManager   = "project_manager"
+	KeyEngineerProxy    = "engineer_proxy"
 	KeyArchitect        = "architect"
 	KeyImplementer      = "implementer"
 	KeyQA               = "qa"
@@ -41,6 +42,7 @@ const (
 var requiredFiles = map[string]string{
 	KeyDirector:         "director.md",
 	KeyProjectManager:   "project_manager.md",
+	KeyEngineerProxy:    "engineer_proxy.md",
 	KeyArchitect:        "architect.md",
 	KeyImplementer:      "implementer.md",
 	KeyQA:               "qa.md",
@@ -89,6 +91,7 @@ func Keys() []string {
 	return []string{
 		KeyDirector,
 		KeyProjectManager,
+		KeyEngineerProxy,
 		KeyArchitect,
 		KeyImplementer,
 		KeyQA,

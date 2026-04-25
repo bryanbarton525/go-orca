@@ -56,6 +56,7 @@ type PersonaKind string
 const (
 	PersonaDirector    PersonaKind = "director"
 	PersonaProjectMgr  PersonaKind = "project_manager"
+	PersonaEngineer    PersonaKind = "engineer_proxy"
 	PersonaArchitect   PersonaKind = "architect"
 	PersonaImplementer PersonaKind = "implementer"
 	PersonaQA          PersonaKind = "qa"
@@ -68,6 +69,7 @@ const (
 func DownstreamPersonaKinds() []PersonaKind {
 	return []PersonaKind{
 		PersonaProjectMgr,
+		PersonaEngineer,
 		PersonaArchitect,
 		PersonaImplementer,
 		PersonaQA,
@@ -138,6 +140,68 @@ type Execution struct {
 	// workflows.  The recursion guard prevents the dispatcher from spawning
 	// further improvement workflows when this value is >= 1.
 	ImprovementDepth int `json:"improvement_depth,omitempty"`
+	// Workspace is the repo/worktree context owned by the engine for software
+	// workflows. Toolchain MCP servers use this as the source of truth instead of
+	// passing large code artifacts between personas.
+	Workspace *WorkspaceInfo `json:"workspace,omitempty"`
+	// Toolchain is the selected build/test toolchain for this workflow.
+	Toolchain *ToolchainSelection `json:"toolchain,omitempty"`
+	// ValidationRuns records engine-owned build/test validation attempts.
+	ValidationRuns []ValidationRun `json:"validation_runs,omitempty"`
+	// Checkpoints records repo checkpoint commits created after implementation
+	// phases or remediation cycles.
+	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+}
+
+// WorkspaceInfo describes the materialized repo/worktree used by toolchain
+// servers. Path is local to the deployment's shared workspace volume.
+type WorkspaceInfo struct {
+	Path      string `json:"path"`
+	RepoURL   string `json:"repo_url,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
+}
+
+// ToolchainSelection records the engine-selected toolchain registry entry.
+type ToolchainSelection struct {
+	ID       string   `json:"id"`
+	Language string   `json:"language,omitempty"`
+	Profile  string   `json:"profile,omitempty"`
+	Tools    []string `json:"tools,omitempty"`
+}
+
+// ValidationRun is one engine-owned validation pass over the workspace.
+type ValidationRun struct {
+	ID          string           `json:"id"`
+	Phase       string           `json:"phase"`
+	ToolchainID string           `json:"toolchain_id,omitempty"`
+	Profile     string           `json:"profile,omitempty"`
+	Passed      bool             `json:"passed"`
+	Steps       []ValidationStep `json:"steps,omitempty"`
+	Summary     string           `json:"summary,omitempty"`
+	StartedAt   time.Time        `json:"started_at"`
+	CompletedAt time.Time        `json:"completed_at"`
+}
+
+// ValidationStep records a single capability invocation such as run_tests.
+type ValidationStep struct {
+	Capability string `json:"capability"`
+	Tool       string `json:"tool,omitempty"`
+	Passed     bool   `json:"passed"`
+	Output     string `json:"output,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// Checkpoint records a source-control checkpoint returned by a toolchain MCP.
+type Checkpoint struct {
+	ID          string    `json:"id"`
+	Phase       string    `json:"phase"`
+	ToolchainID string    `json:"toolchain_id,omitempty"`
+	CommitSHA   string    `json:"commit_sha,omitempty"`
+	Branch      string    `json:"branch,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	Pushed      bool      `json:"pushed,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // WorkflowState is the canonical, persisted state of a single workflow run.
@@ -455,6 +519,14 @@ type HandoffPacket struct {
 	// It is set by the engine at packet-build time and is intentionally
 	// excluded from JSON serialisation (HandoffPacket is never persisted as-is).
 	ToolRegistry *tools.Registry `json:"-"`
+	// Workspace is the engine-owned repo/worktree context for this workflow.
+	Workspace *WorkspaceInfo `json:"workspace,omitempty"`
+	// Toolchain is the selected validation/build toolchain.
+	Toolchain *ToolchainSelection `json:"toolchain,omitempty"`
+	// ValidationRuns are engine-owned build/test results available to QA.
+	ValidationRuns []ValidationRun `json:"validation_runs,omitempty"`
+	// Checkpoints are source-control snapshots created after implementation.
+	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
 	// Nested persona event hooks are runtime-only callbacks used by personas
 	// that execute internal sub-phases, such as the Finalizer's inline Refiner
 	// pass. They allow those sub-phases to surface progress in the workflow

@@ -22,6 +22,7 @@ const allowedRoutes = {
     /^customizations\/resolve$/,
     /^upload-sessions\/[^/]+$/,
     /^upload-sessions\/[^/]+\/files$/,
+    /^mcp\/registry$/,
   ],
   POST: [
     /^workflows$/,

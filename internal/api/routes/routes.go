@@ -10,6 +10,7 @@ import (
 	"github.com/go-orca/go-orca/internal/api/middleware"
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
+	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/storage"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
 )
@@ -22,6 +23,7 @@ type Config struct {
 	DefaultTenantID       string
 	DefaultScopeID        string
 	CustomizationRegistry *customization.Registry
+	MCPRegistry           *mcpregistry.Registry
 	IngestionCfg          config.IngestionConfig
 	ArtifactStoragePath   string
 	// GinMode sets gin.SetMode; defaults to "release".
@@ -107,6 +109,9 @@ func New(cfg Config) *gin.Engine {
 
 		// ── Customizations ───────────────────────────────────────────────────
 		v1.GET("/customizations/resolve", handlers.ResolveCustomizations(cfg.CustomizationRegistry))
+
+		// ── MCP registry ─────────────────────────────────────────────────────
+		v1.GET("/mcp/registry", handlers.GetMCPRegistry(cfg.MCPRegistry))
 	}
 
 	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────

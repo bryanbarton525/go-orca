@@ -61,6 +61,13 @@ providers:
     cli_path: ""           # path to `gh` CLI binary; leave empty for PATH lookup
     default_model: "gpt-4o"
 
+# ─── Tools and MCP toolchains ─────────────────────────────────────────────────
+tools:
+  mcp: []
+  # Toolchain entries map language stacks to MCP tools that perform build/test
+  # validation. The MCP server itself must be listed under tools.mcp.
+  toolchains: []
+
 # ─── Customization sources ────────────────────────────────────────────────────
 # Each source is scanned for SKILL.md, .agent.md, and .prompt.md files.
 # Higher precedence wins when the same name exists in multiple sources.
@@ -99,4 +106,5 @@ workflow:
   default_persona_timeout_ms: 120000
   event_retention_days: 90
   artifact_storage_path: "./artifacts"
+  workspace_root: "./artifacts/workspaces"
   handoff_timeout: "5m"

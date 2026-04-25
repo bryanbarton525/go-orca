@@ -195,6 +195,47 @@ tools:
       tls_skip_verify: true
 ```
 
+### Toolchain MCP Registry
+
+For software workflows, go-orca can treat MCP servers as language toolchains. The engine still orchestrates the workflow, but build/test/format/checkpoint operations are delegated to MCP tools exposed by those servers. This keeps the go-orca container from needing every compiler or package manager installed.
+
+Configure toolchain entries under `tools.toolchains` after loading the corresponding MCP server under `tools.mcp`:
+
+```yaml
+tools:
+  mcp:
+    - name: go-toolchain
+      endpoint: "http://mcp-go-toolchain:3000/mcp"
+      transport: streamable
+
+  toolchains:
+    - id: go
+      languages: ["go", "golang"]
+      mcp_server: go-toolchain
+      capabilities:
+        - tidy_dependencies
+        - format_code
+        - run_tests
+        - run_build
+        - git_checkpoint
+      capability_tools:
+        tidy_dependencies: go_tidy
+        format_code: go_fmt
+        run_tests: go_test
+        run_build: go_build
+        git_checkpoint: git_checkpoint
+      validation_profiles:
+        default:
+          - tidy_dependencies
+          - format_code
+          - run_tests
+          - run_build
+      checkpoint_capability: git_checkpoint
+      push_checkpoints: false
+```
+
+When a software/mixed/ops workflow selects a matching toolchain, the engine creates workspace metadata, invokes the validation profile after implementation/remediation phases, records validation runs on workflow state, and calls the checkpoint capability when configured.
+
 ### Go API
 
 ```go

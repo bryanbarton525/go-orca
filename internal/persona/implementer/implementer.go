@@ -179,6 +179,18 @@ func buildContext(packet state.HandoffPacket) string {
 		}
 	}
 
+	if packet.Workspace != nil {
+		sb.WriteString("\n## Workspace\n")
+		sb.WriteString(fmt.Sprintf("Write source files into this engine-owned workspace: %s\n", packet.Workspace.Path))
+		if packet.Workspace.Branch != "" {
+			sb.WriteString(fmt.Sprintf("Branch: %s\n", packet.Workspace.Branch))
+		}
+	}
+	if packet.Toolchain != nil {
+		sb.WriteString(fmt.Sprintf("\n## Validation Toolchain\nThe engine will run toolchain %q profile %q after implementation. Produce code that passes those checks.\n",
+			packet.Toolchain.ID, packet.Toolchain.Profile))
+	}
+
 	if len(packet.BlockingIssues) > 0 {
 		sb.WriteString("\n## QA Blocking Issues\nThe following issues were raised by QA and MUST be resolved:\n")
 		for _, issue := range packet.BlockingIssues {

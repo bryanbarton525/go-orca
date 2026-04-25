@@ -18,6 +18,7 @@ func writeAll(t *testing.T, overrides map[string]string) string {
 	defaults := map[string]string{
 		"director.md":          "You are the Director.",
 		"project_manager.md":   "You are the Project Manager.",
+		"engineer_proxy.md":    "You are the Engineer Proxy.",
 		"architect.md":         "You are the Architect.",
 		"implementer.md":       "You are the Implementer.",
 		"qa.md":                "You are the QA.",
@@ -36,7 +37,7 @@ func writeAll(t *testing.T, overrides map[string]string) string {
 	return dir
 }
 
-// TestLoad_Success verifies that all 8 keys are loaded from a complete directory.
+// TestLoad_Success verifies that all prompt keys are loaded from a complete directory.
 func TestLoad_Success(t *testing.T) {
 	dir := writeAll(t, nil)
 
@@ -92,6 +93,7 @@ func TestLoad_PartialMissing(t *testing.T) {
 	dir := t.TempDir()
 	present := map[string]string{
 		"project_manager.md":   "pm",
+		"engineer_proxy.md":    "eng",
 		"architect.md":         "arch",
 		"implementer.md":       "impl",
 		"finalizer.md":         "fin",

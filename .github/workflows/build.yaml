@@ -9,6 +9,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
+      - "deploy/docker/**"
       - "skills/**"
       - "customization/**"
       - "ui/**"
@@ -120,6 +121,82 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── Build & push first-party MCP server images ──────────────────────────────
+  # Each first-party MCP server in cmd/mcp-* has its own Dockerfile under
+  # deploy/docker/.  The matrix builds and pushes one image per server with
+  # the same sha-/latest tags as the API image so registry entries can pin
+  # to a release version.
+  build-push-mcp:
+    needs: [test-go]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        server:
+          - name: mcp-go-toolchain
+            image: bryanbarton525/mcp-go-toolchain
+            dockerfile: deploy/docker/mcp-go-toolchain.Dockerfile
+          - name: mcp-node-toolchain
+            image: bryanbarton525/mcp-node-toolchain
+            dockerfile: deploy/docker/mcp-node-toolchain.Dockerfile
+          - name: mcp-python-toolchain
+            image: bryanbarton525/mcp-python-toolchain
+            dockerfile: deploy/docker/mcp-python-toolchain.Dockerfile
+          - name: mcp-rust-toolchain
+            image: bryanbarton525/mcp-rust-toolchain
+            dockerfile: deploy/docker/mcp-rust-toolchain.Dockerfile
+          - name: mcp-java-toolchain
+            image: bryanbarton525/mcp-java-toolchain
+            dockerfile: deploy/docker/mcp-java-toolchain.Dockerfile
+          - name: mcp-git
+            image: bryanbarton525/mcp-git
+            dockerfile: deploy/docker/mcp-git.Dockerfile
+          - name: mcp-filesystem
+            image: bryanbarton525/mcp-filesystem
+            dockerfile: deploy/docker/mcp-filesystem.Dockerfile
+          - name: mcp-workspace
+            image: bryanbarton525/mcp-workspace
+            dockerfile: deploy/docker/mcp-workspace.Dockerfile
+          - name: mcp-container-build
+            image: bryanbarton525/mcp-container-build
+            dockerfile: deploy/docker/mcp-container-build.Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.server.image }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.server.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.server.name }}
+          cache-to: type=gha,scope=${{ matrix.server.name }},mode=max
 
   # ── Build & push UI image ────────────────────────────────────────────────────
   build-push-ui:

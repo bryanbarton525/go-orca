@@ -58,6 +58,7 @@ func TestApplyOutputDirectorEnforcesSoftwarePipeline(t *testing.T) {
 
 	want := []state.PersonaKind{
 		state.PersonaProjectMgr,
+		state.PersonaEngineer,
 		state.PersonaArchitect,
 		state.PersonaImplementer,
 		state.PersonaQA,
@@ -94,6 +95,7 @@ func TestApplyOutputDirectorDefaultsContentPipeline(t *testing.T) {
 
 	want := []state.PersonaKind{
 		state.PersonaProjectMgr,
+		state.PersonaEngineer,
 		state.PersonaArchitect,
 		state.PersonaImplementer,
 		state.PersonaQA,

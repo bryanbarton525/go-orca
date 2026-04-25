@@ -273,7 +273,7 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		sb.WriteString("\n## Prior Phase Summaries\n")
 		order := []state.PersonaKind{
 			state.PersonaDirector, state.PersonaProjectMgr,
-			state.PersonaArchitect, state.PersonaImplementer,
+			state.PersonaEngineer, state.PersonaArchitect, state.PersonaImplementer,
 			state.PersonaQA,
 		}
 		for _, k := range order {
@@ -314,6 +314,32 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
+	if packet.Workspace != nil {
+		sb.WriteString("\n## Workspace\n")
+		sb.WriteString(fmt.Sprintf("Path: %s\n", packet.Workspace.Path))
+		if packet.Workspace.RepoURL != "" {
+			sb.WriteString(fmt.Sprintf("Repo URL: %s\n", packet.Workspace.RepoURL))
+		}
+		if packet.Workspace.Branch != "" {
+			sb.WriteString(fmt.Sprintf("Branch: %s\n", packet.Workspace.Branch))
+		}
+	}
+	if packet.Toolchain != nil {
+		sb.WriteString("\n## Toolchain\n")
+		sb.WriteString(fmt.Sprintf("ID: %s\nLanguage: %s\nValidation profile: %s\n",
+			packet.Toolchain.ID, packet.Toolchain.Language, packet.Toolchain.Profile))
+	}
+	if len(packet.ValidationRuns) > 0 {
+		sb.WriteString("\n## Latest Validation Result\n")
+		latest := packet.ValidationRuns[len(packet.ValidationRuns)-1]
+		sb.WriteString(fmt.Sprintf("Phase: %s\nPassed: %t\nSummary: %s\n", latest.Phase, latest.Passed, latest.Summary))
+		for _, step := range latest.Steps {
+			if !step.Passed {
+				sb.WriteString(fmt.Sprintf("- %s via %s failed: %s\n", step.Capability, step.Tool, firstNonEmpty(step.Error, step.Output)))
+			}
+		}
+	}
+
 	// Surface blocking issues so Implementer (on remediation) and Architect
 	// know exactly what QA rejected.  This is critical context that was missing
 	// previously, causing the Implementer to retry without knowing what to fix.
@@ -332,6 +358,15 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 	}
 
 	return sb.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // ParseJSON attempts to unmarshal the model's response into the target struct.

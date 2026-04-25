@@ -99,6 +99,51 @@ export interface FinalizationResult {
   completed_at?: string;
 }
 
+export interface WorkspaceInfo {
+  path?: string;
+  repo_url?: string;
+  branch?: string;
+  created_by?: string;
+}
+
+export interface ToolchainSelection {
+  id?: string;
+  language?: string;
+  profile?: string;
+  tools?: string[];
+}
+
+export interface ValidationStep {
+  capability?: string;
+  tool?: string;
+  passed?: boolean;
+  output?: string;
+  error?: string;
+}
+
+export interface ValidationRun {
+  id?: string;
+  phase?: string;
+  toolchain_id?: string;
+  profile?: string;
+  passed?: boolean;
+  steps?: ValidationStep[];
+  summary?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface Checkpoint {
+  id?: string;
+  phase?: string;
+  toolchain_id?: string;
+  commit_sha?: string;
+  branch?: string;
+  message?: string;
+  pushed?: boolean;
+  created_at?: string;
+}
+
 export interface WorkflowExecution {
   current_persona?: string;
   active_task_id?: string;
@@ -108,6 +153,10 @@ export interface WorkflowExecution {
   workflow_kind?: string;
   parent_workflow_id?: string;
   improvement_depth?: number;
+  workspace?: WorkspaceInfo | null;
+  toolchain?: ToolchainSelection | null;
+  validation_runs?: ValidationRun[];
+  checkpoints?: Checkpoint[];
 }
 
 export interface WorkflowState {
@@ -193,6 +242,38 @@ export interface Scope {
   parent_scope_id?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface MCPServerStatus {
+  name: string;
+  endpoint?: string;
+  transport?: string;
+  image?: string;
+  health_path?: string;
+  required: boolean;
+  connected: boolean;
+  healthy: boolean;
+  advertised_tools?: string[];
+  last_seen?: string;
+  last_error?: string;
+}
+
+export interface MCPToolchainStatus {
+  id: string;
+  languages?: string[];
+  mcp_server: string;
+  server_reachable: boolean;
+  capabilities?: string[];
+  capability_tools?: Record<string, string>;
+  missing_capabilities?: string[];
+  validation_profiles?: Record<string, string[]>;
+  checkpoint_capability?: string;
+  push_checkpoints?: boolean;
+}
+
+export interface MCPRegistrySnapshot {
+  servers: MCPServerStatus[];
+  toolchains: MCPToolchainStatus[];
 }
 
 export interface CustomizationItem {

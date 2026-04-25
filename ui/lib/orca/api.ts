@@ -8,6 +8,7 @@ import type {
   EffectiveConfigResponse,
   EventRecord,
   ListResult,
+  MCPRegistrySnapshot,
   ModelInfo,
   OrcaContext,
   OrcaHealthResponse,
@@ -152,6 +153,10 @@ export function getHealthz() {
 
 export function getReadyz() {
   return orcaRequest<OrcaHealthResponse>("readyz");
+}
+
+export function getMCPRegistry() {
+  return orcaRequest<MCPRegistrySnapshot>("mcp/registry");
 }
 
 export async function listWorkflows(context?: OrcaContext, limit = 20, offset = 0) {

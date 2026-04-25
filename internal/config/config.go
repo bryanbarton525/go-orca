@@ -158,7 +158,23 @@ type CustomizationsConfig struct {
 
 // ToolsConfig holds external tool integration settings.
 type ToolsConfig struct {
-	MCP []MCPServerConfig `mapstructure:"mcp"`
+	MCP        []MCPServerConfig       `mapstructure:"mcp"`
+	Toolchains []ToolchainServerConfig `mapstructure:"toolchains"`
+}
+
+// ToolchainServerConfig maps a language stack to governed MCP capabilities.
+// Capability tools are ordinary MCP tools already loaded into the global tool
+// registry; this config tells the workflow engine which tools form a validation
+// profile for a stack.
+type ToolchainServerConfig struct {
+	ID                   string              `mapstructure:"id"`
+	Languages            []string            `mapstructure:"languages"`
+	MCPServer            string              `mapstructure:"mcp_server"`
+	Capabilities         []string            `mapstructure:"capabilities"`
+	CapabilityTools      map[string]string   `mapstructure:"capability_tools"`
+	ValidationProfiles   map[string][]string `mapstructure:"validation_profiles"`
+	CheckpointCapability string              `mapstructure:"checkpoint_capability"`
+	PushCheckpoints      bool                `mapstructure:"push_checkpoints"`
 }
 
 // MCPServerConfig defines a single MCP server connection.
@@ -182,6 +198,16 @@ type MCPServerConfig struct {
 	HTTPTimeout time.Duration `mapstructure:"http_timeout"`
 	// TLSSkipVerify disables TLS certificate verification. Dev only.
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
+	// Image is informational metadata recording the container image that
+	// backs this endpoint, surfaced via GET /api/v1/mcp/registry.
+	Image string `mapstructure:"image"`
+	// HealthPath is the HTTP path probed by the registry to determine server
+	// reachability. Defaults to "/healthz" when empty.
+	HealthPath string `mapstructure:"health_path"`
+	// Required marks the server as required for any toolchain that references
+	// it. Workflows that depend on a required server will not start when the
+	// server is unreachable. Defaults to false.
+	Required bool `mapstructure:"required"`
 }
 
 // CustomizationSource defines one resolved source for skills/agents/prompts.
@@ -202,6 +228,7 @@ type WorkflowConfig struct {
 	DefaultPersonaTimeoutMs int           `mapstructure:"default_persona_timeout_ms"`
 	EventRetentionDays      int           `mapstructure:"event_retention_days"`
 	ArtifactStoragePath     string        `mapstructure:"artifact_storage_path"`
+	WorkspaceRoot           string        `mapstructure:"workspace_root"`
 	HandoffTimeout          time.Duration `mapstructure:"handoff_timeout"`
 	// PersonaMaxRetries is the number of additional attempts after a transient
 	// LLM failure (context deadline, connection error).  0 disables retries.
@@ -212,6 +239,12 @@ type WorkflowConfig struct {
 	// MaxQARetries is the maximum number of times the Implementer will be
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	MaxQARetries int `mapstructure:"max_qa_retries"`
+
+	// EnforceValidationGate prevents software/mixed/ops workflows from
+	// running the Finalizer phase when the most recent toolchain validation
+	// run failed.  Default false; opt in to make toolchain validation a hard
+	// requirement for workflow completion.
+	EnforceValidationGate bool `mapstructure:"enforce_validation_gate"`
 
 	// Ingestion controls the pre-Director attachment processing stage.
 	Ingestion IngestionConfig `mapstructure:"ingestion"`
@@ -333,6 +366,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.default_persona_timeout_ms", 120000)
 	v.SetDefault("workflow.event_retention_days", 90)
 	v.SetDefault("workflow.artifact_storage_path", "./artifacts")
+	v.SetDefault("workflow.workspace_root", "./artifacts/workspaces")
 	v.SetDefault("workflow.handoff_timeout", 5*time.Minute)
 	v.SetDefault("workflow.persona_max_retries", 3)
 	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)

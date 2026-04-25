@@ -224,6 +224,7 @@ func defaultMode(packet state.HandoffPacket) state.WorkflowMode {
 func defaultPersonas() []state.PersonaKind {
 	return []state.PersonaKind{
 		state.PersonaProjectMgr,
+		state.PersonaEngineer,
 		state.PersonaArchitect,
 		state.PersonaImplementer,
 		state.PersonaQA,
