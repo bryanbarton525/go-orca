@@ -72,7 +72,7 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 	}
 	task := packet.Tasks[0]
 
-	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyPod]
+	systemPrompt := buildSpecialistPrompt(packet.PersonaPromptSnapshot, task.Specialty)
 
 	ctx_ := buildContext(packet)
 	userPrompt := fmt.Sprintf(
@@ -148,6 +148,25 @@ func normalizeArtifactKind(mode state.WorkflowMode, raw string) state.ArtifactKi
 		return state.ArtifactKindBlogPost
 	}
 	return state.ArtifactKindDocument
+}
+
+// buildSpecialistPrompt returns the base pod system prompt with an optional
+// specialty overlay appended.  The base prompt carries shared role boundaries
+// and the JSON output contract; the overlay carries language- or
+// domain-specific guidance.  When the task's Specialty is empty, unknown, or
+// the corresponding overlay file is not present in the snapshot, only the
+// base prompt is returned.
+func buildSpecialistPrompt(snapshot map[string]string, specialty string) string {
+	base := snapshot[prompts.KeyPod]
+	key := prompts.KeyForPodSpecialty(specialty)
+	if key == "" {
+		return base
+	}
+	overlay := strings.TrimSpace(snapshot[key])
+	if overlay == "" {
+		return base
+	}
+	return base + "\n\n---\n## Specialty Overlay: " + strings.TrimSpace(specialty) + "\n" + overlay
 }
 
 // maxSourceArtifactChars is the maximum number of characters of a source

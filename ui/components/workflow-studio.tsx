@@ -69,6 +69,39 @@ const workflowVisualizationLabelClassName =
 const workflowVisualizationValueClassName = "mt-3 text-2xl font-semibold text-ink [overflow-wrap:anywhere]";
 const interruptedWorkflowErrorSnippet = "workflow interrupted while the server was unavailable";
 
+// Pod specialty palette — mirrors internal/persona/prompts/catalog.go.
+// Includes orca-themed aliases (bull/scout/scribe/engineer/tracker) so a
+// task tagged with either form renders the same badge.
+const specialtyPalette: Record<string, { label: string; cls: string }> = {
+  backend: { label: "Backend", cls: "bg-sky-500/15 text-sky-300 border-sky-500/40" },
+  bull: { label: "Backend", cls: "bg-sky-500/15 text-sky-300 border-sky-500/40" },
+  frontend: { label: "Frontend", cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" },
+  scout: { label: "Frontend", cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" },
+  writer: { label: "Writer", cls: "bg-violet-500/15 text-violet-300 border-violet-500/40" },
+  scribe: { label: "Writer", cls: "bg-violet-500/15 text-violet-300 border-violet-500/40" },
+  ops: { label: "Ops", cls: "bg-amber-500/15 text-amber-300 border-amber-500/40" },
+  engineer: { label: "Ops", cls: "bg-amber-500/15 text-amber-300 border-amber-500/40" },
+  data: { label: "Data", cls: "bg-cyan-500/15 text-cyan-300 border-cyan-500/40" },
+  tracker: { label: "Data", cls: "bg-cyan-500/15 text-cyan-300 border-cyan-500/40" },
+};
+
+function SpecialtyBadge({ specialty }: { specialty?: string }) {
+  if (!specialty) return null;
+  const key = specialty.trim().toLowerCase();
+  const entry = specialtyPalette[key] ?? {
+    label: specialty,
+    cls: "bg-shell-panel/85 text-shell-muted border-shell-border/40",
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${entry.cls}`}
+      title={`Pod specialty: ${specialty}`}
+    >
+      {entry.label}
+    </span>
+  );
+}
+
 type PhaseState = "complete" | "active" | "pending";
 
 type WorkflowExplorerSelection =
@@ -1171,7 +1204,10 @@ function WorkflowExplorer({
                       <div key={task.id} className="rounded-3xl border border-shell-border/40 bg-shell-panel/80 p-4">
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-sm font-semibold text-ink">{task.title || task.id}</p>
-                          <StatusBadge status={task.status} />
+                          <div className="flex items-center gap-2">
+                            <SpecialtyBadge specialty={task.specialty} />
+                            <StatusBadge status={task.status} />
+                          </div>
                         </div>
                         <p className="mt-2 text-sm leading-6 text-shell-muted">
                           {task.output || task.description || "No output was persisted for this task."}
@@ -1289,7 +1325,10 @@ function WorkflowExplorer({
                         <p className="text-sm font-semibold text-ink">{task.title || task.id}</p>
                         <p className="mt-1 text-xs text-shell-soft">{task.assigned_to || "unassigned"}</p>
                       </div>
-                      <StatusBadge status={task.status} />
+                      <div className="flex items-center gap-2">
+                        <SpecialtyBadge specialty={task.specialty} />
+                        <StatusBadge status={task.status} />
+                      </div>
                     </div>
                     <p className="mt-2 text-sm leading-6 text-shell-muted">{task.output || task.description || "No task detail persisted."}</p>
                   </div>
@@ -1643,6 +1682,7 @@ function WorkflowTaskBoard({ workflow }: { workflow: WorkflowState }) {
                         Running now
                       </span>
                     ) : null}
+                    <SpecialtyBadge specialty={task.specialty} />
                     <StatusBadge status={task.status} />
                   </div>
                 </div>

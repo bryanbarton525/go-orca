@@ -1185,8 +1185,17 @@ func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.Work
 	}
 	if ws.Execution.Workspace == nil && strings.TrimSpace(e.opts.WorkspaceRoot) != "" {
 		workspacePath := filepath.Join(e.opts.WorkspaceRoot, ws.ID)
-		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		// Mode 0o775 (group-write) so toolchain MCP servers running under the
+		// shared fsGroup uid can also write into the directory created here.
+		// gofmt's atomic-write tempfile and `git init`'s .git creation both
+		// require directory write permission.
+		if err := os.MkdirAll(workspacePath, 0o775); err != nil {
 			return fmt.Errorf("create workspace %q: %w", workspacePath, err)
+		}
+		// Defensive chmod: MkdirAll honours umask so the actual mode may be
+		// 0o755 even when 0o775 is requested. Force the group-write bit.
+		if err := os.Chmod(workspacePath, 0o775); err != nil {
+			return fmt.Errorf("chmod workspace %q: %w", workspacePath, err)
 		}
 		ws.Execution.Workspace = &state.WorkspaceInfo{
 			Path:      workspacePath,
@@ -1482,14 +1491,29 @@ func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowS
 			eventTC := tc
 			eventTC.ID = checkpointToolchainID
 			e.emitMCPCapabilityMissing(ctx, ws, eventTC, capability, phase, rerr.Error())
-			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s", rerr.Error()))
+			msg := fmt.Sprintf("[checkpoint] %s", rerr.Error())
+			ws.AllSuggestions = append(ws.AllSuggestions, msg)
+			// When the operator explicitly requested checkpoints to be pushed,
+			// surface the failure as a blocking issue so QA flags it and the
+			// workflow doesn't silently complete with an empty remote repo.
+			if tc.PushCheckpoints {
+				ws.BlockingIssues = append(ws.BlockingIssues,
+					fmt.Sprintf("checkpoint %s failed for toolchain %s: %s — code was not committed/pushed to the repository",
+						capability, checkpointToolchainID, rerr.Error()))
+			}
 			return e.store.SaveWorkflow(ctx, ws)
 		}
 		if cr.Error != "" {
 			eventTC := tc
 			eventTC.ID = checkpointToolchainID
 			e.emitMCPToolEvent(ctx, ws, eventTC, capability, cr.ToolName, phase, false, cr.Error, time.Since(callStart))
-			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[checkpoint] %s failed: %s", cr.ToolName, cr.Error))
+			msg := fmt.Sprintf("[checkpoint] %s failed: %s", cr.ToolName, cr.Error)
+			ws.AllSuggestions = append(ws.AllSuggestions, msg)
+			if tc.PushCheckpoints {
+				ws.BlockingIssues = append(ws.BlockingIssues,
+					fmt.Sprintf("checkpoint %s via %s failed: %s — code was not committed/pushed to the repository",
+						capability, cr.ToolName, cr.Error))
+			}
 			return e.store.SaveWorkflow(ctx, ws)
 		}
 		commitSHA, branch, message, pushed = parseCheckpointResult(cr.Raw)

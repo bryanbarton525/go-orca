@@ -379,7 +379,13 @@ type Task struct {
 	Status      TaskStatus  `json:"status"`
 	DependsOn   []string    `json:"depends_on,omitempty"` // Task IDs
 	AssignedTo  PersonaKind `json:"assigned_to"`
-	Output      string      `json:"output,omitempty"`
+	// Specialty selects which pod specialist handles this task.  Recognised
+	// values: backend, frontend, writer, ops, data — plus their orca-themed
+	// aliases (bull, scout, scribe, engineer, tracker).  When empty or
+	// unrecognised the generic pod prompt is used.  See
+	// internal/persona/prompts/specialty.go for the full alias table.
+	Specialty string `json:"specialty,omitempty"`
+	Output    string `json:"output,omitempty"`
 	// Attempt is the QA/remediation cycle that created this task (0 = initial).
 	Attempt int `json:"attempt,omitempty"`
 	// RemediationSource is "qa_remediation" when the task was created by the

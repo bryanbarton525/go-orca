@@ -36,6 +36,16 @@ const (
 	KeyFinalizer        = "finalizer"
 	KeyFinalizerRefiner = "finalizer_refiner"
 	KeyRefiner          = "refiner"
+
+	// Pod specialty overlays.  Loaded in addition to the base KeyPod prompt
+	// and concatenated by the pod persona at runtime when a task carries a
+	// matching Specialty.  These files are OPTIONAL — a missing overlay is
+	// not a fatal error; the engine simply runs the generic pod prompt.
+	KeyPodBackend  = "pod_backend"
+	KeyPodFrontend = "pod_frontend"
+	KeyPodWriter   = "pod_writer"
+	KeyPodOps      = "pod_ops"
+	KeyPodData     = "pod_data"
 )
 
 // requiredFiles maps each prompt key to its filename within the root directory.
@@ -49,6 +59,16 @@ var requiredFiles = map[string]string{
 	KeyFinalizer:        "finalizer.md",
 	KeyFinalizerRefiner: "finalizer_refiner.md",
 	KeyRefiner:          "refiner.md",
+}
+
+// optionalFiles maps optional prompt keys to filenames.  Missing files are
+// skipped silently — they're enhancements, not requirements.
+var optionalFiles = map[string]string{
+	KeyPodBackend:  "pod_backend.md",
+	KeyPodFrontend: "pod_frontend.md",
+	KeyPodWriter:   "pod_writer.md",
+	KeyPodOps:      "pod_ops.md",
+	KeyPodData:     "pod_data.md",
 }
 
 // Load reads all required persona prompt files from root and returns a map
@@ -80,10 +100,53 @@ func Load(root string) (map[string]string, error) {
 		out[key] = content
 	}
 
+	// Optional files — silently skip when missing or empty.  Operators can
+	// drop in a single overlay (e.g. pod_backend.md) without having to
+	// provide every specialty.
+	for key, filename := range optionalFiles {
+		fullPath := filepath.Join(root, filename)
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		content := strings.TrimSpace(string(data))
+		if content == "" {
+			continue
+		}
+		out[key] = content
+	}
+
 	if len(errs) > 0 {
 		return nil, errors.New("persona prompt catalog: missing or unreadable files:\n" + strings.Join(errs, "\n"))
 	}
 	return out, nil
+}
+
+// KeyForPodSpecialty resolves a free-text specialty string to a catalog key.
+// Returns "" when the specialty is empty or unrecognised; callers should fall
+// back to KeyPod in that case.  Recognised aliases map orca-themed names
+// (bull, scout, scribe, engineer, tracker) to the canonical keys so the
+// Architect can pick whichever vocabulary fits the workflow.
+func KeyForPodSpecialty(specialty string) string {
+	switch strings.ToLower(strings.TrimSpace(specialty)) {
+	case "backend", "back-end", "back_end", "server", "api",
+		"bull": // orca alpha bull — heavy lifter, structural code
+		return KeyPodBackend
+	case "frontend", "front-end", "front_end", "ui", "web",
+		"scout": // orca scout — fast, exploratory, visual
+		return KeyPodFrontend
+	case "writer", "writing", "docs", "documentation", "content", "blog",
+		"scribe": // orca scribe — vocalisations, prose
+		return KeyPodWriter
+	case "ops", "devops", "infra", "infrastructure", "platform",
+		"engineer": // orca engineer — builders/structural
+		return KeyPodOps
+	case "data", "etl", "analytics", "ml",
+		"tracker": // orca tracker — patterns, signals
+		return KeyPodData
+	default:
+		return ""
+	}
 }
 
 // Keys returns all required prompt keys in a stable order for iteration.

@@ -46,8 +46,12 @@ COPY customization/ ./customization/
 COPY prompts/ ./prompts/
 COPY internal/storage/migrations/ ./internal/storage/migrations/
 
-# Non-root user
-RUN useradd -u 1001 -m -s /sbin/nologin orca
+# Non-root user.  uid/gid 10001 is shared with every first-party MCP server in
+# deploy/docker/mcp-*.Dockerfile so files written by the API into the shared
+# workspace PVC are readable/writable by every container that mounts it.
+# Without this alignment, gofmt and git checkpoint operations from the MCP
+# containers fail with "permission denied" on temp files and .git creation.
+RUN useradd -u 10001 -m -s /sbin/nologin orca
 USER orca
 
 EXPOSE 8080

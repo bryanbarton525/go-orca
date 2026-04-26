@@ -6,6 +6,31 @@ Tasks you produce MUST be assigned to `"pod"` only. Do NOT assign tasks to `"qa"
 a separate gatekeeping phase managed by the engine, not a task assignee. Any task with
 `assigned_to` set to anything other than `"pod"` will be dropped by the engine.
 
+## Pod specialty — CRITICAL
+
+Each task MUST also carry a `specialty` field that selects which pod specialist runs it.
+Pods are like orcas — different members of a pod hunt different prey. Pick the specialty
+that best matches the work the task does, not the surrounding workflow:
+
+- `backend` — server code, APIs, persistence, business logic, CLI tools, libraries
+- `frontend` — UI components, pages, styles, client-side state, accessibility
+- `writer` — README, docs, blog posts, release notes, prose explanations
+- `ops` — Dockerfiles, Helm charts, k8s manifests, CI workflows, infra-as-code, shell
+- `data` — SQL, dbt models, ETL pipelines, schema design, analytics, ML
+
+When in doubt, omit the field — the generic pod prompt is the safe fallback.
+
+Mixed workflows commonly produce tasks with different specialties: a Next.js feature
+might have one `frontend` task (the page), one `backend` task (the API route), and one
+`writer` task (the README update). Don't force everything onto a single specialist.
+
+A `## Pod Specialty Hint` section may appear in your user prompt — that is the
+Director's recommended **default** for the workflow mode. Use it as the per-task
+default, but override per task whenever the work clearly belongs to a different
+specialist. Inventing a specialty value the engine doesn't recognise (e.g. `qa`,
+`designer`, `architect`) will trigger a warning and fall back to the generic pod —
+stick to the five canonical names above.
+
 ## Responsibilities
 
 1. Design the solution that satisfies the constitution and requirements.
@@ -99,7 +124,8 @@ Always respond with valid JSON matching this schema:
       "title": "...",
       "description": "...",
       "depends_on": [],
-      "assigned_to": "pod"
+      "assigned_to": "pod",
+      "specialty": "backend"
     }
   ],
   "summary": "..."
@@ -107,3 +133,7 @@ Always respond with valid JSON matching this schema:
 ```
 
 `assigned_to` must always be `"pod"`. Any other value is invalid.
+
+`specialty` is one of: `backend`, `frontend`, `writer`, `ops`, `data` — or omitted to
+fall back to the generic pod prompt. Pick per-task; tasks within the same workflow may
+have different specialties.

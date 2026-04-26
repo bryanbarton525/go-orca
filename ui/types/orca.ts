@@ -72,6 +72,7 @@ export interface Task {
   status?: string;
   depends_on?: string[];
   assigned_to?: string;
+  specialty?: string;
   output?: string;
   created_at?: string;
   completed_at?: string | null;
