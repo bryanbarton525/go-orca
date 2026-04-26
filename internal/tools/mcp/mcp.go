@@ -33,9 +33,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -58,14 +61,141 @@ const (
 	TransportSSE
 )
 
+// ─── sessionHolder ────────────────────────────────────────────────────────────
+
+// sessionHolder owns the live MCP client session for a server and reconnects
+// transparently when the underlying session is lost.  Server-side restarts
+// (rolling updates, OOM kills, liveness-probe failures) drop the in-memory
+// session even though the client keeps the same session ID, producing
+// "session not found" errors on subsequent calls.  The holder catches these
+// errors, closes the dead session, builds a fresh transport via newTransport,
+// reconnects, and retries the call once.
+//
+// Reconnection is gated behind a mutex so concurrent failures do not race to
+// open multiple replacements.  The holder is safe for concurrent use.
+type sessionHolder struct {
+	mu           sync.Mutex
+	session      *sdkmcp.ClientSession
+	newTransport func() (sdkmcp.Transport, error) // nil when reconnect is unsupported (e.g. opaque test transports)
+}
+
+// Current returns the live session pointer.  Used by the registry so the
+// shutdown path can close any active session — a stale pointer left over
+// from before a reconnect is harmless because Close() on an already-closed
+// session is a no-op.
+func (h *sessionHolder) Current() *sdkmcp.ClientSession {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.session
+}
+
+// Call invokes name on the held session.  On a session-lost error it
+// reconnects once and retries; any other error is returned as-is.
+func (h *sessionHolder) Call(ctx context.Context, params *sdkmcp.CallToolParams) (*sdkmcp.CallToolResult, error) {
+	h.mu.Lock()
+	sess := h.session
+	h.mu.Unlock()
+
+	if sess == nil {
+		if err := h.reconnect(ctx); err != nil {
+			return nil, err
+		}
+		h.mu.Lock()
+		sess = h.session
+		h.mu.Unlock()
+	}
+
+	res, err := sess.CallTool(ctx, params)
+	if err == nil {
+		return res, nil
+	}
+	if h.newTransport == nil || !isSessionLostError(err) {
+		return nil, err
+	}
+
+	if rerr := h.reconnect(ctx); rerr != nil {
+		return nil, fmt.Errorf("%w (reconnect failed: %v)", err, rerr)
+	}
+	h.mu.Lock()
+	sess = h.session
+	h.mu.Unlock()
+	return sess.CallTool(ctx, params)
+}
+
+// reconnect closes the current session (if any) and opens a new one using
+// the configured transport factory.  Returns an error when reconnect is not
+// supported (no factory configured) or when the new connection fails.
+func (h *sessionHolder) reconnect(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.newTransport == nil {
+		return errors.New("mcp: session reconnect not supported (no transport factory)")
+	}
+
+	if h.session != nil {
+		_ = h.session.Close()
+		h.session = nil
+	}
+
+	transport, err := h.newTransport()
+	if err != nil {
+		return fmt.Errorf("mcp: build reconnect transport: %w", err)
+	}
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "go-orca", Version: "1.0.0"}, nil)
+	sess, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return fmt.Errorf("mcp: reconnect: %w", err)
+	}
+	h.session = sess
+	return nil
+}
+
+// Close closes the held session.  Safe to call multiple times.
+func (h *sessionHolder) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.session == nil {
+		return nil
+	}
+	err := h.session.Close()
+	h.session = nil
+	return err
+}
+
+// isSessionLostError reports whether err indicates the MCP server-side
+// session is gone and a fresh Connect() is required.  We match string
+// fragments because the SDK does not (yet) expose typed errors for these
+// transport states.  The patterns cover the three failure modes observed in
+// production: a hard "session not found" rejection, a graceful "client is
+// closing" mid-call, and a TCP-level "connection closed" / EOF.
+func isSessionLostError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, needle := range []string{
+		"session not found",
+		"connection closed",
+		"client is closing",
+		"failed to connect",
+		"EOF",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // ─── MCPTool ──────────────────────────────────────────────────────────────────
 
 // MCPTool is a tools.Tool implementation that delegates calls to a live
-// MCP ClientSession.
+// MCP ClientSession via a sessionHolder that reconnects on session loss.
 type MCPTool struct {
 	sdkTool    sdkmcp.Tool
 	parameters json.RawMessage // cached JSON-Schema for Parameters()
-	session    *sdkmcp.ClientSession
+	holder     *sessionHolder
 }
 
 var _ tools.Tool = (*MCPTool)(nil)
@@ -91,7 +221,7 @@ func (t *MCPTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessa
 		}
 	}
 
-	res, err := t.session.CallTool(ctx, &sdkmcp.CallToolParams{
+	res, err := t.holder.Call(ctx, &sdkmcp.CallToolParams{
 		Name:      t.sdkTool.Name,
 		Arguments: argsMap,
 	})
@@ -154,34 +284,51 @@ type LoaderOptions struct {
 // ListTools, registers each as an MCPTool in reg, and returns the live session.
 //
 // The caller must keep the returned session open for as long as the tools are
-// needed, and close it when done.
+// needed, and close it when done.  Tool calls reconnect transparently when
+// the server-side session is lost (e.g. after a server restart).
 func Load(ctx context.Context, reg *tools.Registry, endpoint string, opts LoaderOptions) (*sdkmcp.ClientSession, error) {
-	transport, err := buildHTTPTransport(endpoint, opts)
+	factory := func() (sdkmcp.Transport, error) {
+		return buildHTTPTransport(endpoint, opts)
+	}
+	transport, err := factory()
 	if err != nil {
 		return nil, err
 	}
-	return connect(ctx, reg, transport)
+	return connect(ctx, reg, transport, &sessionHolder{newTransport: factory})
 }
 
 // LoadTransport connects to an MCP server using an already-constructed
 // Transport, discovers tools, and registers them into reg.
 // This is the preferred entry point for testing (use NewInMemoryTransports).
+//
+// Reconnect-on-session-loss is NOT supported via this entry point because the
+// caller-supplied transport is opaque and cannot be reproduced; tool calls
+// after a session drop will return the original error.
 func LoadTransport(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transport) (*sdkmcp.ClientSession, error) {
-	return connect(ctx, reg, transport)
+	return connect(ctx, reg, transport, &sessionHolder{})
 }
 
 // LoadCommand launches a local MCP server subprocess and connects to it over
 // stdio.  command is the executable and args are its arguments.
 //
 // The session must be kept open; closing it terminates the subprocess.
+// Reconnect re-launches the subprocess so a crashed server is restarted on
+// the next tool call.
 func LoadCommand(ctx context.Context, reg *tools.Registry, command string, args []string, opts LoaderOptions) (*sdkmcp.ClientSession, error) {
-	transport := &sdkmcp.CommandTransport{Command: exec.Command(command, args...)}
-	return connect(ctx, reg, transport)
+	factory := func() (sdkmcp.Transport, error) {
+		return &sdkmcp.CommandTransport{Command: exec.Command(command, args...)}, nil
+	}
+	transport, err := factory()
+	if err != nil {
+		return nil, err
+	}
+	return connect(ctx, reg, transport, &sessionHolder{newTransport: factory})
 }
 
 // connect creates an MCP client, connects it via transport, lists tools, and
-// registers each as an MCPTool.
-func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transport) (*sdkmcp.ClientSession, error) {
+// registers each as an MCPTool bound to holder.  After this call the holder
+// owns the live session.
+func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transport, holder *sessionHolder) (*sdkmcp.ClientSession, error) {
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{
 		Name:    "go-orca",
 		Version: "1.0.0",
@@ -191,10 +338,12 @@ func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transpor
 	if err != nil {
 		return nil, fmt.Errorf("mcp: connect: %w", err)
 	}
+	holder.session = session
 
 	result, err := session.ListTools(ctx, nil)
 	if err != nil {
 		_ = session.Close()
+		holder.session = nil
 		return nil, fmt.Errorf("mcp: list tools: %w", err)
 	}
 
@@ -203,12 +352,13 @@ func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transpor
 		params, err := marshalSchema(t.InputSchema)
 		if err != nil {
 			_ = session.Close()
+			holder.session = nil
 			return nil, fmt.Errorf("mcp: marshal schema for tool %q: %w", t.Name, err)
 		}
 		reg.Register(&MCPTool{
 			sdkTool:    *t,
 			parameters: params,
-			session:    session,
+			holder:     holder,
 		})
 	}
 	return session, nil

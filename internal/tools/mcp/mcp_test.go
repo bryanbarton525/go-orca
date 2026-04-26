@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -192,5 +196,98 @@ func TestMCPTool_Call_NilArgs(t *testing.T) {
 	_, err := tool.Call(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Call with nil args: %v", err)
+	}
+}
+
+// ─── Reconnect tests ──────────────────────────────────────────────────────────
+
+// TestMCPTool_Call_ReconnectsOnSessionLost simulates an MCP server restart by
+// stopping the streaming HTTP server backing the client session, then starting
+// a fresh server on the same address.  The expectation is that the next tool
+// call transparently reconnects via the holder's session-lost detection +
+// reconnect path, returning a successful result without manual intervention.
+//
+// This is the regression test for the production failure mode where pod
+// rolling updates dropped server-side sessions and every subsequent tool
+// call surfaced "session not found" until the API was restarted.
+func TestMCPTool_Call_ReconnectsOnSessionLost(t *testing.T) {
+	ctx := context.Background()
+
+	// Reserve a port — we'll use the same one for both server "lifetimes".
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+
+	var callCount atomic.Int64
+
+	startServer := func() *http.Server {
+		srv := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "restart-test", Version: "1.0"}, nil)
+		sdkmcp.AddTool(srv, &sdkmcp.Tool{Name: "ping", Description: "responds with the call count"},
+			func(_ context.Context, _ *sdkmcp.CallToolRequest, _ any) (*sdkmcp.CallToolResult, any, error) {
+				n := callCount.Add(1)
+				return &sdkmcp.CallToolResult{
+					Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: fmt.Sprintf(`{"n":%d}`, n)}},
+				}, nil, nil
+			})
+		handler := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server { return srv }, nil)
+
+		mux := http.NewServeMux()
+		mux.Handle("/mcp", handler)
+		s := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		ln, lerr := net.Listen("tcp", addr)
+		if lerr != nil {
+			t.Fatalf("relisten: %v", lerr)
+		}
+		go func() { _ = s.Serve(ln) }()
+		// Give the listener a moment to be ready before the client dials.
+		time.Sleep(50 * time.Millisecond)
+		return s
+	}
+
+	first := startServer()
+
+	reg := tools.NewRegistry()
+	session, err := mcp.Load(ctx, reg, "http://"+addr+"/mcp", mcp.LoaderOptions{HTTPTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer session.Close() //nolint:errcheck
+
+	tool, ok := reg.Get("ping")
+	if !ok {
+		t.Fatal("ping tool not registered")
+	}
+
+	// First call — succeeds against the original server.
+	if _, err := tool.Call(ctx, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("initial Call: %v", err)
+	}
+
+	// Simulate a server restart: shut the first server down hard and start a
+	// second one on the same port.  The client's session ID will no longer
+	// exist on the new server.
+	shutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	_ = first.Shutdown(shutCtx)
+	cancel()
+
+	_ = startServer() // new server, fresh in-memory session map
+
+	// The next call MUST reconnect transparently.  Without the holder's
+	// reconnect logic this returns "session not found".
+	raw, err := tool.Call(ctx, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("post-restart Call: %v", err)
+	}
+	var got struct {
+		N int `json:"n"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal post-restart result: %v", err)
+	}
+	if got.N == 0 {
+		t.Errorf("expected n>0 after reconnect, got %d", got.N)
 	}
 }
