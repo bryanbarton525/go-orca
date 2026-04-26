@@ -455,6 +455,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaProjectMgr, snap); err != nil {
 			return fmt.Errorf("pm phase: %w", err)
 		}
+		if err := e.materializeConstitution(ctx, ws); err != nil {
+			return fmt.Errorf("materialize constitution: %w", err)
+		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
@@ -475,6 +478,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	if personaRequired(state.PersonaArchitect) && !phaseComplete(state.PersonaArchitect) {
 		if err := e.runPersona(ctx, ws, state.PersonaArchitect, snap); err != nil {
 			return fmt.Errorf("architect phase: %w", err)
+		}
+		if err := e.materializePlan(ctx, ws); err != nil {
+			return fmt.Errorf("materialize plan: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
@@ -1138,7 +1144,10 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	}
 	ws.Summaries[state.PersonaArchitect] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
 
-	return e.store.SaveWorkflow(ctx, ws)
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return err
+	}
+	return e.appendPlanRemediation(ctx, ws, qaCycle)
 }
 
 // runRemediationTriage routes QA failures through the Project Manager before
@@ -1176,7 +1185,13 @@ func (e *Engine) runRemediationTriage(ctx context.Context, ws *state.WorkflowSta
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
 	}
 
-	return e.store.SaveWorkflow(ctx, ws)
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return err
+	}
+	// Append the triage section to plan.md (and conditionally to
+	// constitution.md when the brief flags a "requirement gap"). Done after
+	// the save so that even if the doc-write fails the PM summary is durable.
+	return e.appendPlanTriage(ctx, ws, qaCycle, out.Summary, ws.BlockingIssues)
 }
 
 func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.WorkflowState) error {

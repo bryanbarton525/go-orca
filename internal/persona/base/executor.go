@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -283,7 +285,19 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
-	if packet.Constitution != nil {
+	// Constitution and plan are sourced from on-disk markdown when the engine
+	// has materialized them (workspace path or artifact); otherwise we fall
+	// back to JSON of the typed structs so workflows that ran before this
+	// change still produce a usable prompt. The rendered markdown is the
+	// single source of truth — re-summarising the JSON in every prompt is
+	// the drift surface this design replaces.
+	if doc := loadWorkflowDoc(packet, "constitution.md"); doc != "" {
+		sb.WriteString("\n## Constitution\n")
+		sb.WriteString(doc)
+		if !strings.HasSuffix(doc, "\n") {
+			sb.WriteString("\n")
+		}
+	} else if packet.Constitution != nil {
 		if b, err := json.MarshalIndent(packet.Constitution, "", "  "); err == nil {
 			sb.WriteString("\n## Constitution\n```json\n")
 			sb.Write(b)
@@ -291,7 +305,9 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
-	if packet.Requirements != nil {
+	// Requirements are folded into constitution.md by the renderer, so when
+	// the constitution doc was loaded above we skip the standalone JSON block.
+	if loadWorkflowDoc(packet, "constitution.md") == "" && packet.Requirements != nil {
 		if b, err := json.MarshalIndent(packet.Requirements, "", "  "); err == nil {
 			sb.WriteString("\n## Requirements\n```json\n")
 			sb.Write(b)
@@ -299,18 +315,29 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
-	if packet.Design != nil {
-		if b, err := json.MarshalIndent(packet.Design, "", "  "); err == nil {
-			sb.WriteString("\n## Design\n```json\n")
-			sb.Write(b)
-			sb.WriteString("\n```\n")
+	if doc := loadWorkflowDoc(packet, "plan.md"); doc != "" {
+		sb.WriteString("\n## Plan\n")
+		sb.WriteString(doc)
+		if !strings.HasSuffix(doc, "\n") {
+			sb.WriteString("\n")
 		}
-	}
-
-	if len(packet.Tasks) > 0 {
-		sb.WriteString("\n## Tasks\n")
-		for _, t := range packet.Tasks {
-			sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", t.Status, t.ID[:8], t.Title))
+	} else {
+		if packet.Design != nil {
+			if b, err := json.MarshalIndent(packet.Design, "", "  "); err == nil {
+				sb.WriteString("\n## Design\n```json\n")
+				sb.Write(b)
+				sb.WriteString("\n```\n")
+			}
+		}
+		if len(packet.Tasks) > 0 {
+			sb.WriteString("\n## Tasks\n")
+			for _, t := range packet.Tasks {
+				id := t.ID
+				if len(id) > 8 {
+					id = id[:8]
+				}
+				sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", t.Status, id, t.Title))
+			}
 		}
 	}
 
@@ -358,6 +385,32 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 	}
 
 	return sb.String()
+}
+
+// loadWorkflowDoc returns the rendered markdown for a named workflow doc
+// (constitution.md or plan.md), preferring the on-disk copy in the workspace
+// and falling back to the most recent matching markdown Artifact. Returns ""
+// when the doc has not been materialized for this workflow — in which case
+// callers fall back to JSON-rendering the typed structs.
+//
+// This is the read-side complement to engine.persistDoc: that function picks
+// disk vs. artifact at write time; this one picks the same destination at
+// read time. Keeping the loader here (instead of importing engine) avoids a
+// persona → engine import cycle.
+func loadWorkflowDoc(packet state.HandoffPacket, name string) string {
+	if packet.Workspace != nil && strings.TrimSpace(packet.Workspace.Path) != "" {
+		path := filepath.Join(packet.Workspace.Path, name)
+		if b, err := os.ReadFile(path); err == nil {
+			return string(b)
+		}
+	}
+	for i := len(packet.Artifacts) - 1; i >= 0; i-- {
+		a := packet.Artifacts[i]
+		if a.Name == name && a.Kind == state.ArtifactKindMarkdown {
+			return a.Content
+		}
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {
