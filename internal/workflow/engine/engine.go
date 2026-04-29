@@ -27,12 +27,14 @@ import (
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
+	"github.com/go-orca/go-orca/internal/logger"
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
+	"go.uber.org/zap"
 )
 
 // ScopeResolver resolves a scope ID to its ancestor slug chain.
@@ -1008,6 +1010,22 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 					ContentLength: len(art.Content),
 				})
 			_ = e.store.AppendEvents(ctx, artEvt)
+
+			// Persist the artifact to the on-disk workspace so that the
+			// go-toolchain MCP (and git checkpoint) can read the produced files.
+			// This is a safety net for models that produce the code in their
+			// Phase B JSON response but do not call write_file during Phase A.
+			if ws.Execution.Workspace != nil {
+				if writeErr := e.writeArtifactToWorkspace(ws, art); writeErr != nil {
+					logger.Warn("engine: failed to flush artifact to workspace",
+						zap.String("workflow_id", ws.ID),
+						zap.String("task_id", t.ID),
+						zap.String("artifact_name", art.Name),
+						zap.String("artifact_kind", string(art.Kind)),
+						zap.Error(writeErr),
+					)
+				}
+			}
 		}
 
 		if ws.Summaries == nil {
@@ -1375,6 +1393,45 @@ func (e *Engine) selectToolchain(ws *state.WorkflowState) (ToolchainConfig, stri
 		return e.opts.Toolchains[0], "", true
 	}
 	return ToolchainConfig{}, "", false
+}
+
+// writeArtifactToWorkspace persists a code or config artifact to the
+// engine-owned workspace directory on disk.  It is called after each pod task
+// so that the go-toolchain MCP (and git checkpoint) can see the produced files
+// even when the LLM chose not to call write_file itself during Phase A.
+//
+// Safety constraints:
+//   - Only code and config artifact kinds are written.
+//   - The artifact name must be a relative, clean path with no whitespace.
+//   - Path traversal attempts (e.g. "../etc/passwd") are rejected.
+func (e *Engine) writeArtifactToWorkspace(ws *state.WorkflowState, art state.Artifact) error {
+	if ws.Execution.Workspace == nil {
+		return nil
+	}
+	if art.Kind != state.ArtifactKindCode && art.Kind != state.ArtifactKindConfig {
+		return nil
+	}
+	name := strings.TrimSpace(art.Name)
+	// Skip descriptive names like "fixed package structure" or "updated go.mod".
+	// Valid file paths must not contain whitespace.
+	if name == "" || strings.ContainsAny(name, " \t\n\r") {
+		return nil
+	}
+	clean := filepath.Clean(name)
+	// Reject absolute paths and upward traversal.
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+		return fmt.Errorf("writeArtifactToWorkspace: artifact name %q would escape workspace", name)
+	}
+	dest := filepath.Join(ws.Execution.Workspace.Path, clean)
+	// Final containment check.
+	if !strings.HasPrefix(filepath.Clean(dest)+string(filepath.Separator),
+		filepath.Clean(ws.Execution.Workspace.Path)+string(filepath.Separator)) {
+		return fmt.Errorf("writeArtifactToWorkspace: resolved path %q escapes workspace %q", dest, ws.Execution.Workspace.Path)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("writeArtifactToWorkspace: mkdir %q: %w", filepath.Dir(dest), err)
+	}
+	return os.WriteFile(dest, []byte(art.Content), 0o644)
 }
 
 func (e *Engine) runToolchainValidation(ctx context.Context, ws *state.WorkflowState, phase string) ([]string, error) {
