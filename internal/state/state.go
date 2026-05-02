@@ -5,6 +5,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/tools"
@@ -343,6 +344,86 @@ type Requirement struct {
 	Description string `json:"description"`
 	Priority    string `json:"priority"` // must | should | could | wont
 	Source      string `json:"source"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for Constitution. It tolerates
+// models returning acceptance_criteria as an array of objects or a plain
+// map rather than the expected []string, extracting string values from them.
+func (c *Constitution) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		Vision             string          `json:"vision"`
+		Goals              []string        `json:"goals"`
+		Constraints        []string        `json:"constraints"`
+		Audience           string          `json:"audience"`
+		OutputMedium       string          `json:"output_medium"`
+		AcceptanceCriteria json.RawMessage `json:"acceptance_criteria"`
+		OutOfScope         []string        `json:"out_of_scope"`
+	}
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+	c.Vision = tmp.Vision
+	c.Goals = tmp.Goals
+	c.Constraints = tmp.Constraints
+	c.Audience = tmp.Audience
+	c.OutputMedium = tmp.OutputMedium
+	c.OutOfScope = tmp.OutOfScope
+	c.AcceptanceCriteria = flexStringSlice(tmp.AcceptanceCriteria)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for Requirements. It tolerates
+// models returning dependencies as an array of objects rather than []string.
+func (r *Requirements) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		Functional    []Requirement   `json:"functional"`
+		NonFunctional []Requirement   `json:"non_functional"`
+		Dependencies  json.RawMessage `json:"dependencies"`
+	}
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+	r.Functional = tmp.Functional
+	r.NonFunctional = tmp.NonFunctional
+	r.Dependencies = flexStringSlice(tmp.Dependencies)
+	return nil
+}
+
+// flexStringSlice coerces a raw JSON value to []string.
+// It handles: null/empty → nil, []string → as-is, []object → title or id field,
+// map → sorted keys.
+func flexStringSlice(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var ss []string
+	if err := json.Unmarshal(raw, &ss); err == nil {
+		return ss
+	}
+	var objs []map[string]any
+	if err := json.Unmarshal(raw, &objs); err == nil {
+		result := make([]string, 0, len(objs))
+		for _, obj := range objs {
+			if title, ok := obj["title"].(string); ok && title != "" {
+				result = append(result, title)
+			} else if id, ok := obj["id"].(string); ok && id != "" {
+				result = append(result, id)
+			}
+		}
+		return result
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	return nil
 }
 
 // Design is the Architect's design artifact.
