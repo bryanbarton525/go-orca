@@ -94,8 +94,19 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 	// worse than a failed task because it silently reaches QA, which then
 	// raises a "No artifact provided" blocking issue that confuses the
 	// remediation loop.  Surface the failure here instead.
+	//
+	// Exception: in software mode the pod_backend overlay instructs the model
+	// to write source files via workspace tools and summarise what changed
+	// rather than reproduce the full file content inline.  When content is
+	// empty but summary is non-empty (indicating the model wrote files via
+	// tools and summarised the result), promote the summary to content so the
+	// artifact carries a meaningful description without failing the task.
 	if strings.TrimSpace(out.Content) == "" {
-		return nil, fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", task.Title)
+		if packet.Mode == state.WorkflowModeSoftware && strings.TrimSpace(out.Summary) != "" {
+			out.Content = out.Summary
+		} else {
+			return nil, fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", task.Title)
+		}
 	}
 
 	now := base.Timestamp()
