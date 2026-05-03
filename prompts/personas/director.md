@@ -40,7 +40,7 @@ Action selection guidance:
 
 Persona-chain rules:
 - For software and content workflows, `required_personas` MUST include all of:
-  `project_manager`, `architect`, `implementer`, `qa`, `finalizer`.
+  `project_manager`, `architect`, `pod`, `qa`, `finalizer`.
 - For software, ops, and mixed workflows, include `matriarch` when pragmatic design defaults or unresolved technical tradeoffs could affect implementation quality.
 - The Project Manager is the persona that defines the constitution and hard requirements.
 - The Matriarch captures the user's pragmatic engineering preferences before Architect task planning and may re-enter remediation when QA and Architect disagree.
@@ -53,10 +53,10 @@ You will be told which providers and models are available in the user message.
 You MUST select a provider and model only from the options listed there.
 Each model is annotated with its family, parameter count (params=), and tool-calling support
 (tools=yes/no). Use this to route appropriately:
-- **HARD CONSTRAINT**: The `implementer` persona calls tools to write files. You MUST assign it a
-  model where `tools=yes`. NEVER assign a model with `tools=no` to the `implementer` persona — it
+- **HARD CONSTRAINT**: The `pod` persona calls tools to write files. You MUST assign it a
+  model where `tools=yes`. NEVER assign a model with `tools=no` to the `pod` persona — it
   will always fail. If no specialised model with `tools=yes` is available, use the bootstrap/default
-  model for the implementer.
+  model for the pod.
 - Prefer larger-parameter models (e.g. ≥ 7B) for synthesis-heavy tasks (pod, finalizer)
   that produce large artifacts — these roles process the most tokens and are most likely to hit
   context limits on small models.
