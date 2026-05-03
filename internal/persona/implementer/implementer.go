@@ -4,6 +4,7 @@ package implementer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,12 +17,51 @@ import (
 
 // implOutput is the expected JSON shape from the Implementer.
 type implOutput struct {
-	ArtifactKind        string   `json:"artifact_kind"`
-	ArtifactName        string   `json:"artifact_name"`
-	ArtifactDescription string   `json:"artifact_description"`
-	Content             string   `json:"content"`
-	Summary             string   `json:"summary"`
-	Issues              []string `json:"issues"`
+	ArtifactKind        string          `json:"artifact_kind"`
+	ArtifactName        string          `json:"artifact_name"`
+	ArtifactDescription string          `json:"artifact_description"`
+	Content             string          `json:"content"`
+	Summary             string          `json:"summary"`
+	Issues              json.RawMessage `json:"issues"`
+}
+
+// normalizeIssues converts the raw issues field to []string regardless of
+// whether the model produced an array of strings or an array of objects.
+// This defends against models that ignore the schema and use diagnostic
+// object shapes like {"file":"...","line":0,"severity":"...","message":"..."}.
+func normalizeIssues(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	// Fast path: already []string.
+	var ss []string
+	if err := json.Unmarshal(raw, &ss); err == nil {
+		return ss
+	}
+	// Fallback: array of objects — extract a string per element.
+	var objs []json.RawMessage
+	if err := json.Unmarshal(raw, &objs); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(objs))
+	for _, elem := range objs {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(elem, &obj); err != nil {
+			// Treat entire element as raw string.
+			out = append(out, string(elem))
+			continue
+		}
+		// Prefer "message" key, then any string value, then JSON repr.
+		if msg, ok := obj["message"]; ok {
+			var s string
+			if json.Unmarshal(msg, &s) == nil {
+				out = append(out, s)
+				continue
+			}
+		}
+		out = append(out, string(elem))
+	}
+	return out
 }
 
 // outputSchema defines the structured JSON shape for Implementer responses.
@@ -127,7 +167,7 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 		Summary:     out.Summary,
 		RawContent:  raw,
 		Artifacts:   []state.Artifact{artifact},
-		Suggestions: out.Issues,
+		Suggestions: normalizeIssues(out.Issues),
 		CompletedAt: now,
 	}, nil
 }
