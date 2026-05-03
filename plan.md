@@ -162,7 +162,7 @@ tools:
       capability_tools:
         init_project: go_mod_init
         tidy_dependencies: go_mod_tidy
-        format_code: gofmt
+        format_code: go_fmt
         run_tests: go_test
         run_build: go_build
         run_lint: go_vet

@@ -28,6 +28,7 @@ import (
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/logger"
+	"github.com/go-orca/go-orca/internal/mcp/capabilities"
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
@@ -460,6 +461,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.materializeConstitution(ctx, ws); err != nil {
 			return fmt.Errorf("materialize constitution: %w", err)
 		}
+		if err := e.runToolchainCheckpoint(ctx, ws, "constitution"); err != nil {
+			return fmt.Errorf("constitution checkpoint: %w", err)
+		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
@@ -484,6 +488,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.materializePlan(ctx, ws); err != nil {
 			return fmt.Errorf("materialize plan: %w", err)
 		}
+		if err := e.runToolchainCheckpoint(ctx, ws, "plan"); err != nil {
+			return fmt.Errorf("plan checkpoint: %w", err)
+		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
@@ -491,6 +498,12 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 	// Phase 4: Pod — runs once per ready/pending task.
 	if personaRequired(state.PersonaPod) {
+		if err := e.ensureToolchainBootstrap(ctx, ws, "implementation-bootstrap"); err != nil {
+			return fmt.Errorf("implementation bootstrap: %w", err)
+		}
+		if err := e.runToolchainCheckpoint(ctx, ws, "implementation-bootstrap"); err != nil {
+			return fmt.Errorf("implementation bootstrap checkpoint: %w", err)
+		}
 		if err := e.runPodPhase(ctx, ws, snap); err != nil {
 			return fmt.Errorf("pod phase: %w", err)
 		}
@@ -534,8 +547,10 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				}
 
 				if qaCycle > e.opts.MaxQARetries {
-					// QA retries exhausted — emit a warning event and continue
-					// to the Finalizer rather than failing the workflow.
+					// QA or validation remediation retries exhausted — emit the
+					// exhaustion event and fail before Finalizer. This keeps
+					// validation failures inside the remediation loop instead of
+					// surfacing as a late finalizer gate failure.
 					exhaustedEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 						events.EventQAExhausted, state.PersonaQA,
 						events.QAExhaustedPayload{
@@ -543,11 +558,10 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 							BlockingIssues: ws.BlockingIssues,
 						})
 					_ = e.store.AppendEvents(ctx, exhaustedEvt)
-					// Surface the unresolved issues to the Refiner's retrospective.
 					note := fmt.Sprintf("[qa.exhausted] %d blocking issue(s) unresolved after %d remediation cycle(s): %v",
 						len(ws.BlockingIssues), e.opts.MaxQARetries, ws.BlockingIssues)
 					ws.AllSuggestions = append(ws.AllSuggestions, note)
-					break
+					return fmt.Errorf("qa remediation exhausted after %d cycle(s): %v", e.opts.MaxQARetries, ws.BlockingIssues)
 				}
 
 				// PM-led triage before Architect remediation. The PM classifies whether
@@ -560,6 +574,22 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 					if err := e.runRemediationTriage(ctx, ws, snap, qaCycle); err != nil {
 						return fmt.Errorf("remediation triage (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-triage-%d", qaCycle)); err != nil {
+						return fmt.Errorf("remediation triage checkpoint (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.checkControlState(ctx, ws); err != nil {
+						return err
+					}
+				}
+
+				if personaRequired(state.PersonaMatriarch) {
+					ws.Execution.CurrentPersona = state.PersonaMatriarch
+					ws.Execution.RemediationAttempt = qaCycle
+					_ = e.store.SaveWorkflow(ctx, ws)
+
+					if err := e.runRemediationMatriarch(ctx, ws, snap, qaCycle); err != nil {
+						return fmt.Errorf("remediation matriarch (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
@@ -575,6 +605,9 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
 						return fmt.Errorf("remediation planning (cycle %d): %w", qaCycle, err)
 					}
+					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-plan-%d", qaCycle)); err != nil {
+						return fmt.Errorf("remediation plan checkpoint (cycle %d): %w", qaCycle, err)
+					}
 					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
 					}
@@ -582,6 +615,12 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					ws.Execution.CurrentPersona = state.PersonaPod
 					_ = e.store.SaveWorkflow(ctx, ws)
 
+					if err := e.ensureToolchainBootstrap(ctx, ws, fmt.Sprintf("remediation-%d-bootstrap", qaCycle)); err != nil {
+						return fmt.Errorf("remediation bootstrap (cycle %d): %w", qaCycle, err)
+					}
+					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-%d-bootstrap", qaCycle)); err != nil {
+						return fmt.Errorf("remediation bootstrap checkpoint (cycle %d): %w", qaCycle, err)
+					}
 					if err := e.runPodPhase(ctx, ws, snap); err != nil {
 						return fmt.Errorf("pod remediation (cycle %d): %w", qaCycle, err)
 					}
@@ -930,123 +969,145 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 			ModelName:    implPacket.ModelName,
 		})
 	_ = e.store.AppendEvents(ctx, implStartEvt)
+	e.refreshPodTaskReadiness(ws)
 
 	var implErr error
 	var tasksAttempted int
-	for i := range ws.Tasks {
-		if err := e.checkControlState(ctx, ws); err != nil {
-			return err
-		}
+	var podTasksSeen int
+	var blockedByDependencies int
+	for {
+		e.refreshPodTaskReadiness(ws)
+		ranTaskThisPass := false
+		podTasksSeen = 0
+		blockedByDependencies = 0
+		for i := range ws.Tasks {
+			if err := e.checkControlState(ctx, ws); err != nil {
+				return err
+			}
 
-		t := &ws.Tasks[i]
+			t := &ws.Tasks[i]
 
-		// Only process Pod-owned tasks that still need work.
-		// Normalise to lowercase before comparing so that model responses with
-		// "Pod" (capital I) or other case variants are not silently skipped.
-		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
-			continue
-		}
-		if t.Status != state.TaskStatusReady &&
-			t.Status != state.TaskStatusPending &&
-			t.Status != state.TaskStatusFailed {
-			continue
-		}
+			// Only process Pod-owned tasks that still need work.
+			// Normalise to lowercase before comparing so that model responses with
+			// "Pod" (capital I) or other case variants are not silently skipped.
+			if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
+				continue
+			}
+			podTasksSeen++
+			if !e.taskDependenciesSatisfied(ws, t) {
+				if t.Status == state.TaskStatusReady {
+					t.Status = state.TaskStatusPending
+				}
+				blockedByDependencies++
+				continue
+			}
+			if t.Status != state.TaskStatusReady &&
+				t.Status != state.TaskStatusPending &&
+				t.Status != state.TaskStatusFailed {
+				continue
+			}
 
-		tasksAttempted++
+			tasksAttempted++
+			ranTaskThisPass = true
 
-		// Update visible progress before calling LLM.
-		ws.Execution.CurrentPersona = state.PersonaPod
-		ws.Execution.ActiveTaskID = t.ID
-		ws.Execution.ActiveTaskTitle = t.Title
+			// Update visible progress before calling LLM.
+			ws.Execution.CurrentPersona = state.PersonaPod
+			ws.Execution.ActiveTaskID = t.ID
+			ws.Execution.ActiveTaskTitle = t.Title
 
-		// Build a packet scoped to this single task.
-		packet := e.buildPacket(ws, state.PersonaPod, snap)
-		packet.Tasks = []state.Task{*t}
+			// Build a packet scoped to this single task.
+			packet := e.buildPacket(ws, state.PersonaPod, snap)
+			packet.Tasks = []state.Task{*t}
 
-		// Mark task running before LLM call so callers see the transition.
-		t.Status = state.TaskStatusRunning
-		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
-			return fmt.Errorf("save before pod task %s: %w", t.ID[:8], err)
-		}
+			// Mark task running before LLM call so callers see the transition.
+			t.Status = state.TaskStatusRunning
+			if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+				return fmt.Errorf("save before pod task %s: %w", t.ID[:8], err)
+			}
 
-		startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventTaskStarted, state.PersonaPod,
-			events.TaskStartedPayload{TaskID: t.ID, Title: t.Title})
-		_ = e.store.AppendEvents(ctx, startEvt)
+			startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventTaskStarted, state.PersonaPod,
+				events.TaskStartedPayload{TaskID: t.ID, Title: t.Title})
+			_ = e.store.AppendEvents(ctx, startEvt)
 
-		taskStart := time.Now()
-		taskCtx, taskCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
-		out, err := p.Execute(taskCtx, packet)
-		taskElapsed := time.Since(taskStart)
-		taskCancel()
-		if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
-			return controlErr
-		}
-		if err != nil {
-			t.Status = state.TaskStatusFailed
-			ws.Execution.ActiveTaskID = ""
-			ws.Execution.ActiveTaskTitle = ""
-			failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventTaskFailed, state.PersonaPod,
-				events.TaskFailedPayload{TaskID: t.ID, Title: t.Title, Error: err.Error()})
-			_ = e.store.AppendEvents(ctx, failEvt)
-			_ = e.store.SaveWorkflow(ctx, ws)
-			implErr = fmt.Errorf("pod task %s: %w", t.ID[:8], err)
-			break
-		}
+			taskStart := time.Now()
+			taskCtx, taskCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+			out, err := p.Execute(taskCtx, packet)
+			taskElapsed := time.Since(taskStart)
+			taskCancel()
+			if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
+				return controlErr
+			}
+			if err != nil {
+				t.Status = state.TaskStatusFailed
+				ws.Execution.ActiveTaskID = ""
+				ws.Execution.ActiveTaskTitle = ""
+				failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventTaskFailed, state.PersonaPod,
+					events.TaskFailedPayload{TaskID: t.ID, Title: t.Title, Error: err.Error()})
+				_ = e.store.AppendEvents(ctx, failEvt)
+				_ = e.store.SaveWorkflow(ctx, ws)
+				implErr = fmt.Errorf("pod task %s: %w", t.ID[:8], err)
+				break
+			}
 
-		// Mark task complete and attach artifacts.
-		now := time.Now().UTC()
-		t.Status = state.TaskStatusCompleted
-		t.CompletedAt = &now
-		for _, art := range out.Artifacts {
-			ws.Artifacts = mergeOrAppendArtifact(ws.Mode, ws.Artifacts, art)
-			artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventArtifactProduced, state.PersonaPod,
-				events.ArtifactProducedPayload{
-					TaskID:        t.ID,
-					ArtifactName:  art.Name,
-					Kind:          string(art.Kind),
-					ContentLength: len(art.Content),
-				})
-			_ = e.store.AppendEvents(ctx, artEvt)
+			// Mark task complete and attach artifacts.
+			now := time.Now().UTC()
+			t.Status = state.TaskStatusCompleted
+			t.CompletedAt = &now
+			e.refreshPodTaskReadiness(ws)
+			for _, art := range out.Artifacts {
+				ws.Artifacts = mergeOrAppendArtifact(ws.Mode, ws.Artifacts, art)
+				artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventArtifactProduced, state.PersonaPod,
+					events.ArtifactProducedPayload{
+						TaskID:        t.ID,
+						ArtifactName:  art.Name,
+						Kind:          string(art.Kind),
+						ContentLength: len(art.Content),
+					})
+				_ = e.store.AppendEvents(ctx, artEvt)
 
-			// Persist the artifact to the on-disk workspace so that the
-			// go-toolchain MCP (and git checkpoint) can read the produced files.
-			// This is a safety net for models that produce the code in their
-			// Phase B JSON response but do not call write_file during Phase A.
-			if ws.Execution.Workspace != nil {
-				if writeErr := e.writeArtifactToWorkspace(ws, art); writeErr != nil {
-					logger.Warn("engine: failed to flush artifact to workspace",
-						zap.String("workflow_id", ws.ID),
-						zap.String("task_id", t.ID),
-						zap.String("artifact_name", art.Name),
-						zap.String("artifact_kind", string(art.Kind)),
-						zap.Error(writeErr),
-					)
+				// Persist the artifact to the on-disk workspace so that the
+				// go-toolchain MCP (and git checkpoint) can read the produced files.
+				// This is a safety net for models that produce the code in their
+				// Phase B JSON response but do not call write_file during Phase A.
+				if ws.Execution.Workspace != nil {
+					if writeErr := e.writeArtifactToWorkspace(ws, art); writeErr != nil {
+						logger.Warn("engine: failed to flush artifact to workspace",
+							zap.String("workflow_id", ws.ID),
+							zap.String("task_id", t.ID),
+							zap.String("artifact_name", art.Name),
+							zap.String("artifact_kind", string(art.Kind)),
+							zap.Error(writeErr),
+						)
+					}
 				}
 			}
-		}
 
-		if ws.Summaries == nil {
-			ws.Summaries = make(map[state.PersonaKind]string)
-		}
-		// Append per-task summary rather than overwrite.
-		shortID := t.ID
-		if len(shortID) > 8 {
-			shortID = shortID[:8]
-		}
-		ws.Summaries[state.PersonaPod] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
+			if ws.Summaries == nil {
+				ws.Summaries = make(map[state.PersonaKind]string)
+			}
+			// Append per-task summary rather than overwrite.
+			shortID := t.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			ws.Summaries[state.PersonaPod] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
 
-		doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventTaskCompleted, state.PersonaPod,
-			events.TaskCompletedPayload{
-				TaskID:     t.ID,
-				Title:      t.Title,
-				Summary:    out.Summary,
-				DurationMs: taskElapsed.Milliseconds(),
-			})
-		_ = e.store.AppendEvents(ctx, doneEvt)
+			doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventTaskCompleted, state.PersonaPod,
+				events.TaskCompletedPayload{
+					TaskID:     t.ID,
+					Title:      t.Title,
+					Summary:    out.Summary,
+					DurationMs: taskElapsed.Milliseconds(),
+				})
+			_ = e.store.AppendEvents(ctx, doneEvt)
+		}
+		if implErr != nil || !ranTaskThisPass {
+			break
+		}
 	}
 
 	// Emit persona.completed (or persona.failed) for the pod phase as a whole.
@@ -1070,9 +1131,10 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	// empty artifact list, which would trigger the confusing "No artifact
 	// provided" → remediation → "no valid pod tasks" death spiral.
 	if tasksAttempted == 0 {
-		noTaskErr := fmt.Errorf("architect produced no pod-assigned tasks — " +
-			"the workflow request may be empty or the architect misunderstood it; " +
-			"check that the workflow has a clear, actionable request")
+		noTaskErr := fmt.Errorf("architect produced no runnable pod tasks — " +
+			"the workflow request may be empty, the architect may have misunderstood it, " +
+			"or task dependencies remain unsatisfied (pod tasks=%d blocked_by_dependencies=%d)",
+			podTasksSeen, blockedByDependencies)
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventPersonaFailed, state.PersonaPod,
 			events.PersonaFailedPayload{Persona: state.PersonaPod, Error: noTaskErr.Error()})
@@ -1091,6 +1153,51 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	_ = e.store.AppendEvents(ctx, implDoneEvt)
 
 	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) refreshPodTaskReadiness(ws *state.WorkflowState) {
+	if ws == nil {
+		return
+	}
+	for i := range ws.Tasks {
+		t := &ws.Tasks[i]
+		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
+			continue
+		}
+		switch t.Status {
+		case state.TaskStatusCompleted, state.TaskStatusRunning:
+			continue
+		}
+		if e.taskDependenciesSatisfied(ws, t) {
+			if t.Status == state.TaskStatusPending {
+				t.Status = state.TaskStatusReady
+			}
+			continue
+		}
+		if t.Status == state.TaskStatusReady {
+			t.Status = state.TaskStatusPending
+		}
+	}
+}
+
+func (e *Engine) taskDependenciesSatisfied(ws *state.WorkflowState, task *state.Task) bool {
+	if ws == nil || task == nil || len(task.DependsOn) == 0 {
+		return true
+	}
+	statuses := make(map[string]state.TaskStatus, len(ws.Tasks))
+	for _, candidate := range ws.Tasks {
+		statuses[candidate.ID] = candidate.Status
+	}
+	for _, depID := range task.DependsOn {
+		depID = strings.TrimSpace(depID)
+		if depID == "" {
+			continue
+		}
+		if statuses[depID] != state.TaskStatusCompleted {
+			return false
+		}
+	}
+	return true
 }
 
 // runRemediationPlanning invokes the Architect with the current blocking issues
@@ -1161,11 +1268,54 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		ws.Summaries = make(map[state.PersonaKind]string)
 	}
 	ws.Summaries[state.PersonaArchitect] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
+	if summary := strings.TrimSpace(out.Summary); summary != "" {
+		e.appendReviewThreadEntries(ws, out, fmt.Sprintf("[remediation cycle %d] %s", qaCycle, summary))
+	}
 
 	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 		return err
 	}
 	return e.appendPlanRemediation(ctx, ws, qaCycle)
+}
+
+func (e *Engine) runRemediationMatriarch(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
+	if err := e.checkControlState(ctx, ws); err != nil {
+		return err
+	}
+
+	p, ok := persona.Get(state.PersonaMatriarch)
+	if !ok {
+		return fmt.Errorf("matriarch persona not registered")
+	}
+
+	packet := e.buildPacket(ws, state.PersonaMatriarch, snap)
+	packet.IsRemediation = true
+
+	matCtx, matCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
+	out, err := p.Execute(matCtx, packet)
+	matCancel()
+	if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
+		return controlErr
+	}
+	if err != nil {
+		return fmt.Errorf("matriarch remediation: %w", err)
+	}
+
+	if ws.Summaries == nil {
+		ws.Summaries = make(map[state.PersonaKind]string)
+	}
+	if summary := strings.TrimSpace(out.Summary); summary != "" {
+		prefixed := fmt.Sprintf("[remediation cycle %d] %s", qaCycle, summary)
+		ws.Summaries[state.PersonaMatriarch] += prefixed + "\n"
+		e.appendReviewThreadEntries(ws, out, prefixed)
+	} else {
+		e.appendReviewThreadEntries(ws, out, "")
+	}
+	if len(out.Suggestions) > 0 {
+		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
+	}
+
+	return e.store.SaveWorkflow(ctx, ws)
 }
 
 // runRemediationTriage routes QA failures through the Project Manager before
@@ -1201,6 +1351,9 @@ func (e *Engine) runRemediationTriage(ctx context.Context, ws *state.WorkflowSta
 	ws.Summaries[state.PersonaProjectMgr] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
 	if len(out.Suggestions) > 0 {
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
+	}
+	if summary := strings.TrimSpace(out.Summary); summary != "" {
+		e.appendReviewThreadEntries(ws, out, fmt.Sprintf("[remediation cycle %d] %s", qaCycle, summary))
 	}
 
 	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
@@ -1633,6 +1786,96 @@ func (e *Engine) toolchainByID(id string) (ToolchainConfig, bool) {
 	return ToolchainConfig{}, false
 }
 
+func (e *Engine) ensureToolchainBootstrap(ctx context.Context, ws *state.WorkflowState, phase string) error {
+	if ws == nil || ws.Execution.Toolchain == nil || ws.Execution.Workspace == nil {
+		return nil
+	}
+	tc, ok := e.toolchainByID(ws.Execution.Toolchain.ID)
+	if !ok || !toolchainSupportsCapability(tc, capabilities.InitProject) {
+		return nil
+	}
+	manifestPath, ok := bootstrapManifestPath(ws.Execution.Workspace.Path, tc, ws.Execution.Toolchain)
+	if !ok {
+		return nil
+	}
+	if _, err := os.Stat(manifestPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("bootstrap stat %q: %w", manifestPath, err)
+	}
+
+	args := e.toolchainArgs(ws, tc, phase, capabilities.InitProject, false)
+	callStart := time.Now()
+	if e.opts.MCPRegistry != nil {
+		cr, rerr := e.opts.MCPRegistry.CallCapability(ctx, tc.ID, capabilities.InitProject, args)
+		if rerr != nil {
+			e.emitMCPCapabilityMissing(ctx, ws, tc, capabilities.InitProject, phase, rerr.Error())
+			return fmt.Errorf("toolchain bootstrap: %w", rerr)
+		}
+		e.emitMCPToolEvent(ctx, ws, tc, capabilities.InitProject, cr.ToolName, phase, cr.Passed, cr.Error, time.Since(callStart))
+		if cr.Error != "" {
+			return fmt.Errorf("toolchain bootstrap via %s: %s", cr.ToolName, cr.Error)
+		}
+		if !cr.Passed {
+			return fmt.Errorf("toolchain bootstrap via %s reported failure: %s", cr.ToolName, firstNonEmpty(cr.Output, cr.Stdout, cr.Stderr))
+		}
+	} else {
+		toolName := tc.CapabilityTools[capabilities.InitProject]
+		if toolName == "" {
+			toolName = capabilities.InitProject
+		}
+		if _, ok := e.opts.ToolRegistry.Get(toolName); !ok {
+			return fmt.Errorf("toolchain bootstrap tool %q not registered", toolName)
+		}
+		res := e.opts.ToolRegistry.Call(ctx, toolName, args)
+		if res.Error != "" {
+			return fmt.Errorf("toolchain bootstrap via %s: %s", toolName, res.Error)
+		}
+		passed, output, errMsg := parseToolchainResult(res.Output)
+		if errMsg != "" {
+			return fmt.Errorf("toolchain bootstrap via %s: %s", toolName, errMsg)
+		}
+		if !passed {
+			return fmt.Errorf("toolchain bootstrap via %s reported failure: %s", toolName, output)
+		}
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		return fmt.Errorf("toolchain bootstrap completed but %q is still missing: %w", manifestPath, err)
+	}
+	ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[bootstrap] initialized workspace via %s", capabilities.InitProject))
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func toolchainSupportsCapability(tc ToolchainConfig, capability string) bool {
+	if strings.TrimSpace(tc.CapabilityTools[capability]) != "" {
+		return true
+	}
+	for _, candidate := range tc.Capabilities {
+		if strings.EqualFold(strings.TrimSpace(candidate), capability) {
+			return true
+		}
+	}
+	return false
+}
+
+func bootstrapManifestPath(workspacePath string, tc ToolchainConfig, selected *state.ToolchainSelection) (string, bool) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", false
+	}
+	if strings.EqualFold(tc.ID, "go") {
+		return filepath.Join(workspacePath, "go.mod"), true
+	}
+	if selected != nil && strings.EqualFold(selected.Language, "go") {
+		return filepath.Join(workspacePath, "go.mod"), true
+	}
+	for _, lang := range tc.Languages {
+		if strings.EqualFold(strings.TrimSpace(lang), "go") || strings.EqualFold(strings.TrimSpace(lang), "golang") {
+			return filepath.Join(workspacePath, "go.mod"), true
+		}
+	}
+	return "", false
+}
+
 func (e *Engine) toolchainArgs(ws *state.WorkflowState, tc ToolchainConfig, phase, capability string, push bool) json.RawMessage {
 	args := map[string]any{
 		"workflow_id":  ws.ID,
@@ -1859,6 +2102,7 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	if len(out.Suggestions) > 0 {
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
 	}
+	e.appendReviewThreadEntries(ws, out, out.Summary)
 
 	// Update live execution progress after every persona phase.
 	ws.Execution.CurrentPersona = out.Persona
@@ -1907,6 +2151,74 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	ws.UpdatedAt = time.Now().UTC()
 }
 
+func (e *Engine) appendReviewThreadEntries(ws *state.WorkflowState, out *state.PersonaOutput, summary string) {
+	if ws == nil || out == nil {
+		return
+	}
+	timestamp := out.CompletedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	if msg := strings.TrimSpace(summary); msg != "" {
+		appendReviewThreadEntry(ws, state.ReviewThreadEntry{
+			Persona:            out.Persona,
+			Kind:               "summary",
+			Message:            msg,
+			QACycle:            ws.Execution.QACycle,
+			RemediationAttempt: ws.Execution.RemediationAttempt,
+			CreatedAt:          timestamp,
+		})
+	}
+	for _, issue := range out.BlockingIssues {
+		if msg := strings.TrimSpace(issue); msg != "" {
+			appendReviewThreadEntry(ws, state.ReviewThreadEntry{
+				Persona:            out.Persona,
+				Kind:               "blocking_issue",
+				Message:            msg,
+				QACycle:            ws.Execution.QACycle,
+				RemediationAttempt: ws.Execution.RemediationAttempt,
+				CreatedAt:          timestamp,
+			})
+		}
+	}
+	if out.Persona != state.PersonaMatriarch {
+		return
+	}
+	for _, suggestion := range out.Suggestions {
+		msg := strings.TrimSpace(suggestion)
+		kind := ""
+		switch {
+		case strings.HasPrefix(msg, "[matriarch][decision] "):
+			kind = "decision"
+			msg = strings.TrimPrefix(msg, "[matriarch][decision] ")
+		case strings.HasPrefix(msg, "[matriarch][escalate] "):
+			kind = "question"
+			msg = strings.TrimPrefix(msg, "[matriarch][escalate] ")
+		}
+		if kind == "" || strings.TrimSpace(msg) == "" {
+			continue
+		}
+		appendReviewThreadEntry(ws, state.ReviewThreadEntry{
+			Persona:            out.Persona,
+			Kind:               kind,
+			Message:            strings.TrimSpace(msg),
+			QACycle:            ws.Execution.QACycle,
+			RemediationAttempt: ws.Execution.RemediationAttempt,
+			CreatedAt:          timestamp,
+		})
+	}
+}
+
+func appendReviewThreadEntry(ws *state.WorkflowState, entry state.ReviewThreadEntry) {
+	if ws == nil || strings.TrimSpace(entry.Message) == "" {
+		return
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	ws.ReviewThread = append(ws.ReviewThread, entry)
+}
+
 // buildPacket constructs the HandoffPacket for the given persona from the
 // current WorkflowState snapshot.
 func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) state.HandoffPacket {
@@ -1929,6 +2241,7 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		Tasks:                      ws.Tasks,
 		Artifacts:                  artifacts,
 		Summaries:                  ws.Summaries,
+		ReviewThread:               ws.ReviewThread,
 		CurrentPersona:             kind,
 		ProviderName:               provider,
 		ModelName:                  model,

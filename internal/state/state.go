@@ -205,6 +205,19 @@ type Checkpoint struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// ReviewThreadEntry captures the running conversation between personas during
+// planning and remediation. It is persisted so downstream personas can read a
+// stable audit trail of decisions, blockers, and questions instead of relying
+// only on compressed summaries.
+type ReviewThreadEntry struct {
+	Persona            PersonaKind `json:"persona"`
+	Kind               string      `json:"kind"`
+	Message            string      `json:"message"`
+	QACycle            int         `json:"qa_cycle,omitempty"`
+	RemediationAttempt int         `json:"remediation_attempt,omitempty"`
+	CreatedAt          time.Time   `json:"created_at"`
+}
+
 // WorkflowState is the canonical, persisted state of a single workflow run.
 type WorkflowState struct {
 	ID       string         `json:"id"`
@@ -227,6 +240,9 @@ type WorkflowState struct {
 
 	// Per-persona summaries for handoff context.
 	Summaries map[PersonaKind]string `json:"summaries,omitempty"`
+	// ReviewThread is the ordered conversation log personas use to challenge
+	// decisions, surface blockers, and preserve remediation context.
+	ReviewThread []ReviewThreadEntry `json:"review_thread,omitempty"`
 
 	// Provider/model selected by Director.
 	ProviderName string `json:"provider_name,omitempty"`
@@ -574,6 +590,9 @@ type HandoffPacket struct {
 
 	// Compressed summaries from earlier phases.
 	Summaries map[PersonaKind]string `json:"summaries,omitempty"`
+	// ReviewThread is the ordered persona discussion log visible to downstream
+	// personas during planning and remediation.
+	ReviewThread []ReviewThreadEntry `json:"review_thread,omitempty"`
 
 	// Active context.
 	CurrentPersona   PersonaKind                     `json:"current_persona"`

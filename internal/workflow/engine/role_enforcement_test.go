@@ -294,6 +294,31 @@ func TestBuildHandoffContext_RemediationContext(t *testing.T) {
 	}
 }
 
+func TestBuildHandoffContext_ReviewThreadVisible(t *testing.T) {
+	packet := state.HandoffPacket{
+		WorkflowID: "wf-test",
+		Mode:       "software",
+		Request:    "build an API",
+		ReviewThread: []state.ReviewThreadEntry{
+			{Persona: state.PersonaDirector, Kind: "summary", Message: "director selected a repo-backed software workflow"},
+			{Persona: state.PersonaMatriarch, Kind: "question", Message: "confirm whether retries should fail fast on validation exhaustion", RemediationAttempt: 1},
+			{Persona: state.PersonaQA, Kind: "blocking_issue", Message: "validation still fails in go test ./...", QACycle: 2},
+		},
+	}
+
+	handoffCtx := base.BuildHandoffContext(packet)
+
+	if !strings.Contains(handoffCtx, "Review Thread") {
+		t.Errorf("expected review thread section in handoff context:\n%s", handoffCtx)
+	}
+	if !strings.Contains(handoffCtx, "director selected a repo-backed software workflow") {
+		t.Errorf("director review thread entry missing:\n%s", handoffCtx)
+	}
+	if !strings.Contains(handoffCtx, "validation still fails in go test ./...") {
+		t.Errorf("qa review thread entry missing:\n%s", handoffCtx)
+	}
+}
+
 // ─── Test: execution progress updated after run ───────────────────────────────
 
 func TestExecution_CurrentPersonaSetAfterRun(t *testing.T) {

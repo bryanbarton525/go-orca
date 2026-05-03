@@ -41,15 +41,19 @@ func New() *Matriarch {
 func (e *Matriarch) Kind() state.PersonaKind { return state.PersonaMatriarch }
 func (e *Matriarch) Name() string            { return "Matriarch" }
 func (e *Matriarch) Description() string {
-	return "Captures pragmatic engineering defaults and design tradeoff guidance before architecture planning."
+	return "Captures pragmatic engineering defaults, questions shaky decisions, and re-enters remediation to challenge Architect and QA tradeoffs."
 }
 
 func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyMatriarch]
 	handoffCtx := base.BuildHandoffContext(packet)
+	instruction := "Act as the user's pragmatic matriarch. Continue the review thread by challenging weak assumptions, supplying concrete design defaults for the Architect, and escalating product-sensitive questions that need a real user answer."
+	if packet.IsRemediation {
+		instruction = "Act as the user's pragmatic matriarch during remediation. Review the QA blockers, the current review thread, and the Architect's direction; question weak remediation decisions, suggest safer defaults, and escalate any missing context that blocks a sound fix."
+	}
 	userPrompt := fmt.Sprintf(
-		"%s\n\nAct as the user's pragmatic matriarch. Identify concrete design defaults the Architect should apply, plus any decisions that are too product-sensitive and should be escalated.",
-		handoffCtx,
+		"%s\n\n%s",
+		handoffCtx, instruction,
 	)
 
 	raw, err := e.exec.Run(ctx, packet, systemPrompt, userPrompt)

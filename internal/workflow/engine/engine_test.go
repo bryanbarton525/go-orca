@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,6 +103,36 @@ func (p *artifactPersona) Execute(_ context.Context, packet state.HandoffPacket)
 	}, nil
 }
 
+type orderingArtifactPersona struct {
+	kind  state.PersonaKind
+	order *[]string
+}
+
+func (p *orderingArtifactPersona) Kind() state.PersonaKind { return p.kind }
+func (p *orderingArtifactPersona) Name() string            { return string(p.kind) }
+func (p *orderingArtifactPersona) Description() string     { return "records task execution order" }
+func (p *orderingArtifactPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	if len(packet.Tasks) != 1 {
+		return nil, errors.New("expected exactly one pod task in packet")
+	}
+	if p.order != nil {
+		*p.order = append(*p.order, packet.Tasks[0].ID)
+	}
+	return &state.PersonaOutput{
+		Persona: state.PersonaPod,
+		Summary: packet.Tasks[0].Title,
+		Artifacts: []state.Artifact{{
+			WorkflowID: packet.WorkflowID,
+			TaskID:     packet.Tasks[0].ID,
+			Kind:       state.ArtifactKindCode,
+			Name:       packet.Tasks[0].ID + ".txt",
+			Content:    packet.Tasks[0].Title,
+			CreatedBy:  state.PersonaPod,
+			CreatedAt:  time.Now().UTC(),
+		}},
+	}, nil
+}
+
 type fakeTool struct {
 	name string
 	out  json.RawMessage
@@ -124,6 +158,62 @@ func (t *captureTool) Parameters() json.RawMessage { return json.RawMessage(`{"t
 func (t *captureTool) Call(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
 	t.args = append(t.args[:0], args...)
 	return t.out, nil
+}
+
+type bootstrapTool struct {
+	name      string
+	root      string
+	callCount int
+	args      json.RawMessage
+}
+
+func (t *bootstrapTool) Name() string                { return t.name }
+func (t *bootstrapTool) Description() string         { return "bootstrap tool" }
+func (t *bootstrapTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *bootstrapTool) Call(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	t.callCount++
+	t.args = append(t.args[:0], args...)
+	var payload struct {
+		WorkspacePath string `json:"workspace_path"`
+		Branch        string `json:"branch"`
+	}
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return nil, err
+	}
+	moduleName := payload.Branch
+	if moduleName == "" {
+		moduleName = "workspace"
+	}
+	workdir := filepath.Join(t.root, payload.WorkspacePath)
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		return nil, err
+	}
+	content := "module " + moduleName + "\n\ngo 1.22\n"
+	if err := os.WriteFile(filepath.Join(workdir, "go.mod"), []byte(content), 0o644); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(`{"passed":true,"output":"initialized go module"}`), nil
+}
+
+type checkpointCaptureTool struct {
+	name   string
+	phases []string
+	count  int
+}
+
+func (t *checkpointCaptureTool) Name() string                { return t.name }
+func (t *checkpointCaptureTool) Description() string         { return "captures checkpoint phases" }
+func (t *checkpointCaptureTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *checkpointCaptureTool) Call(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	t.count++
+	var payload struct {
+		Phase string `json:"phase"`
+	}
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return nil, err
+	}
+	t.phases = append(t.phases, payload.Phase)
+	return json.RawMessage(`{"commit_sha":"abc123","branch":"workflow/test","message":"checkpoint","pushed":true}`), nil
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -362,6 +452,242 @@ func TestToolchainArgsUseWorkflowRelativeWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestRunPodPhase_RespectsDependsOnOrdering(t *testing.T) {
+	order := []string{}
+	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{
+		{
+			ID:         "task-dependent",
+			WorkflowID: ws.ID,
+			Title:      "dependent task",
+			Status:     state.TaskStatusPending,
+			AssignedTo: state.PersonaPod,
+			DependsOn:  []string{"task-bootstrap"},
+			CreatedAt:  time.Now().UTC(),
+		},
+		{
+			ID:         "task-bootstrap",
+			WorkflowID: ws.ID,
+			Title:      "bootstrap task",
+			Status:     state.TaskStatusPending,
+			AssignedTo: state.PersonaPod,
+			CreatedAt:  time.Now().UTC(),
+		},
+	}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if want := []string{"task-bootstrap", "task-dependent"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("task execution order = %v, want %v", order, want)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	for _, task := range stored.Tasks {
+		if task.Status != state.TaskStatusCompleted {
+			t.Fatalf("task %s status = %s, want completed", task.ID, task.Status)
+		}
+	}
+}
+
+func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyMissing(t *testing.T) {
+	order := []string{}
+	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-dependent-only",
+		WorkflowID: ws.ID,
+		Title:      "dependent task",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaPod,
+		DependsOn:  []string{"missing-task"},
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+	})
+
+	err := eng.Run(context.Background(), ws.ID)
+	if err == nil {
+		t.Fatal("expected dependency-blocked pod phase to fail")
+	}
+	if !strings.Contains(err.Error(), "no runnable pod tasks") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("expected blocked task not to execute, got order %v", order)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if got := stored.Tasks[0].Status; got != state.TaskStatusPending {
+		t.Fatalf("blocked task status = %s, want pending", got)
+	}
+}
+
+func TestEnsureToolchainBootstrapInitializesGoModule(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	workspaceRoot := t.TempDir()
+	bootstrap := &bootstrapTool{name: "go_mod_init", root: workspaceRoot}
+	reg := tools.NewRegistry()
+	reg.Register(bootstrap)
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-bootstrap-go",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaPod,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   workspaceRoot,
+		ToolRegistry:    reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:              "go",
+			Languages:       []string{"go", "golang"},
+			Capabilities:    []string{"init_project"},
+			CapabilityTools: map[string]string{"init_project": "go_mod_init"},
+		}},
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if bootstrap.callCount != 1 {
+		t.Fatalf("bootstrap call count = %d, want 1", bootstrap.callCount)
+	}
+	var args struct {
+		WorkspacePath string `json:"workspace_path"`
+	}
+	if err := json.Unmarshal(bootstrap.args, &args); err != nil {
+		t.Fatalf("unmarshal bootstrap args: %v", err)
+	}
+	if args.WorkspacePath != ws.ID {
+		t.Fatalf("bootstrap workspace_path = %q, want %q", args.WorkspacePath, ws.ID)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, ws.ID, "go.mod")); err != nil {
+		t.Fatalf("expected go.mod after bootstrap: %v", err)
+	}
+}
+
+func TestToolchainCheckpointRunsAcrossPlanningAndBootstrapPhases(t *testing.T) {
+	persona.Register(&fixedPersona{kind: state.PersonaProjectMgr, out: &state.PersonaOutput{
+		Persona:      state.PersonaProjectMgr,
+		Summary:      "pm done",
+		Constitution: &state.Constitution{Vision: "ship code"},
+		Requirements: &state.Requirements{},
+		CompletedAt:  time.Now().UTC(),
+	}})
+	t.Cleanup(func() { persona.Unregister(state.PersonaProjectMgr) })
+	persona.Register(&remediationArchitectPersona{})
+	t.Cleanup(func() { persona.Unregister(state.PersonaArchitect) })
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	workspaceRoot := t.TempDir()
+	bootstrap := &bootstrapTool{name: "go_mod_init", root: workspaceRoot}
+	checkpoint := &checkpointCaptureTool{name: "git_push_checkpoint"}
+	reg := tools.NewRegistry()
+	reg.Register(bootstrap)
+	reg.Register(checkpoint)
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaProjectMgr, state.PersonaArchitect, state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   workspaceRoot,
+		ToolRegistry:    reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go", "golang"},
+			Capabilities:         []string{"init_project", "git_push_checkpoint"},
+			CapabilityTools:      map[string]string{"init_project": "go_mod_init", "git_push_checkpoint": "git_push_checkpoint"},
+			CheckpointCapability: "git_push_checkpoint",
+			PushCheckpoints:      true,
+		}},
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if bootstrap.callCount != 1 {
+		t.Fatalf("bootstrap call count = %d, want 1", bootstrap.callCount)
+	}
+	for _, phase := range []string{"constitution", "plan", "implementation-bootstrap", "implementation"} {
+		if !containsString(checkpoint.phases, phase) {
+			t.Fatalf("expected checkpoint phase %q in %v", phase, checkpoint.phases)
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 // TestEnforceValidationGate_BlocksFinalizerOnFailedValidation verifies that
 // when EnforceValidationGate is set and the most recent toolchain validation
 // run fails, the engine emits validation.gate.blocked, marks the workflow
@@ -466,16 +792,96 @@ func (p *blockingQAPersona) Execute(_ context.Context, _ state.HandoffPacket) (*
 	}, nil
 }
 
-// TestQAExhaustionContinuesToFinalizer verifies that when MaxQARetries is
-// exceeded the engine emits a qa.exhausted event and continues to the
-// Finalizer rather than failing the workflow.
-func TestQAExhaustionContinuesToFinalizer(t *testing.T) {
+type countingMatriarchPersona struct {
+	calls            int
+	remediationCalls int
+}
+
+func (p *countingMatriarchPersona) Kind() state.PersonaKind { return state.PersonaMatriarch }
+func (p *countingMatriarchPersona) Name() string            { return "counting-matriarch" }
+func (p *countingMatriarchPersona) Description() string     { return "tracks matriarch invocations" }
+func (p *countingMatriarchPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.calls++
+	summary := "initial matriarch review"
+	if packet.IsRemediation {
+		p.remediationCalls++
+		summary = "remediation matriarch review"
+	}
+	return &state.PersonaOutput{
+		Persona:     state.PersonaMatriarch,
+		Summary:     summary,
+		Suggestions: []string{"[matriarch][decision] keep bootstrap before implementation"},
+		CompletedAt: time.Now().UTC(),
+	}, nil
+}
+
+type remediationArchitectPersona struct{}
+
+func (p *remediationArchitectPersona) Kind() state.PersonaKind { return state.PersonaArchitect }
+func (p *remediationArchitectPersona) Name() string            { return "remediation-architect" }
+func (p *remediationArchitectPersona) Description() string     { return "returns initial and remediation tasks" }
+func (p *remediationArchitectPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	if packet.IsRemediation {
+		return &state.PersonaOutput{
+			Persona: state.PersonaArchitect,
+			Summary: "architect remediation plan",
+			Tasks: []state.Task{{
+				ID:          "task-remediation",
+				WorkflowID:  packet.WorkflowID,
+				Title:       "apply remediation",
+				Description: "fix the blocker",
+				Status:      state.TaskStatusPending,
+				AssignedTo:  state.PersonaPod,
+				CreatedAt:   time.Now().UTC(),
+			}},
+			CompletedAt: time.Now().UTC(),
+		}, nil
+	}
+	return &state.PersonaOutput{
+		Persona: state.PersonaArchitect,
+		Summary: "initial architect plan",
+		Design:  &state.Design{Overview: "test design", TechStack: []string{"go"}},
+		Tasks: []state.Task{{
+			ID:          "task-initial",
+			WorkflowID:  packet.WorkflowID,
+			Title:       "initial implementation",
+			Description: "write code",
+			Status:      state.TaskStatusPending,
+			AssignedTo:  state.PersonaPod,
+			CreatedAt:   time.Now().UTC(),
+		}},
+		CompletedAt: time.Now().UTC(),
+	}, nil
+}
+
+type oneShotBlockingQAPersona struct{ calls int }
+
+func (p *oneShotBlockingQAPersona) Kind() state.PersonaKind { return state.PersonaQA }
+func (p *oneShotBlockingQAPersona) Name() string            { return "one-shot-blocking-qa" }
+func (p *oneShotBlockingQAPersona) Description() string     { return "blocks once and then passes" }
+func (p *oneShotBlockingQAPersona) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.calls++
+	if p.calls == 1 {
+		return &state.PersonaOutput{
+			Persona:        state.PersonaQA,
+			Summary:        "found an implementation blocker",
+			BlockingIssues: []string{"missing remediation"},
+			CompletedAt:    time.Now().UTC(),
+		}, nil
+	}
+	return &state.PersonaOutput{Persona: state.PersonaQA, Summary: "qa passed after remediation", CompletedAt: time.Now().UTC()}, nil
+}
+
+// TestQAExhaustionFailsBeforeFinalizer verifies that when MaxQARetries is
+// exceeded the engine emits qa.exhausted and fails before running the
+// Finalizer.
+func TestQAExhaustionFailsBeforeFinalizer(t *testing.T) {
 	// Register a QA persona that always reports blocking issues.
 	persona.Register(&blockingQAPersona{})
 	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
 
-	// Register a noop Finalizer.
-	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	// Finalizer must not run once remediation is exhausted.
+	persona.Register(&forbiddenPersona{t: t, kind: state.PersonaFinalizer})
 	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
 
 	ms := newMockStore()
@@ -499,13 +905,16 @@ func TestQAExhaustionContinuesToFinalizer(t *testing.T) {
 	})
 
 	err := eng.Run(ctx, ws.ID)
-	if err != nil {
-		t.Fatalf("expected nil error when QA exhausted, got: %v", err)
+	if err == nil {
+		t.Fatal("expected remediation exhaustion to fail the workflow")
 	}
 
 	stored, _ := ms.GetWorkflow(ctx, ws.ID)
-	if stored.Status != state.WorkflowStatusCompleted {
-		t.Errorf("expected completed status, got %q", stored.Status)
+	if stored.Status != state.WorkflowStatusFailed {
+		t.Errorf("expected failed status, got %q", stored.Status)
+	}
+	if !strings.Contains(stored.ErrorMessage, "qa remediation exhausted") {
+		t.Errorf("expected exhaustion error message, got %q", stored.ErrorMessage)
 	}
 
 	// Verify a qa.exhausted event was emitted.
@@ -518,6 +927,66 @@ func TestQAExhaustionContinuesToFinalizer(t *testing.T) {
 	}
 	if exhaustedEvt == nil {
 		t.Fatal("expected qa.exhausted event to be emitted, got none")
+	}
+}
+
+func TestMatriarchRunsAgainDuringRemediation(t *testing.T) {
+	matriarch := &countingMatriarchPersona{}
+	persona.Register(matriarch)
+	t.Cleanup(func() { persona.Unregister(state.PersonaMatriarch) })
+	persona.Register(&noopPersona{kind: state.PersonaProjectMgr})
+	t.Cleanup(func() { persona.Unregister(state.PersonaProjectMgr) })
+	persona.Register(&remediationArchitectPersona{})
+	t.Cleanup(func() { persona.Unregister(state.PersonaArchitect) })
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	qa := &oneShotBlockingQAPersona{}
+	persona.Register(qa)
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{
+		state.PersonaProjectMgr,
+		state.PersonaMatriarch,
+		state.PersonaArchitect,
+		state.PersonaPod,
+		state.PersonaQA,
+		state.PersonaFinalizer,
+	}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+		MaxQARetries:    2,
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if matriarch.calls != 2 {
+		t.Fatalf("matriarch call count = %d, want 2", matriarch.calls)
+	}
+	if matriarch.remediationCalls != 1 {
+		t.Fatalf("matriarch remediation call count = %d, want 1", matriarch.remediationCalls)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if len(stored.ReviewThread) == 0 {
+		t.Fatal("expected review thread entries to be recorded")
+	}
+	joined := ""
+	for _, entry := range stored.ReviewThread {
+		joined += entry.Message + "\n"
+	}
+	if !strings.Contains(joined, "initial matriarch review") || !strings.Contains(joined, "remediation matriarch review") {
+		t.Fatalf("expected review thread to capture both matriarch passes, got:\n%s", joined)
 	}
 }
 

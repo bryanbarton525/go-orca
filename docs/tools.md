@@ -217,9 +217,11 @@ tools:
         - format_code
         - run_tests
         - run_build
+        - init_project
         - git_checkpoint
       capability_tools:
-        tidy_dependencies: go_tidy
+        init_project: go_mod_init
+        tidy_dependencies: go_mod_tidy
         format_code: go_fmt
         run_tests: go_test
         run_build: go_build

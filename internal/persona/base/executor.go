@@ -285,6 +285,24 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
+	if len(packet.ReviewThread) > 0 {
+		entries := packet.ReviewThread
+		if len(entries) > 12 {
+			entries = entries[len(entries)-12:]
+		}
+		sb.WriteString("\n## Review Thread\n")
+		for _, entry := range entries {
+			tags := []string{string(entry.Persona), entry.Kind}
+			if entry.QACycle > 0 {
+				tags = append(tags, fmt.Sprintf("qa-cycle %d", entry.QACycle))
+			}
+			if entry.RemediationAttempt > 0 {
+				tags = append(tags, fmt.Sprintf("remediation %d", entry.RemediationAttempt))
+			}
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", strings.Join(tags, " | "), entry.Message))
+		}
+	}
+
 	// Constitution and plan are sourced from on-disk markdown when the engine
 	// has materialized them (workspace path or artifact); otherwise we fall
 	// back to JSON of the typed structs so workflows that ran before this
