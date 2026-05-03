@@ -1767,7 +1767,10 @@ func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowS
 		Pushed:      pushed,
 		CreatedAt:   time.Now().UTC(),
 	}
-	ws.Execution.Checkpoints = append(ws.Execution.Checkpoints, checkpoint)
+	if shouldPersistExecutionCheckpoint(phase) {
+		checkpoint.ID = fmt.Sprintf("checkpoint-%d", len(ws.Execution.Checkpoints)+1)
+		ws.Execution.Checkpoints = append(ws.Execution.Checkpoints, checkpoint)
+	}
 
 	evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 		events.EventCheckpointCreated, "",
@@ -1775,6 +1778,13 @@ func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowS
 	_ = e.store.AppendEvents(ctx, evt)
 
 	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func shouldPersistExecutionCheckpoint(phase string) bool {
+	if phase == "implementation" {
+		return true
+	}
+	return strings.HasPrefix(phase, "remediation-")
 }
 
 func (e *Engine) toolchainByID(id string) (ToolchainConfig, bool) {
