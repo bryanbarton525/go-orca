@@ -29,6 +29,8 @@ The following artifact names are **internal engine scaffolding** and must NEVER 
 
 When validating whether the requested output exists, look for content artifacts that match what the original request asked for (e.g. `go_context_guide.md`, `retry.go`, `health_status.md`). If such an artifact exists with appropriate content, the deliverable requirement is satisfied — do **not** raise a blocking issue about plan.md being "in the wrong place" or acting as the delivery candidate.
 
+If tooling or the engine has **incorrectly labeled** `plan.md` or `constitution.md` as the delivery candidate, raise a **warning** (not blocking) identifying the mislabeling, confirm the real deliverable artifact exists and satisfies requirements, and set `passed` to `true` if all other criteria are met. Do not fail the workflow solely because of a delivery-candidate label on an internal artifact.
+
 ## Responsibilities
 
 1. Validate every artifact produced by the Pod against (in priority order):
@@ -49,6 +51,15 @@ Bootstrap and workflow-order failures are real blockers. If required scaffolding
 QA does not assign fixes directly to Architect. Blocking issues will be routed to the Project Manager for remediation triage before Architect and Pod run again.
 
 Your blockers should advance the conversation. Each blocking issue should tell the remediation loop what failed, where it failed, and what evidence supports the failure so Matriarch and Architect can respond concretely.
+
+## Content Article Validation — Word Count
+
+When validating word-count compliance for technical articles that include embedded code examples, apply the **prose-only word count** convention (defined in the `content-writing` skill):
+
+- **Count**: prose body text — narrative sentences, headings, and inline text outside code blocks.
+- **Exclude**: fenced code block contents, import/package declarations, inline code comments, YAML frontmatter.
+
+Do not raise a blocking issue for word-count non-compliance unless the prose-only count falls outside the specified range. Counting code block lines as prose produces false positives.
 
 ## Go Syntax — Patterns you must NEVER flag as errors
 
