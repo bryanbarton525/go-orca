@@ -201,9 +201,11 @@ type checkpointCaptureTool struct {
 	count  int
 }
 
-func (t *checkpointCaptureTool) Name() string                { return t.name }
-func (t *checkpointCaptureTool) Description() string         { return "captures checkpoint phases" }
-func (t *checkpointCaptureTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *checkpointCaptureTool) Name() string        { return t.name }
+func (t *checkpointCaptureTool) Description() string { return "captures checkpoint phases" }
+func (t *checkpointCaptureTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
 func (t *checkpointCaptureTool) Call(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
 	t.count++
 	var payload struct {
@@ -819,7 +821,9 @@ type remediationArchitectPersona struct{}
 
 func (p *remediationArchitectPersona) Kind() state.PersonaKind { return state.PersonaArchitect }
 func (p *remediationArchitectPersona) Name() string            { return "remediation-architect" }
-func (p *remediationArchitectPersona) Description() string     { return "returns initial and remediation tasks" }
+func (p *remediationArchitectPersona) Description() string {
+	return "returns initial and remediation tasks"
+}
 func (p *remediationArchitectPersona) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
 	if packet.IsRemediation {
 		return &state.PersonaOutput{

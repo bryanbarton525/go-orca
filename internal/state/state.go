@@ -55,14 +55,14 @@ const (
 type PersonaKind string
 
 const (
-	PersonaDirector    PersonaKind = "director"
-	PersonaProjectMgr  PersonaKind = "project_manager"
-	PersonaMatriarch   PersonaKind = "matriarch"
-	PersonaArchitect   PersonaKind = "architect"
-	PersonaPod         PersonaKind = "pod"
-	PersonaQA          PersonaKind = "qa"
-	PersonaFinalizer   PersonaKind = "finalizer"
-	PersonaRefiner     PersonaKind = "refiner"
+	PersonaDirector   PersonaKind = "director"
+	PersonaProjectMgr PersonaKind = "project_manager"
+	PersonaMatriarch  PersonaKind = "matriarch"
+	PersonaArchitect  PersonaKind = "architect"
+	PersonaPod        PersonaKind = "pod"
+	PersonaQA         PersonaKind = "qa"
+	PersonaFinalizer  PersonaKind = "finalizer"
+	PersonaRefiner    PersonaKind = "refiner"
 )
 
 // DownstreamPersonaKinds returns the personas whose models are selected by the

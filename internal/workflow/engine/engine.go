@@ -1131,8 +1131,8 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	// empty artifact list, which would trigger the confusing "No artifact
 	// provided" → remediation → "no valid pod tasks" death spiral.
 	if tasksAttempted == 0 {
-		noTaskErr := fmt.Errorf("architect produced no runnable pod tasks — " +
-			"the workflow request may be empty, the architect may have misunderstood it, " +
+		noTaskErr := fmt.Errorf("architect produced no runnable pod tasks — "+
+			"the workflow request may be empty, the architect may have misunderstood it, "+
 			"or task dependencies remain unsatisfied (pod tasks=%d blocked_by_dependencies=%d)",
 			podTasksSeen, blockedByDependencies)
 		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
