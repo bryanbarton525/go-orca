@@ -17,6 +17,44 @@ Before adding any third-party module to `go.mod`, `package.json`, `Cargo.toml`, 
 2. When the user names a service ("Linear", "Stripe", "OpenAI"), pick a package that the user can verify. If unsure, prefer the official SDK from the vendor's docs page; if no official Go SDK exists, write a thin HTTP client against the documented REST API instead of inventing a module path.
 3. Pin to a specific version when known. Avoid `latest` in lockfiles.
 
+### Go module versioning — CRITICAL
+
+Go uses Major Version Suffixes for v2+ modules. **Failure to follow this rule causes `go mod tidy` / `go build` to fail with "version invalid: should be v0 or v1, not v2".**
+
+- v0/v1 modules: path has **no suffix** → `require github.com/foo/bar v1.2.3`
+- v2+ modules: path **must include** `/v2`, `/v3`, etc. → `require github.com/foo/bar/v2 v2.5.0`
+- The import path in Go source files must also use the suffix: `import "github.com/foo/bar/v2"`
+
+Common examples:
+```
+# CORRECT
+require github.com/go-co-op/gocron/v2 v2.2.5   # gocron v2
+require github.com/labstack/echo/v4 v4.13.3     # echo v4
+require github.com/jackc/pgx/v5 v5.7.2          # pgx v5
+
+# WRONG — these produce "version invalid: should be v0 or v1" errors
+require github.com/go-co-op/gocron v2.2.5
+require github.com/labstack/echo v4.13.3
+```
+
+For simple recurring tasks (e.g., polling every 5 minutes), prefer a plain `time.Ticker` goroutine over a scheduler library — it requires zero dependencies and avoids module versioning pitfalls:
+```go
+go func() {
+    ticker := time.NewTicker(5 * time.Minute)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ticker.C:
+            if err := syncIssues(ctx); err != nil {
+                log.Printf("sync error: %v", err)
+            }
+        case <-ctx.Done():
+            return
+        }
+    }
+}()
+```
+
 ### API design
 
 - Resource-oriented routes (`/api/v1/users/:id`, not `/api/v1/getUser`).

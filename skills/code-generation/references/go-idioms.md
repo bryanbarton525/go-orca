@@ -1,5 +1,42 @@
 # Go Idiomatic Patterns for go-orca
 
+## Module Versioning (go.mod)
+
+Go requires Major Version Suffixes in module paths for v2+ releases.
+
+```
+# CORRECT — v2+ modules include /v2, /v3, etc. in the path
+require github.com/go-co-op/gocron/v2 v2.2.5
+require github.com/labstack/echo/v4 v4.13.3
+require github.com/jackc/pgx/v5 v5.7.2
+
+# WRONG — these will fail with "version invalid: should be v0 or v1, not v2"
+require github.com/go-co-op/gocron v2.2.5
+require github.com/labstack/echo v4.13.3
+```
+
+The import path in source files must match:
+```go
+import (
+    "github.com/go-co-op/gocron/v2"   // CORRECT for v2
+    "github.com/labstack/echo/v4"      // CORRECT for v4
+)
+```
+
+For recurring tasks, prefer `time.Ticker` (zero deps) over scheduler libraries:
+```go
+ticker := time.NewTicker(5 * time.Minute)
+defer ticker.Stop()
+for {
+    select {
+    case <-ticker.C:
+        doWork(ctx)
+    case <-ctx.Done():
+        return
+    }
+}
+```
+
 This document provides curated examples of idiomatic Go patterns relevant to the go-orca workflow orchestration system. Use these patterns when implementing model registration, routing, and concurrency primitives.
 
 ---
