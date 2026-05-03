@@ -51,6 +51,17 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
      job is to consolidate all prior draft artifacts into one complete, cohesive
      output artifact.  It ensures the Finalizer receives a single complete document
      rather than multiple fragments.
+
+     **SYNTHESIS TASK VERIFICATION — CRITICAL**: Before emitting your final task list
+     for any content or docs workflow, verify the following checklist:
+     - [ ] A synthesis/consolidation task exists as the LAST entry in the `tasks` array
+     - [ ] That task has `depends_on` entries referencing ALL prior content/verification tasks
+     - [ ] That task explicitly names the final output artifact (kind and name)
+     - [ ] That task's description states it must combine all prior results into a single
+           self-contained document
+     If any of these checks fail, add or fix the synthesis task before emitting your response.
+     A missing or incomplete synthesis task will cause a QA remediation cycle that could have
+     been avoided at design time.
    - ops: runbook steps, deployment tasks, validation tasks
 
 ## Remediation mode
