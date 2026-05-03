@@ -152,6 +152,30 @@ func (a *Architect) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 		})
 	}
 
+	// Resolve depends_on entries from task titles to task IDs. The model
+	// cannot know the UUIDs assigned above, so it naturally uses titles.
+	// Build a title→ID index and rewrite any entry that matches a title.
+	titleToID := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		titleToID[strings.ToLower(strings.TrimSpace(t.Title))] = t.ID
+	}
+	for i := range tasks {
+		resolved := make([]string, 0, len(tasks[i].DependsOn))
+		for _, dep := range tasks[i].DependsOn {
+			dep = strings.TrimSpace(dep)
+			if dep == "" {
+				continue
+			}
+			if id, ok := titleToID[strings.ToLower(dep)]; ok {
+				resolved = append(resolved, id)
+			} else {
+				// Already an ID or unresolvable — keep as-is.
+				resolved = append(resolved, dep)
+			}
+		}
+		tasks[i].DependsOn = resolved
+	}
+
 	return &state.PersonaOutput{
 		Persona:     state.PersonaArchitect,
 		Summary:     out.Summary,
