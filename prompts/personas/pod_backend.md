@@ -82,9 +82,32 @@ go func() {
 
 ### What to write to the workspace
 
-When the toolchain is configured, the workspace is the source of truth — write the source files via `write_file`, not just inline in the artifact.
+When the toolchain is configured, the workspace is the source of truth — write the source files
+via `write_file` in Phase A (tool-call loop), not just inline in the Phase B artifact.
 
-Your JSON artifact must still be complete enough for the engine to validate what happened:
-- `content` must be non-empty. Summary-only software outputs are treated as a failed task.
-- If you emit `artifact_kind` `code` or `config`, `artifact_name` must be an exact workspace-relative file path such as `main.go` or `internal/api/handler.go`. Do not use descriptive labels like `updated go.mod`.
-- If you wrote multiple files via tools, use `content` to briefly state which files were written and what changed. Do not leave it empty.
+#### Single-file tasks
+Return `artifact_kind: "code"` with `artifact_name` set to the exact workspace-relative filename
+(e.g., `"main.go"`, `"internal/api/handler.go"`) and put the actual source code in `content`.
+The engine will write that code to the workspace automatically as a safety net.
+
+#### Multi-file tasks (9 files, entire package, etc.)
+Write EVERY file during Phase A using `write_file` with the full workspace-prefixed path:
+```
+write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main...")
+write_file(path="/var/lib/go-orca/workspaces/<id>/config.go", content="package main...")
+... (one call per file)
+```
+Then return Phase B with `artifact_kind: "document"` so the engine does NOT overwrite your
+workspace files with the Phase B content:
+```json
+{
+  "artifact_kind": "document",
+  "artifact_name": "implementation-summary",
+  "content": "Implemented 9 files: main.go, config.go, storage.go, ...",
+  "summary": "..."
+}
+```
+
+**WARNING**: If you use `artifact_kind: "code"` in Phase B for a multi-file task, the engine
+will write the `content` string to the workspace under `artifact_name`, OVERWRITING whatever
+was written in Phase A. Use `"document"` for multi-file summaries.

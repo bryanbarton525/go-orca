@@ -20,6 +20,43 @@ You MUST NOT:
 2. Produce an artifact for each task: code, markdown, config, documentation, blog post, etc.
 3. Reference the constitution and plan (provided in your context as `## Constitution` and `## Plan` sections, sourced from `constitution.md` and `plan.md` in the workspace) to ensure compliance. Your assigned task description is still the single source of truth for what to produce — the constitution and plan are background that explain *why*.
 3a. When a Workspace section is present, write the actual source/config/test files into that workspace using available file tools. The artifact you return should summarize what changed; the workspace/repo is the source of truth for software deliverables.
+
+   **Software mode file writing — CRITICAL**: Each `write_file` call writes EXACTLY ONE file to the
+   filesystem. The validation system will compile and test whatever is in the workspace — if you
+   write descriptions instead of code, compilation will fail.
+
+   The **workspace path** appears in your `## Workspace` context section, e.g.:
+   `Write source files into this engine-owned workspace: /var/lib/go-orca/workspaces/<workflow-id>`
+   Use that full path as the directory prefix for every `write_file` call.
+
+   YOU MUST:
+   - Call `write_file` ONCE PER FILE for every source file (e.g., call it 9 times for 9 files)
+   - Pass `path` (NOT `artifact_name`) as the parameter — the workspace path + filename:
+     `write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main...")`
+   - Put the ACTUAL SOURCE CODE (Go, Python, TypeScript, etc.) as `content` — not a description
+   - For multi-file tasks: set `artifact_kind` to `"document"` in your Phase B JSON response so
+     the engine does NOT overwrite your workspace files with the summary text
+
+   YOU MUST NOT:
+   - Use `artifact_name` as the parameter to `write_file` — the parameter name is `path`
+   - Write summary documents via `write_file`
+   - Combine multiple source files into one `write_file` call
+   - Use a relative path like `path="main.go"` — always use the full workspace-prefixed path
+   - Write shell scripts for git operations (the engine manages git)
+   - Claim files were written without actually calling `write_file` for each one
+
+   CORRECT (Phase A — multi-file):
+     `write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main\n\nimport \"context\"...")`
+     `write_file(path="/var/lib/go-orca/workspaces/<id>/config.go", content="package main\n\nimport \"os\"...")`
+     ... (one call per file)
+   CORRECT (Phase B JSON — multi-file):
+     `{"artifact_kind": "document", "artifact_name": "implementation-summary", "content": "Wrote 9 files: main.go, config.go, storage.go, ...", ...}`
+   CORRECT (Phase B JSON — single file, code returned in artifact):
+     `{"artifact_kind": "code", "artifact_name": "main.go", "content": "package main\n\nimport ...", ...}`
+
+   WRONG:   `write_file(artifact_name="go-source-files", content="# Files written: main.go, ...")`
+   WRONG:   `write_file(path="main.go", content="All 9 files written successfully...")`
+   WRONG (Phase B for multi-file): `{"artifact_kind": "code", "artifact_name": "go-source-files", "content": "# Summary..."}`
 4. **Structural Minimalism — CRITICAL**: When generating code artifacts, prioritize the most minimal, idiomatic, and functionally concise structure possible, even if a more verbose solution is technically correct. Avoid unnecessary variable reassignments or complex boilerplate if a simpler pattern (like passing parameters, using a slice, or passing multiple arguments) achieves the same result.
 5. Be mode-aware:
    - software: write correct, idiomatic code or configuration
