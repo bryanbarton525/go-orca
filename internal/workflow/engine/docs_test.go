@@ -84,6 +84,26 @@ func TestMaterializePlan_WritesToWorkspace(t *testing.T) {
 	}
 }
 
+func TestWriteArtifactToWorkspace_InvalidFileLikeNameFails(t *testing.T) {
+	eng := New(noopStore{}, Options{DefaultProvider: "mock", DefaultModel: "mock"})
+	ws, dir := newWSWithWorkspace(t)
+
+	err := eng.writeArtifactToWorkspace(ws, state.Artifact{
+		Kind:    state.ArtifactKindCode,
+		Name:    "updated go.mod",
+		Content: "module example.com/test\n",
+	})
+	if err == nil {
+		t.Fatal("expected invalid artifact name to fail")
+	}
+	if !strings.Contains(err.Error(), "not a valid workspace-relative file path") {
+		t.Fatalf("writeArtifactToWorkspace() error = %q", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "updated go.mod")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no file to be written, stat err = %v", statErr)
+	}
+}
+
 func TestAppendPlanRemediation_AppendsSection(t *testing.T) {
 	eng := New(noopStore{}, Options{DefaultProvider: "mock", DefaultModel: "mock"})
 	ws, dir := newWSWithWorkspace(t)

@@ -130,23 +130,8 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 		return nil, fmt.Errorf("pod: parse error: %w", err)
 	}
 
-	// Guard against an empty content field.  An artifact with no content is
-	// worse than a failed task because it silently reaches QA, which then
-	// raises a "No artifact provided" blocking issue that confuses the
-	// remediation loop.  Surface the failure here instead.
-	//
-	// Exception: in software mode the pod_backend overlay instructs the model
-	// to write source files via workspace tools and summarise what changed
-	// rather than reproduce the full file content inline.  When content is
-	// empty but summary is non-empty (indicating the model wrote files via
-	// tools and summarised the result), promote the summary to content so the
-	// artifact carries a meaningful description without failing the task.
-	if strings.TrimSpace(out.Content) == "" {
-		if packet.Mode == state.WorkflowModeSoftware && strings.TrimSpace(out.Summary) != "" {
-			out.Content = out.Summary
-		} else {
-			return nil, fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", task.Title)
-		}
+	if err := validateOutput(packet.Mode, task.Title, &out); err != nil {
+		return nil, err
 	}
 
 	now := base.Timestamp()
@@ -199,6 +184,20 @@ func normalizeArtifactKind(mode state.WorkflowMode, raw string) state.ArtifactKi
 		return state.ArtifactKindBlogPost
 	}
 	return state.ArtifactKindDocument
+}
+
+func validateOutput(mode state.WorkflowMode, taskTitle string, out *implOutput) error {
+	if strings.TrimSpace(out.Content) != "" {
+		return nil
+	}
+
+	// Software workflows must fail fast here. Summary-only success causes the
+	// engine to carry descriptive prose into QA even when no files were written.
+	if mode == state.WorkflowModeSoftware && strings.TrimSpace(out.Summary) != "" {
+		return fmt.Errorf("pod: model produced summary-only output for software task %q — write the files or return artifact content", taskTitle)
+	}
+
+	return fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", taskTitle)
 }
 
 // buildSpecialistPrompt returns the base pod system prompt with an optional

@@ -1565,10 +1565,11 @@ func (e *Engine) writeArtifactToWorkspace(ws *state.WorkflowState, art state.Art
 		return nil
 	}
 	name := strings.TrimSpace(art.Name)
-	// Skip descriptive names like "fixed package structure" or "updated go.mod".
-	// Valid file paths must not contain whitespace.
+	// Descriptive names like "fixed package structure" must fail loudly. If we
+	// silently skip them, QA later reports downstream toolchain failures instead
+	// of the actual defect: Pod did not materialize a file-backed artifact.
 	if name == "" || strings.ContainsAny(name, " \t\n\r") {
-		return nil
+		return fmt.Errorf("writeArtifactToWorkspace: artifact name %q is not a valid workspace-relative file path", art.Name)
 	}
 	clean := filepath.Clean(name)
 	// Reject absolute paths and upward traversal.
@@ -1613,6 +1614,29 @@ func (e *Engine) runToolchainValidation(ctx context.Context, ws *state.WorkflowS
 		StartedAt:   time.Now().UTC(),
 	}
 	issues := make([]string, 0)
+	if preflightIssue := validationPreflightIssue(ws, tc); preflightIssue != "" {
+		run.Passed = false
+		run.Steps = append(run.Steps, state.ValidationStep{
+			Capability: "workspace_preflight",
+			Tool:       "workspace_preflight",
+			Passed:     false,
+			Error:      preflightIssue,
+		})
+		issues = append(issues, preflightIssue)
+		run.CompletedAt = time.Now().UTC()
+		run.Summary = fmt.Sprintf("%s validation failed (%d issue(s))", tc.ID, len(issues))
+		ws.Execution.ValidationRuns = append(ws.Execution.ValidationRuns, run)
+
+		evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventValidationRun, "",
+			events.ValidationRunPayload{Phase: phase, ToolchainID: tc.ID, Profile: profileName, Passed: run.Passed, Issues: issues})
+		_ = e.store.AppendEvents(ctx, evt)
+
+		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+			return issues, err
+		}
+		return issues, nil
+	}
 
 	for _, capability := range profile {
 		capability = strings.TrimSpace(capability)
@@ -1684,6 +1708,56 @@ func (e *Engine) runToolchainValidation(ctx context.Context, ws *state.WorkflowS
 		return issues, err
 	}
 	return issues, nil
+}
+
+func validationPreflightIssue(ws *state.WorkflowState, tc ToolchainConfig) string {
+	if ws == nil || ws.Execution.Workspace == nil {
+		return ""
+	}
+	if !toolchainTargetsLanguage(tc, "go") {
+		return ""
+	}
+	hasGoFiles, err := workspaceHasFilesWithExt(ws.Execution.Workspace.Path, ".go")
+	if err != nil {
+		return fmt.Sprintf("[Source Files] Workspace preflight failed while scanning for Go source files: %v", err)
+	}
+	if hasGoFiles {
+		return ""
+	}
+	return fmt.Sprintf("[Source Files] Workspace validation found no Go source files in %s. Pod must write the source files before Go validation can run.", ws.Execution.Workspace.Path)
+}
+
+func toolchainTargetsLanguage(tc ToolchainConfig, language string) bool {
+	for _, candidate := range tc.Languages {
+		if strings.EqualFold(strings.TrimSpace(candidate), language) {
+			return true
+		}
+	}
+	return strings.EqualFold(strings.TrimSpace(tc.ID), language)
+}
+
+func workspaceHasFilesWithExt(root, ext string) (bool, error) {
+	var found bool
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(d.Name()), ext) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if errors.Is(err, filepath.SkipAll) {
+		return found, nil
+	}
+	return found, err
 }
 
 func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowState, phase string) error {

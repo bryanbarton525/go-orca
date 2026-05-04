@@ -34,3 +34,26 @@ func TestLatestSynthesisArtifact_FallsBackToTextualArtifact(t *testing.T) {
 		t.Fatalf("latestSynthesisArtifact().Name = %q, want %q", got.Name, "draft.md")
 	}
 }
+
+func TestValidateOutput_SoftwareSummaryOnlyFails(t *testing.T) {
+	out := &implOutput{Summary: "wrote main.go and go.mod"}
+
+	err := validateOutput(state.WorkflowModeSoftware, "write source files", out)
+	if err == nil {
+		t.Fatal("expected software summary-only output to fail")
+	}
+	if got := err.Error(); got != "pod: model produced summary-only output for software task \"write source files\" — write the files or return artifact content" {
+		t.Fatalf("validateOutput() error = %q", got)
+	}
+	if out.Content != "" {
+		t.Fatalf("validateOutput() mutated content = %q, want empty string", out.Content)
+	}
+}
+
+func TestValidateOutput_ContentWins(t *testing.T) {
+	out := &implOutput{Content: "package main", Summary: "wrote main.go"}
+
+	if err := validateOutput(state.WorkflowModeSoftware, "write source files", out); err != nil {
+		t.Fatalf("validateOutput() error = %v, want nil", err)
+	}
+}

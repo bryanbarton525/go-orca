@@ -82,4 +82,9 @@ go func() {
 
 ### What to write to the workspace
 
-When the toolchain is configured, the workspace is the source of truth — write the source files via `write_file`, not just inline in the artifact. Your artifact should summarise *what changed*, not contain a copy of the code.
+When the toolchain is configured, the workspace is the source of truth — write the source files via `write_file`, not just inline in the artifact.
+
+Your JSON artifact must still be complete enough for the engine to validate what happened:
+- `content` must be non-empty. Summary-only software outputs are treated as a failed task.
+- If you emit `artifact_kind` `code` or `config`, `artifact_name` must be an exact workspace-relative file path such as `main.go` or `internal/api/handler.go`. Do not use descriptive labels like `updated go.mod`.
+- If you wrote multiple files via tools, use `content` to briefly state which files were written and what changed. Do not leave it empty.
