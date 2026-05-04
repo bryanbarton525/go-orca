@@ -1943,23 +1943,39 @@ func (e *Engine) ensureToolchainBootstrap(ctx context.Context, ws *state.Workflo
 			return fmt.Errorf("toolchain bootstrap via %s reported failure: %s", toolName, output)
 		}
 	}
-	// Retry the stat check: Longhorn RWX uses NFS which has per-node attribute
-	// caching. The MCP toolchain pod may run on a different node than the engine
-	// pod, so the new go.mod may not be visible immediately via os.Stat. Retry
-	// up to 5 times with 600ms intervals (3s total) before failing.
+	// Retry the manifest check after bootstrap: Longhorn RWX uses NFS with per-node
+	// attribute caching (acregmin/acregmax default 3-60s). os.Stat alone re-uses the
+	// cached negative entry on the engine pod even after the toolchain pod has written
+	// the file on a different node. Work around this by reading the parent directory
+	// (ReadDir forces an NFS directory-cache revalidation) and checking for the filename
+	// there. Fall back to os.Stat as a belt-and-suspenders check.
+	// Allow up to 30 retries × 2s = 60s to outlast any reasonable NFS cache window.
+	manifestName := filepath.Base(manifestPath)
+	manifestDir := filepath.Dir(manifestPath)
 	var statErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 30; i++ {
+		// ReadDir forces the NFS client to revalidate the directory entry cache.
+		if entries, err := os.ReadDir(manifestDir); err == nil {
+			for _, entry := range entries {
+				if entry.Name() == manifestName {
+					statErr = nil
+					goto bootstrapOK
+				}
+			}
+		}
+		// Also try a direct stat in case the directory read doesn't flush in time.
 		if _, err := os.Stat(manifestPath); err == nil {
 			statErr = nil
-			break
+			goto bootstrapOK
 		} else {
 			statErr = err
-			time.Sleep(600 * time.Millisecond)
 		}
+		time.Sleep(2 * time.Second)
 	}
 	if statErr != nil {
 		return fmt.Errorf("toolchain bootstrap completed but %q is still missing: %w", manifestPath, statErr)
 	}
+bootstrapOK:
 	ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[bootstrap] initialized workspace via %s", capabilities.InitProject))
 	return e.store.SaveWorkflow(ctx, ws)
 }
