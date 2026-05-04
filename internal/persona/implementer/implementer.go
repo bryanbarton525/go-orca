@@ -15,6 +15,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// implArtifact is a single file entry within a multi-file Phase B response.
+type implArtifact struct {
+	ArtifactKind string `json:"artifact_kind"`
+	ArtifactName string `json:"artifact_name"`
+	Content      string `json:"content"`
+}
+
 // implOutput is the expected JSON shape from the Implementer.
 type implOutput struct {
 	ArtifactKind        string          `json:"artifact_kind"`
@@ -23,6 +30,10 @@ type implOutput struct {
 	Content             string          `json:"content"`
 	Summary             string          `json:"summary"`
 	Issues              json.RawMessage `json:"issues"`
+	// Artifacts carries one entry per source file for multi-file tasks.
+	// When non-empty, these entries are used instead of the top-level
+	// artifact_kind/artifact_name/content fields.
+	Artifacts []implArtifact `json:"artifacts"`
 }
 
 // normalizeIssues converts the raw issues field to []string regardless of
@@ -74,6 +85,22 @@ var outputSchema = map[string]any{
 		"content":              map[string]any{"type": "string"},
 		"summary":              map[string]any{"type": "string"},
 		"issues":               map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		// artifacts: optional array for multi-file tasks. Each entry holds one
+		// source file with artifact_kind, artifact_name, and content. When
+		// present, the engine writes every entry to disk automatically.
+		"artifacts": map[string]any{
+			"type":        "array",
+			"description": "For multi-file tasks: one entry per source file, each with artifact_kind (\"code\" or \"config\"), artifact_name (workspace-relative path), and content (full file source).",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"artifact_kind": map[string]any{"type": "string"},
+					"artifact_name": map[string]any{"type": "string"},
+					"content":       map[string]any{"type": "string"},
+				},
+				"required": []string{"artifact_kind", "artifact_name", "content"},
+			},
+		},
 	},
 	"required": []string{"artifact_kind", "artifact_name", "artifact_description", "content", "summary", "issues"},
 }
@@ -135,23 +162,42 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 	}
 
 	now := base.Timestamp()
-	artifact := state.Artifact{
-		ID:          uuid.New().String(),
-		WorkflowID:  packet.WorkflowID,
-		TaskID:      task.ID,
-		Kind:        normalizeArtifactKind(packet.Mode, out.ArtifactKind),
-		Name:        out.ArtifactName,
-		Description: out.ArtifactDescription,
-		Content:     out.Content,
-		CreatedBy:   state.PersonaPod,
-		CreatedAt:   now,
+
+	// Build artifact list — multi-file mode when out.Artifacts is non-empty.
+	var artifactList []state.Artifact
+	if len(out.Artifacts) > 0 {
+		for _, a := range out.Artifacts {
+			artifactList = append(artifactList, state.Artifact{
+				ID:         uuid.New().String(),
+				WorkflowID: packet.WorkflowID,
+				TaskID:     task.ID,
+				Kind:       normalizeArtifactKind(packet.Mode, a.ArtifactKind),
+				Name:       a.ArtifactName,
+				Content:    a.Content,
+				CreatedBy:  state.PersonaPod,
+				CreatedAt:  now,
+			})
+		}
+	} else {
+		// Single-file mode (backward compat).
+		artifactList = []state.Artifact{{
+			ID:          uuid.New().String(),
+			WorkflowID:  packet.WorkflowID,
+			TaskID:      task.ID,
+			Kind:        normalizeArtifactKind(packet.Mode, out.ArtifactKind),
+			Name:        out.ArtifactName,
+			Description: out.ArtifactDescription,
+			Content:     out.Content,
+			CreatedBy:   state.PersonaPod,
+			CreatedAt:   now,
+		}}
 	}
 
 	return &state.PersonaOutput{
 		Persona:     state.PersonaPod,
 		Summary:     out.Summary,
 		RawContent:  raw,
-		Artifacts:   []state.Artifact{artifact},
+		Artifacts:   artifactList,
 		Suggestions: normalizeIssues(out.Issues),
 		CompletedAt: now,
 	}, nil
@@ -188,6 +234,10 @@ func normalizeArtifactKind(mode state.WorkflowMode, raw string) state.ArtifactKi
 
 func validateOutput(mode state.WorkflowMode, taskTitle string, out *implOutput) error {
 	if strings.TrimSpace(out.Content) != "" {
+		return nil
+	}
+	// Multi-file mode: the artifacts array satisfies the content requirement.
+	if len(out.Artifacts) > 0 {
 		return nil
 	}
 

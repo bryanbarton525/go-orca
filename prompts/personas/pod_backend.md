@@ -82,32 +82,58 @@ go func() {
 
 ### What to write to the workspace
 
-When the toolchain is configured, the workspace is the source of truth — write the source files
-via `write_file` in Phase A (tool-call loop), not just inline in the Phase B artifact.
+When the toolchain is configured, the workspace is the source of truth. The engine writes every
+artifact with `artifact_kind: "code"` or `"config"` to disk automatically.
 
 #### Single-file tasks
 Return `artifact_kind: "code"` with `artifact_name` set to the exact workspace-relative filename
 (e.g., `"main.go"`, `"internal/api/handler.go"`) and put the actual source code in `content`.
-The engine will write that code to the workspace automatically as a safety net.
 
-#### Multi-file tasks (9 files, entire package, etc.)
-Write EVERY file during Phase A using `write_file` with the full workspace-prefixed path:
+```json
+{
+  "artifact_kind": "code",
+  "artifact_name": "main.go",
+  "artifact_description": "Main entry point",
+  "content": "package main\n\nfunc main() {\n\t// ...\n}\n",
+  "summary": "Implemented main.go",
+  "issues": []
+}
 ```
-write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main...")
-write_file(path="/var/lib/go-orca/workspaces/<id>/config.go", content="package main...")
-... (one call per file)
-```
-Then return Phase B with `artifact_kind: "document"` so the engine does NOT overwrite your
-workspace files with the Phase B content:
+
+#### Multi-file tasks (2+ files, entire package, etc.)
+
+Use the `artifacts` array — one entry per file. The engine writes every entry to disk.
+
+- Set top-level `artifact_kind: "document"` and `artifact_name: "implementation-summary"`.
+- Set top-level `content` to a brief plain-text summary (it will NOT be written to disk).
+- Put ALL actual source files in the `artifacts` array, each with:
+  - `artifact_kind: "code"` (or `"config"` for YAML/TOML/env files)
+  - `artifact_name`: workspace-relative path (e.g. `"main.go"`, `"internal/db/store.go"`)
+  - `content`: the COMPLETE file source — no truncation, no ellipsis, full working code
+
 ```json
 {
   "artifact_kind": "document",
   "artifact_name": "implementation-summary",
-  "content": "Implemented 9 files: main.go, config.go, storage.go, ...",
-  "summary": "..."
+  "artifact_description": "9-file linear-sync package",
+  "content": "Implemented 9 source files for the linear-sync service.",
+  "summary": "Written all source files",
+  "issues": [],
+  "artifacts": [
+    {"artifact_kind": "code", "artifact_name": "main.go",       "content": "package main\n..."},
+    {"artifact_kind": "code", "artifact_name": "config.go",     "content": "package main\n..."},
+    {"artifact_kind": "config", "artifact_name": "go.mod",      "content": "module github.com/...\n..."},
+    {"artifact_kind": "code", "artifact_name": "storage.go",    "content": "package main\n..."},
+    {"artifact_kind": "code", "artifact_name": "linear.go",     "content": "package main\n..."},
+    {"artifact_kind": "code", "artifact_name": "config_test.go","content": "package main\n..."},
+    {"artifact_kind": "code", "artifact_name": "linear_test.go","content": "package main\n..."},
+    {"artifact_kind": "code", "artifact_name": "storage_test.go","content":"package main\n..."}
+  ]
 }
 ```
 
-**WARNING**: If you use `artifact_kind: "code"` in Phase B for a multi-file task, the engine
-will write the `content` string to the workspace under `artifact_name`, OVERWRITING whatever
-was written in Phase A. Use `"document"` for multi-file summaries.
+**CRITICAL rules for `artifacts` entries:**
+- `artifact_name` must be the exact workspace-relative path — no leading `/`, no workspace prefix.
+- `content` must be the COMPLETE file. Truncated files fail compilation.
+- Do NOT use `artifact_kind: "document"` for individual files in the array — only `"code"` or `"config"`.
+- Include EVERY file the task requires. Missing files cause QA failures.
