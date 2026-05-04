@@ -171,11 +171,33 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		return "", fmt.Errorf("executor: chat error: %w", err)
 	}
 
-	// If the model returned an empty or truncated response at Phase B, attempt
-	// one slim retry: drop all tool-call turns and send only the system message
-	// and the original user prompt. This shrinks the context substantially and
-	// often recovers from token-limit failures caused by large tool results.
-	if resp.Truncated || resp.Message.Content == "" {
+	// isPreambleResponse returns true when the model emitted prose text instead
+	// of a JSON object — e.g. "I'll write all 9 files now..." with no { present.
+	// extractJSON is applied first so that JSON wrapped in markdown fences is
+	// not falsely flagged as a preamble.
+	isPreambleResponse := func(content string) bool {
+		if content == "" {
+			return false
+		}
+		extracted := extractJSON(content)
+		trimmed := strings.TrimSpace(extracted)
+		return len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[')
+	}
+
+	// If the model returned an empty, truncated, or preamble-only response at
+	// Phase B, attempt one slim retry: drop all tool-call turns and send only
+	// the system message and the original user prompt. This shrinks the context
+	// substantially and often recovers from token-limit failures caused by large
+	// tool results. The preamble check catches the case where the model ignored
+	// all JSON constraints and replied with conversational prose ("I'll write…").
+	if resp.Truncated || resp.Message.Content == "" || isPreambleResponse(resp.Message.Content) {
+		logger.Warn("executor: Phase B produced non-JSON response, retrying with slim context",
+			zap.String("workflow_id", packet.WorkflowID),
+			zap.String("persona", string(packet.CurrentPersona)),
+			zap.Bool("truncated", resp.Truncated),
+			zap.Bool("empty", resp.Message.Content == ""),
+			zap.Bool("preamble", isPreambleResponse(resp.Message.Content)),
+		)
 		slimMsgs := []common.Message{
 			{Role: common.RoleSystem, Content: phaseBSystem},
 			{Role: common.RoleUser, Content: userPrompt + jsonConstraint},
@@ -187,13 +209,14 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 			OutputSchema: e.OutputSchema,
 			SchemaName:   e.SchemaName,
 		})
-		if retryErr == nil && retryResp.Message.Content != "" && !retryResp.Truncated {
+		if retryErr == nil && retryResp.Message.Content != "" && !retryResp.Truncated && !isPreambleResponse(retryResp.Message.Content) {
 			return retryResp.Message.Content, nil
 		}
 		// Both attempts failed — return a clear error.
 		return resp.Message.Content, fmt.Errorf(
-			"executor: model %q produced an empty/truncated Phase B response (slim retry also failed) — "+
-				"try a model with a larger context window or reduce the complexity of the task",
+			"executor: model %q produced a non-JSON Phase B response (slim retry also failed) — "+
+				"the model responded with prose instead of the required JSON object; "+
+				"try a model with stronger instruction-following or reduce task complexity",
 			resp.Model,
 		)
 	}

@@ -54,6 +54,18 @@ func TestExtractJSON_PrefixTextBeforeFence(t *testing.T) {
 	}
 }
 
+func TestExtractJSON_PureProse_ReturnsNonJSON(t *testing.T) {
+	// When the model responds with pure conversational prose (no JSON object),
+	// extractJSON returns text that does NOT start with { or [. The executor
+	// treats this as a preamble response and triggers a slim retry.
+	input := "I'll write all 9 files now. Starting with main.go, then go.mod, and so on."
+	got := extractJSON(input)
+	trimmed := strings.TrimSpace(got)
+	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		t.Errorf("expected non-JSON result for pure prose, got %q", got)
+	}
+}
+
 // ─── ParseJSON ────────────────────────────────────────────────────────────────
 
 func TestParseJSON_CleanJSON(t *testing.T) {
