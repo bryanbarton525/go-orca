@@ -1943,8 +1943,22 @@ func (e *Engine) ensureToolchainBootstrap(ctx context.Context, ws *state.Workflo
 			return fmt.Errorf("toolchain bootstrap via %s reported failure: %s", toolName, output)
 		}
 	}
-	if _, err := os.Stat(manifestPath); err != nil {
-		return fmt.Errorf("toolchain bootstrap completed but %q is still missing: %w", manifestPath, err)
+	// Retry the stat check: Longhorn RWX uses NFS which has per-node attribute
+	// caching. The MCP toolchain pod may run on a different node than the engine
+	// pod, so the new go.mod may not be visible immediately via os.Stat. Retry
+	// up to 5 times with 600ms intervals (3s total) before failing.
+	var statErr error
+	for i := 0; i < 5; i++ {
+		if _, err := os.Stat(manifestPath); err == nil {
+			statErr = nil
+			break
+		} else {
+			statErr = err
+			time.Sleep(600 * time.Millisecond)
+		}
+	}
+	if statErr != nil {
+		return fmt.Errorf("toolchain bootstrap completed but %q is still missing: %w", manifestPath, statErr)
 	}
 	ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[bootstrap] initialized workspace via %s", capabilities.InitProject))
 	return e.store.SaveWorkflow(ctx, ws)
