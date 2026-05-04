@@ -83,7 +83,7 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		provider.HasCapability(common.CapabilityToolCalling) {
 
 		toolDefs := specsToDefinitions(packet.ToolRegistry.Specs())
-		const maxToolRounds = 5
+		const maxToolRounds = 25
 		for range maxToolRounds {
 			toolResp, err := provider.Chat(ctx, common.ChatRequest{
 				Model:    packet.ModelName,
