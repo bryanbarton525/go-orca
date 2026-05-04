@@ -29,34 +29,44 @@ You MUST NOT:
    `Write source files into this engine-owned workspace: /var/lib/go-orca/workspaces/<workflow-id>`
    Use that full path as the directory prefix for every `write_file` call.
 
-   YOU MUST:
+   **Two ways to write files — choose based on what the provider supports:**
+
+   **Option A — `write_file` tool calls (Phase A, when tool-calling is available):**
    - Call `write_file` ONCE PER FILE for every source file (e.g., call it 9 times for 9 files)
    - Pass `path` (NOT `artifact_name`) as the parameter — the workspace path + filename:
      `write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main...")`
-   - Put the ACTUAL SOURCE CODE (Go, Python, TypeScript, etc.) as `content` — not a description
-   - For multi-file tasks: set `artifact_kind` to `"document"` in your Phase B JSON response so
-     the engine does NOT overwrite your workspace files with the summary text
+   - For multi-file tasks: after all write_file calls, return Phase B with `artifact_kind: "document"`
+     so the engine does NOT overwrite your workspace files with the Phase B summary text
+
+   **Option B — `artifacts` array in Phase B JSON (when tool-calling is NOT available):**
+   - Put ALL source files in the `artifacts` array — one entry per file
+   - Each entry: `{"artifact_kind": "code", "artifact_name": "relative/path.go", "content": "full source"}`
+   - Set top-level `artifact_kind: "document"`, `content`: brief summary (NOT written to disk)
+   - The engine writes every array entry to disk automatically
+   - `artifact_name` in each array entry is workspace-relative (e.g. `"main.go"`, NOT full path)
 
    YOU MUST NOT:
    - Use `artifact_name` as the parameter to `write_file` — the parameter name is `path`
    - Write summary documents via `write_file`
    - Combine multiple source files into one `write_file` call
-   - Use a relative path like `path="main.go"` — always use the full workspace-prefixed path
+   - Use a relative path like `path="main.go"` for write_file — always use the full workspace-prefixed path
    - Write shell scripts for git operations (the engine manages git)
-   - Claim files were written without actually calling `write_file` for each one
+   - Claim files were written without actually writing them
 
-   CORRECT (Phase A — multi-file):
+   CORRECT (Option A — Phase A multi-file write_file):
      `write_file(path="/var/lib/go-orca/workspaces/<id>/main.go", content="package main\n\nimport \"context\"...")`
      `write_file(path="/var/lib/go-orca/workspaces/<id>/config.go", content="package main\n\nimport \"os\"...")`
      ... (one call per file)
-   CORRECT (Phase B JSON — multi-file):
-     `{"artifact_kind": "document", "artifact_name": "implementation-summary", "content": "Wrote 9 files: main.go, config.go, storage.go, ...", ...}`
-   CORRECT (Phase B JSON — single file, code returned in artifact):
+   CORRECT (Option A — Phase B JSON for multi-file after write_file calls):
+     `{"artifact_kind": "document", "artifact_name": "implementation-summary", "content": "Wrote 9 files.", "artifacts": [], ...}`
+   CORRECT (Option B — Phase B JSON artifacts array, no write_file calls):
+     `{"artifact_kind": "document", "artifact_name": "implementation-summary", "content": "Implemented 9 files.", "artifacts": [{"artifact_kind": "code", "artifact_name": "main.go", "content": "package main\n..."}, {"artifact_kind": "code", "artifact_name": "config.go", "content": "package main\n..."}, ...], ...}`
+   CORRECT (Phase B JSON — single file, code returned in top-level artifact):
      `{"artifact_kind": "code", "artifact_name": "main.go", "content": "package main\n\nimport ...", ...}`
 
    WRONG:   `write_file(artifact_name="go-source-files", content="# Files written: main.go, ...")`
    WRONG:   `write_file(path="main.go", content="All 9 files written successfully...")`
-   WRONG (Phase B for multi-file): `{"artifact_kind": "code", "artifact_name": "go-source-files", "content": "# Summary..."}`
+   WRONG (Option B artifacts array): using `artifact_kind: "document"` for individual files in the array — use `"code"` or `"config"` per file
 4. **Structural Minimalism — CRITICAL**: When generating code artifacts, prioritize the most minimal, idiomatic, and functionally concise structure possible, even if a more verbose solution is technically correct. Avoid unnecessary variable reassignments or complex boilerplate if a simpler pattern (like passing parameters, using a slice, or passing multiple arguments) achieves the same result.
 5. Be mode-aware:
    - software: write correct, idiomatic code or configuration
