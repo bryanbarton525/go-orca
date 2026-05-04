@@ -12,6 +12,7 @@ on:
       - "deploy/docker/**"
       - "skills/**"
       - "customization/**"
+      - "prompts/**"
       - "ui/**"
       - "e2e/**"
       - ".github/workflows/build.yaml"
