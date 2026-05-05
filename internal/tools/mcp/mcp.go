@@ -262,7 +262,7 @@ func (t *MCPTool) Call(ctx context.Context, args json.RawMessage) (json.RawMessa
 type LoaderOptions struct {
 	// HTTPTimeout is the timeout applied to the HTTP client used for transport.
 	// It controls individual request timeouts, not the session lifetime.
-	// Defaults to 30 seconds.
+	// Defaults to 300 seconds. Set explicitly (e.g. 30s) on low-latency services.
 	HTTPTimeout time.Duration
 
 	// HTTPTransport selects the HTTP transport variant.  Defaults to [TransportStreamable].
@@ -367,7 +367,7 @@ func connect(ctx context.Context, reg *tools.Registry, transport sdkmcp.Transpor
 // buildHTTPTransport constructs the appropriate HTTP transport based on opts.
 func buildHTTPTransport(endpoint string, opts LoaderOptions) (sdkmcp.Transport, error) {
 	if opts.HTTPTimeout <= 0 {
-		opts.HTTPTimeout = 30 * time.Second
+		opts.HTTPTimeout = 300 * time.Second
 	}
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
