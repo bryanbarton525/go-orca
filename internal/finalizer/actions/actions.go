@@ -673,9 +673,39 @@ func (a *RepoCommitAction) Execute(ctx context.Context, in Input) (*Output, erro
 	}
 
 	apiBase := "https://api.github.com/repos/" + cfg.Repo
-	var committed []string
-	var links []string
+	ghDo := func(method, url string, body any) ([]byte, int, error) {
+		var r io.Reader
+		if body != nil {
+			b, err := json.Marshal(body)
+			if err != nil {
+				return nil, 0, err
+			}
+			r = bytes.NewReader(b)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, r)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return b, resp.StatusCode, nil
+	}
 
+	type artifactEntry struct {
+		name    string
+		content string
+	}
+	pathOrder := make([]string, 0, len(in.Artifacts))
+	pathMap := make(map[string]artifactEntry, len(in.Artifacts))
 	for _, art := range in.Artifacts {
 		filePath := art.Path
 		if filePath == "" {
@@ -684,36 +714,41 @@ func (a *RepoCommitAction) Execute(ctx context.Context, in Input) (*Output, erro
 		if cfg.Path != "" {
 			filePath = strings.TrimRight(cfg.Path, "/") + "/" + filePath
 		}
+		if _, exists := pathMap[filePath]; !exists {
+			pathOrder = append(pathOrder, filePath)
+		}
+		pathMap[filePath] = artifactEntry{name: art.Name, content: art.Content}
+	}
 
-		content := base64.StdEncoding.EncodeToString([]byte(art.Content))
-		putPayload := map[string]string{
-			"message": "add " + art.Name,
+	var committed []string
+	var links []string
+	for _, filePath := range pathOrder {
+		art := pathMap[filePath]
+		content := base64.StdEncoding.EncodeToString([]byte(art.content))
+		putPayload := map[string]any{
+			"message": "add " + art.name,
 			"content": content,
 			"branch":  cfg.Branch,
 		}
 
-		data, err := json.Marshal(putPayload)
-		if err != nil {
-			return nil, fmt.Errorf("actions: repo-commit marshal: %w", err)
+		// Existing files on the target branch require a SHA in the PUT payload.
+		existData, existStatus, err := ghDo(http.MethodGet, apiBase+"/contents/"+filePath+"?ref="+cfg.Branch, nil)
+		if err == nil && existStatus == http.StatusOK {
+			var existResp struct {
+				SHA string `json:"sha"`
+			}
+			if json.Unmarshal(existData, &existResp) == nil && existResp.SHA != "" {
+				putPayload["sha"] = existResp.SHA
+				putPayload["message"] = "update " + art.name
+			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-			apiBase+"/contents/"+filePath, bytes.NewReader(data))
-		if err != nil {
-			return nil, fmt.Errorf("actions: repo-commit create request: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		respBody, status, err := ghDo(http.MethodPut, apiBase+"/contents/"+filePath, putPayload)
 		if err != nil {
 			return nil, fmt.Errorf("actions: repo-commit PUT %s: %w", filePath, err)
 		}
-		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("actions: repo-commit PUT %s (%d): %s", filePath, resp.StatusCode, string(respBody))
+		if status != http.StatusCreated && status != http.StatusOK {
+			return nil, fmt.Errorf("actions: repo-commit PUT %s (%d): %s", filePath, status, string(respBody))
 		}
 
 		var putResp struct {
