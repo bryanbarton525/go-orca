@@ -921,6 +921,7 @@ func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowSta
 		Artifacts: ws.Artifacts,
 		Config:    ws.DeliveryConfig,
 	}
+	actionIn.Config = hydrateDeliveryConfig(actionKey, ws, actionIn.Config)
 	actionOut, actionErr := actions.Global.Execute(ctx, actions.ActionKind(actionKey), actionIn)
 	if actionErr != nil {
 		return fmt.Errorf("delivery action %q failed: %w", actionKey, actionErr)
@@ -940,6 +941,81 @@ func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowSta
 	}
 
 	return nil
+}
+
+// hydrateDeliveryConfig backfills required delivery fields from engine-owned
+// workspace metadata when the caller did not provide them explicitly.
+func hydrateDeliveryConfig(actionKey string, ws *state.WorkflowState, raw json.RawMessage) json.RawMessage {
+	if actionKey != string(actions.ActionGitHubPR) && actionKey != string(actions.ActionRepoCommit) {
+		return raw
+	}
+	type deliveryCfg struct {
+		Repo   string `json:"repo"`
+		Branch string `json:"branch"`
+	}
+	cfg := deliveryCfg{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cfg)
+	}
+	if cfg.Repo == "" {
+		cfg.Repo = inferRepoFromWorkspace(ws)
+	}
+	if cfg.Branch == "" && ws != nil && ws.Execution.Workspace != nil {
+		cfg.Branch = strings.TrimSpace(ws.Execution.Workspace.Branch)
+	}
+	if cfg.Branch == "" {
+		cfg.Branch = "main"
+	}
+	if cfg.Repo == "" {
+		return raw
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+func inferRepoFromWorkspace(ws *state.WorkflowState) string {
+	if ws == nil || ws.Execution.Workspace == nil {
+		return ""
+	}
+	repoURL := strings.TrimSpace(ws.Execution.Workspace.RepoURL)
+	if repoURL == "" {
+		return ""
+	}
+	repoURL = strings.TrimSuffix(repoURL, "/")
+	repoURL = strings.TrimSuffix(repoURL, ".git")
+	if strings.HasPrefix(repoURL, "git@github.com:") {
+		slug := strings.TrimPrefix(repoURL, "git@github.com:")
+		if isRepoSlug(slug) {
+			return slug
+		}
+		return ""
+	}
+	const host = "github.com/"
+	idx := strings.Index(strings.ToLower(repoURL), host)
+	if idx == -1 {
+		return ""
+	}
+	slug := repoURL[idx+len(host):]
+	if isRepoSlug(slug) {
+		return slug
+	}
+	return ""
+}
+
+func isRepoSlug(slug string) bool {
+	parts := strings.Split(slug, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // runPodPhase runs the Pod against every runnable task that is

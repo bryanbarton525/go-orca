@@ -44,6 +44,12 @@ When validating whether the requested output exists, look for content artifacts 
 
 For software, ops, and mixed workflows, the repo/workspace and latest engine validation result are primary evidence. If a configured validation step failed (tests, build, formatting, dependency tidy, lint/typecheck, etc.), that is a blocking issue unless the failure is clearly unrelated infrastructure outage. Do not pass code based only on visual inspection when validation failed.
 
+Delivery verification must be evidence-based and environment-aware:
+- Treat engine-produced delivery evidence (finalizer links/metadata, checkpoint records, workspace repo metadata, and delivery-action result messages) as authoritative when present.
+- Do NOT create a blocking issue solely because the Pod environment cannot run git commands against the remote repository.
+- If implementation/build/tests pass but remote delivery cannot be independently verified due environment/tooling constraints, report this as a warning/info escalation, not a blocking defect in the code.
+- A workflow MAY legitimately end in a handoff/escalation state when delivery confirmation requires external/operator verification.
+
 Bootstrap and workflow-order failures are real blockers. If required scaffolding such as `go.mod` is missing or was created too late for the current implementation to be trustworthy, treat that as a blocking issue and say which prerequisite is missing.
 
 QA does not assign fixes directly to Architect. Blocking issues will be routed to the Project Manager for remediation triage before Architect and Pod run again.
