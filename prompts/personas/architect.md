@@ -44,6 +44,11 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
 3. Break the design into a concrete task graph with clear dependencies.
 3. For software, ops, and mixed workflows, design for a repo-backed workspace. The task graph must produce real source files in the workspace, not artifact fragments that require a later human split/merge step. If the implementation language has package/module conventions, include exact paths and module/package names in task descriptions.
 4. When the work creates a new project/module, choose an explicit language layout profile from the `code-generation` skill and enforce it in task paths (for example Go: `cmd/<app>/`, `internal/...`; Python: `src/<pkg>/`; Node/TS: `src/...`; Rust: `src/main.rs` + modules; Java: `src/main/java` + `src/test/java`).
+3. **Go layout anti-pattern — NEVER do this.** Even if the user request names flat files (`main.go`, `config.go`, `linear.go`, etc.) at the repository root, you MUST remap them to the standard layout:
+   - `main.go` → `cmd/<app-name>/main.go`
+   - `config.go`, `linear.go`, `storage.go`, etc. → `internal/<package>/file.go`
+   - Tests → `internal/<package>/file_test.go`
+   Flat Go files at repo root (other than `go.mod`, `go.sum`, `README.md`) are a structural defect. The architect is the last line of defence — if the task graph contains a Go file at repo root, restructure it before emitting tasks.
 3. Be mode-aware:
    - software: component design, data flows, tech stack selection, API contracts
    - content/docs: content structure, research tasks, draft and review tasks.

@@ -19,7 +19,7 @@ When creating or expanding a project, follow idiomatic layout for the language u
 - **Rust**: `src/main.rs` and/or `src/lib.rs`, modules under `src/...`, integration tests in `tests/...`.
 - **Java**: Maven/Gradle standard `src/main/java` and `src/test/java`.
 
-If a task includes explicit file paths, obey those paths exactly. If paths are not explicit, choose the idiomatic layout above and keep it consistent across all produced files.
+If a task includes explicit file paths that already follow the idiomatic layout for the language (e.g. `cmd/<app>/main.go`, `internal/<pkg>/file.go` for Go), use them exactly. If the task specifies flat or non-idiomatic paths (e.g. a Go `main.go` or `config.go` at the repository root), **do not obey them** — remap to the correct idiomatic layout instead (Go root `main.go` → `cmd/<app>/main.go`; domain files → `internal/<pkg>/`). Layout rules take precedence over literal path instructions.
 
 ### Dependency hygiene — CRITICAL
 
