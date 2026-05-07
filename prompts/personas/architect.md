@@ -112,6 +112,16 @@ beyond the original request. This means every task description must be fully sel
 5. **Workspace/file materialization** — for code tasks, specify exact relative file paths and state that the Pod must write those files into the provided workspace. Never ask for combined pseudo-files, comments that say "split this later", or multi-package content in a single Go file.
 6. **Bootstrap-first ordering** — for Go tasks, the task graph must ensure `go.mod` exists before code-generation tasks that rely on module resolution. More generally, scaffolding/bootstrap tasks must precede implementation tasks that depend on them.
 
+   **Go module path alignment — CRITICAL**: When attaching to an existing repository, the **first task in the graph** MUST verify that the `go.mod` module directive matches the import prefix used throughout the codebase. For example, if internal packages will be imported as `linear-sync/internal/config`, then `go.mod` must declare `module linear-sync`. A mismatch between the module path in `go.mod` and the import paths in source files causes `package X is not in std` errors at build time — Go treats unrecognised prefixes as standard-library lookups rather than module paths.
+
+   Include a dedicated bootstrap/verification task that:
+   - Reads the current `go.mod` at the workspace root
+   - Confirms the `module` directive matches the intended import prefix (e.g. `linear-sync`, not `workflow/<id>`)
+   - Overwrites `go.mod` with the correct module path if it does not match, keeping the `go` version directive unchanged
+   - Must complete (and depend-on nothing) before ANY code-generation task runs
+
+   This task must be the first node in the dependency graph. All code-generation tasks must declare a `depends_on` entry pointing to this bootstrap task.
+
 **Bad description (too thin):**
 > Explain how models are discovered. Include Go struct definitions.
 
