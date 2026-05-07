@@ -1,11 +1,132 @@
 ---
 name: code-generation
-description: Best practices for writing idiomatic, production-quality Go code.
+description: Best practices for writing idiomatic, production-quality code and project layouts across Go, Python, TypeScript/Node, Rust, and Java.
 ---
 
 # Code Generation Skill
 
-Use this skill when implementing Go code for any module in this repository.
+Use this skill when implementing code for any module in this repository.
+
+## Language Layout Profiles — CRITICAL
+
+When creating a new project or major module, select the matching profile below and keep file paths consistent with it. Do not invent ad-hoc directory trees.
+
+### Go (service/app) — project-layout style
+
+Use this as default for production Go services. It follows the common Go community layout style (cmd + internal + pkg) while keeping it pragmatic.
+
+```
+.
+├── cmd/
+│   └── <app-name>/
+│       └── main.go
+├── internal/
+│   ├── app/            # wiring/bootstrap
+│   ├── domain/         # core business types/rules
+│   ├── service/        # use-cases
+│   ├── transport/      # http/grpc handlers
+│   └── store/          # db/repository adapters
+├── pkg/                # optional reusable public packages
+├── api/                # OpenAPI/proto (optional)
+├── migrations/         # db migrations (optional)
+├── test/               # integration/e2e harness (optional)
+├── go.mod
+└── README.md
+```
+
+Rules:
+- `cmd/<app-name>/main.go` is the only process entrypoint.
+- Keep business logic in `internal/`; handlers call services, not raw SQL.
+- Put `go.mod` at repo root (single-module default).
+- For small libraries (not services), use a simpler root package layout and omit `cmd/`.
+
+### Python (package/service)
+
+```
+.
+├── pyproject.toml
+├── src/
+│   └── <package_name>/
+│       ├── __init__.py
+│       ├── app.py
+│       ├── domain/
+│       ├── services/
+│       └── adapters/
+├── tests/
+├── scripts/            # optional operational scripts
+└── README.md
+```
+
+Rules:
+- Use `src/` layout for import safety.
+- Keep tests outside package under `tests/`.
+- Framework bootstrapping (FastAPI/Flask/CLI) stays in `app.py` or `main.py`, not mixed into domain code.
+
+### TypeScript / Node (backend service)
+
+```
+.
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── index.ts        # startup/bootstrap
+│   ├── domain/
+│   ├── services/
+│   ├── routes/
+│   ├── middleware/
+│   └── infra/
+├── test/               # unit/integration tests
+├── dist/               # build output (generated)
+└── README.md
+```
+
+Rules:
+- Source only in `src/`; never mix generated output into source paths.
+- Keep runtime config/env parsing in a dedicated module (for example `src/infra/config.ts`).
+
+### Rust (service/CLI)
+
+```
+.
+├── Cargo.toml
+├── src/
+│   ├── main.rs         # binary entrypoint
+│   ├── lib.rs          # optional reusable crate API
+│   ├── domain/
+│   ├── service/
+│   └── adapters/
+├── tests/              # integration tests
+└── README.md
+```
+
+Rules:
+- Prefer `src/lib.rs` + thin `main.rs` for testability.
+- Group modules by responsibility, not by file type.
+
+### Java (Maven/Gradle service)
+
+```
+.
+├── pom.xml | build.gradle
+├── src/
+│   ├── main/
+│   │   ├── java/<base_package>/
+│   │   └── resources/
+│   └── test/
+│       ├── java/<base_package>/
+│       └── resources/
+└── README.md
+```
+
+Rules:
+- Mirror package structure in test tree.
+- Keep configuration in `resources/` and business logic in package modules.
+
+### Layout Selection Heuristics
+
+- New service/application: use the full profile for that language.
+- Small single-purpose utility: allow reduced layout, but still keep idiomatic entrypoint + tests.
+- Remediation cycle: keep existing valid layout unless the blocker is directly caused by layout.
 
 ## Idioms
 
@@ -20,6 +141,7 @@ Use this skill when implementing Go code for any module in this repository.
 - One package per directory; avoid cyclic imports.
 - Keep `internal/` packages unexported to the module boundary; expose stable API via top-level packages.
 - Use `cmd/` only for `main` packages.
+- Follow the selected language layout profile above for directory structure and file placement.
 
 ## Testing
 
