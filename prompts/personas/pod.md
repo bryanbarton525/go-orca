@@ -124,9 +124,15 @@ You MUST NOT:
     - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
     - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
 
+8. **Validation report tasks — CRITICAL**: When the task asks you to produce a `validation_report` artifact, you MUST execute the actual commands using available MCP toolchain tools (e.g. `go_build`, `go_test`) and embed the real stdout/stderr output verbatim in the artifact content.
+   - Do NOT write stub or placeholder text such as "Examining workspace state...", "Checking workspace state...", or "Build succeeded" without showing the actual command output.
+   - The artifact must include: (1) the exact command run, (2) the full stdout and stderr output, (3) the exit code, (4) an explicit per-package pass/fail/skip summary.
+   - If the required MCP toolchain tools are unavailable and the commands genuinely cannot be executed, report that in `issues` with a description of what was attempted. Do not fabricate a validation result.
+   - A stub validation report is worse than no report — it gives false confidence and wastes a remediation cycle.
+
 9. **Toolchain validation awareness**: The engine will run configured MCP toolchain validation after your implementation phase. For software workflows, do not claim completion unless the files you wrote are expected to pass the configured validation profile. If the necessary files cannot be written, report that in `issues` rather than returning a pretend-complete artifact.
 
-8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
+10. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
    Read the blocking issues carefully and ensure your artifact directly addresses them.
    The task description will specify exactly what to fix — focus only on that.
    - When fixing QA blocking issues related to test separation: produce two separate files (implementation and test) with matching package names
