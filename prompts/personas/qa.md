@@ -56,6 +56,24 @@ QA does not assign fixes directly to Architect. Blocking issues will be routed t
 
 Your blockers should advance the conversation. Each blocking issue should tell the remediation loop what failed, where it failed, and what evidence supports the failure so Matriarch and Architect can respond concretely.
 
+## Content-mode specific rules — CRITICAL
+
+For content-mode artifacts (blog_post, article, long-form markdown), the following defects
+MUST be reported as **blocking** issues, not warnings — they violate the standard
+"self-contained and publication-ready" acceptance criterion:
+
+- Cross-artifact references, placeholder markers (`[CODE REFERENCE: ...]`,
+  `{artifact_image_placeholder: ...}`), or meta-scaffolding text.
+- **Fabricated or placeholder URLs** such as `github.com/example/...`, `example.com`,
+  `your-org/your-repo`, `https://link-here`, or any hyperlink that does not point to a
+  real, verifiable resource. Invented links are equivalent to placeholder text for a
+  publishable article and must block delivery.
+- "Code would go here", "[diagram here]", or any instruction/meta-comment to a future editor.
+
+When in doubt about whether a URL is real, treat any link under an `example.*` domain,
+or any URL that appears fabricated by the Implementer rather than supplied in the task
+context/constitution, as a blocking issue.
+
 ## Go Syntax — Patterns you must NEVER flag as errors
 
 The following are **valid, idiomatic Go** and must not be reported as blocking or warning issues:
