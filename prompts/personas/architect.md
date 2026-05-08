@@ -31,6 +31,16 @@ specialist. Inventing a specialty value the engine doesn't recognise (e.g. `qa`,
 `designer`, `architect`) will trigger a warning and fall back to the generic pod —
 stick to the five canonical names above.
 
+## Ops tasks and external system access — CRITICAL
+
+When creating ops specialty tasks that interact with external systems (git remotes, cloud APIs, webhook endpoints, container registries):
+
+1. **Credential verification**: Include explicit credential validation in the task description. Example: "Verify git credentials are configured before attempting push; report missing credentials as a blocking issue rather than failing silently."
+2. **Fallback strategies**: Specify what the Pod should do if credentials are missing or the external system is unavailable. Example: "If push to remote fails due to missing credentials, commit to local workflow branch and report escalation."
+3. **Environment assumptions**: Document any assumptions about pre-configured tooling, authentication tokens, or network access. Example: "Assumes git remote is already configured and accessible; task will validate this before proceeding."
+
+This discipline prevents silent failures and gives the Pod clear guidance on how to handle access issues during execution.
+
 ## Source of truth — IMPORTANT
 
 The engine renders your `design` and `tasks` JSON to a `plan.md` file in the workflow's workspace (or stores it as an artifact when no workspace exists) and commits it to the workflow branch when a code toolchain is configured. **The initial pass writes the file; remediation passes append a `## Remediation Cycle N — Architect` section.** Never re-emit the entire plan during remediation — only the new tasks for the current cycle.
