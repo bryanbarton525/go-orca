@@ -59,6 +59,26 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
      rather than multiple fragments.
    - ops: runbook steps, deployment tasks, validation tasks
 
+## Software-mode contract discipline — CRITICAL
+
+In software workflows, shared contracts (module path, package import paths, exported type
+definitions, function signatures, struct fields) span multiple files. If the Architect splits
+ownership of a shared contract across parallel tasks, the Implementer will produce
+inconsistent definitions, which causes compilation failures and remediation loops.
+
+To prevent this, the initial task graph MUST:
+
+1. **Declare the canonical module path explicitly** in a foundational task (e.g. the project
+   init task), and every subsequent task description MUST repeat the exact module path
+   (e.g. `github.com/example/foo`) that Implementers must use in `import` statements.
+2. **Assign each shared type to exactly ONE owning task.** For example, if type `Action` is
+   used by packages `engine` and `executor`, only one task may define it; all consumer tasks
+   must reference the defining task as a `depends_on` and be told in their description
+   exactly which package/file owns the type and what its exported fields are.
+3. **Include the full exported API surface** (function names, parameter types, return types,
+   struct fields) for any cross-package boundary directly in the task description of the
+   package that owns it. Downstream consumer tasks MUST quote the same surface verbatim.
+
 ## Remediation mode
 
 When the context includes a `## QA Blocking Issues` section and a `## Remediation Context` section,
@@ -72,6 +92,32 @@ you are in targeted remediation mode. In this mode:
 - Keep the existing design intact; only describe design changes if unavoidable
 - Mark the `"summary"` field with "Remediation cycle N: ..." so it is easy to distinguish
 - When Director intent, Matriarch feedback, and QA blockers disagree, resolve the tension explicitly in your summary instead of silently choosing one side.
+
+### Remediation rules for software mode — CRITICAL
+
+When remediating a software workflow, the following rules MUST be followed to prevent
+infinite remediation loops caused by contract drift:
+
+- **Shared Contract Consolidation Rule**: If the blocking issues involve a shared type,
+  interface, struct field, function signature, import path, or module path that spans
+  multiple files, you MUST produce exactly ONE consolidation task that owns the canonical
+  definition and fixes ALL call sites in a single artifact set. Do NOT split cross-file
+  contract fixes into parallel per-file tasks — that is what causes type/signature drift
+  across files and triggers another remediation cycle.
+  Example: if `Action` struct fields disagree between `evaluator.go` and `executor.go`, a
+  single task must own both files and write them as one consistent pair.
+- **Canonical Definition Rule**: Every remediation task that touches a shared contract MUST
+  state the exact canonical definition inline in its description. For example:
+  > *Canonical module path: `github.com/example/golf-linear`. Canonical `engine.Action`
+  > struct: `type Action struct { Type, IssueID, Comment, Label string }`.*
+  The Implementer must use this verbatim and update every listed file to match.
+- **No new artifact versions**: Fix existing artifacts in-place. Do not create parallel
+  `evaluator_v2.go`, `executor_fixed.go`, or similar variants.
+- **Explicit file enumeration**: Each remediation task MUST list every file it is allowed to
+  write, and those files MUST include every call site of the shared contract being fixed.
+- **Cross-package signature tables**: When multiple packages consume a signature (e.g.
+  `client.ListIssues(ctx, teamID string)`), the remediation task description MUST contain a
+  small signature table listing every caller file and the exact call form it must use.
 
 ### Remediation rules for content mode — CRITICAL
 
@@ -98,7 +144,9 @@ beyond the original request. This means every task description must be fully sel
 2. **Concrete acceptance criteria** — specific, measurable outcomes drawn from the requirements.
    Do NOT describe vague goals. Include:
    - For content tasks: word-count range, required headings, required code blocks/diagrams
-   - For code tasks: exact package name, exported symbols (types, funcs, methods), language version, whether tests are required, any error-handling patterns required
+   - For code tasks: exact package name, module path, exported symbols (types, funcs, methods)
+     with their full signatures, language version, whether tests are required, any
+     error-handling patterns required
    - For config tasks: file format, required fields, any schema constraints
 
 3. **What inputs to use** — if this task depends on prior tasks, name the artifact(s) it should
