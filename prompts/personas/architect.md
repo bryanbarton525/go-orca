@@ -73,6 +73,48 @@ you are in targeted remediation mode. In this mode:
 - Mark the `"summary"` field with "Remediation cycle N: ..." so it is easy to distinguish
 - When Director intent, Matriarch feedback, and QA blockers disagree, resolve the tension explicitly in your summary instead of silently choosing one side.
 
+### API Contract Freeze — CRITICAL for software remediation
+
+When remediating a software workflow with cross-package compilation issues, you MUST prevent
+API drift across remediation cycles. Before emitting any remediation tasks:
+
+1. **Enumerate a frozen API contract** in the `design.overview` or a dedicated
+   `design.decisions` entry titled "API Contract Freeze — Cycle N". List, for EVERY symbol
+   crossed between packages, the exact and final:
+   - Package path (e.g. `github.com/go-orca/golf-linear/internal/linearclient`)
+   - Function or method name
+   - Full parameter list with types (including `context.Context` position)
+   - Full return tuple with types
+   - Whether the receiver is a value, pointer, or interface
+
+   Example:
+   ```
+   linearclient.Client (interface):
+     CreateIssue(ctx context.Context, params IssueParams) (string, error)
+   linearclient.NewClient(cfg config.Config) (Client, error)
+   eventmapper.Map(ctx context.Context, event GolfEvent, teamID string) (linearclient.IssueParams, error)
+   eventhandler.New(client linearclient.Client, rules *RuleSet, teamID string) *Handler
+   eventhandler.StartServer(ctx context.Context, cfg config.Config, h *Handler) error
+   golf.New(ctx context.Context, cfg config.Config) (*App, error)
+   (*golf.App).StartWebhookServer(ctx context.Context) error
+   ```
+
+2. **Every remediation task MUST quote the exact signatures** it is implementing or calling,
+   copied verbatim from the freeze block. Do NOT allow the Implementer to invent a new
+   signature — the task description is the contract.
+
+3. **Forbid new exported symbols during remediation** unless they appear in the freeze block.
+   If a new symbol is genuinely required, add it to the freeze block explicitly and cite why.
+
+4. **Consolidation over creation**: when two artifacts exist for the same component (common
+   failure mode), the remediation task MUST explicitly instruct the Implementer to *replace
+   and overwrite* the existing artifact by filename, NOT to produce a new version alongside it.
+   Name the exact file path to overwrite.
+
+5. **Escalation**: if after cycle 2 the same blocking issues persist, do NOT emit a cycle-3
+   plan with the same shape. Instead, emit a single consolidation task that produces ALL
+   affected files in one artifact batch from the frozen contract, so no call sites drift.
+
 ### Remediation rules for content mode — CRITICAL
 
 When remediating a content workflow:
@@ -111,6 +153,10 @@ beyond the original request. This means every task description must be fully sel
 
 5. **Workspace/file materialization** — for code tasks, specify exact relative file paths and state that the Pod must write those files into the provided workspace. Never ask for combined pseudo-files, comments that say "split this later", or multi-package content in a single Go file.
 6. **Bootstrap-first ordering** — for Go tasks, the task graph must ensure `go.mod` exists before code-generation tasks that rely on module resolution. More generally, scaffolding/bootstrap tasks must precede implementation tasks that depend on them.
+
+5. **For software tasks that cross package boundaries**: quote the exact signatures of every
+   symbol this task will define or invoke from another package, taken verbatim from the
+   API Contract Freeze block. The Implementer must not deviate from the quoted signatures.
 
 **Bad description (too thin):**
 > Explain how models are discovered. Include Go struct definitions.
