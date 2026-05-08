@@ -1,3 +1,7 @@
+---
+name: qa-validation
+description: Use this skill when reviewing code or infrastructure changes for correctness, safety, and completeness.
+---
 # QA Validation Skill
 
 Use this skill when reviewing code or infrastructure changes for correctness, safety, and completeness.
@@ -64,6 +68,25 @@ QA is about **finding failure modes before they hit production**, not rubber-sta
 - [ ] **ALL tests create fresh `http.ServeMux` (never use `http.DefaultServeMux`)**
 - [ ] Concurrent tests verify via `wg.Wait()` + race detector, not hardcoded expected values
 - [ ] Proper imports present (`context`, `fmt`, `sync`, `time`, `net/http`, `testing`)
+
+### Go Test Count Interpretation — CRITICAL
+
+When verifying expected test result counts (e.g. "4 PASS and 2 SKIP"), account for how Go
+reports table-driven sub-tests:
+
+- Each `t.Run(name, ...)` sub-case produces its own `--- PASS`, `--- FAIL`, or `--- SKIP` line
+  in `go test -v` output.
+- A single `TestFoo` with 4 sub-cases contributes **4 individual pass lines** plus one top-level
+  `--- PASS: TestFoo` line to the verbose output.
+- When the constitution specifies an exact pass/skip count, clarify whether the count refers to
+  **top-level test functions** or **individual sub-test lines** (including `t.Run` cases).
+- Do NOT raise a blocking issue about mismatched counts without first confirming which counting
+  convention the specification intends.
+
+Example: `TestLoad` with 4 table-driven sub-cases + `TestFetchIssues` + `TestFetchIssues_APIError`
++ 2 skipped storage tests = 3 top-level passes + 4 sub-test passes + 2 skips in verbose output.
+If the spec says "4 PASS 2 SKIP", it likely refers to top-level test functions (excluding
+sub-tests), or to a specific subset. Verify the intent before blocking.
 
 ## API Review Checklist
 
@@ -172,24 +195,6 @@ When handling QA blocking issues:
 4. **Verify test correctness** — concurrent tests must use `wg.Wait()` and not hardcoded expectations
 5. **Check test isolation** — no shared state between tests, proper cleanup
 6. **Consistency** — use same patterns everywhere (e.g., always `UnixMilli()`)
-
-## Common Go False Positives — Do NOT Report as Issues
-
-The following are valid idiomatic Go. Reporting them as blocking issues wastes a full
-Architect → Implementer → QA remediation cycle and must be avoided:
-
-| Pattern | Why it is valid |
-|---|---|
-| `append(dst, src...)` | Core Go spec §Built-in functions; `...` spreads any slice expression |
-| `append(dst, fn()...)` | Method or function call returning a slice is a valid slice expression |
-| `fmt.Errorf("msg: %w", err)` | `%w` is the standard error wrapping verb since Go 1.13 |
-| `var _ Iface = (*T)(nil)` | Compile-time interface satisfaction check; not dead code |
-| `//go:embed ...` | Standard Go 1.16+ embed directive |
-| Named returns in `defer` | Idiomatic error-capture in deferred cleanup |
-| `errors.Is` / `errors.As` on wrapped error chains | Correct unwrapping API; do not replace with `==` |
-
-When in doubt, cross-reference `skills/code-generation/references/go-idioms.md` before
-raising a blocking syntax issue.
 
 ## Common Go False Positives — Do NOT Report as Issues
 
