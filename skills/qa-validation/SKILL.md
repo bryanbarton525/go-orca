@@ -65,6 +65,22 @@ QA is about **finding failure modes before they hit production**, not rubber-sta
 - [ ] Concurrent tests verify via `wg.Wait()` + race detector, not hardcoded expected values
 - [ ] Proper imports present (`context`, `fmt`, `sync`, `time`, `net/http`, `testing`)
 
+## Content Article Validation
+
+When validating word-count compliance for technical articles that include embedded code examples, apply the **prose-only word count** convention:
+
+- **Count**: prose body text — all narrative sentences, headings, and inline text outside code blocks.
+- **Exclude**: contents of fenced code blocks (` ``` ` … ` ``` `), import/package declaration lines, inline code comments (`// …`) inside code blocks, and YAML frontmatter.
+
+This convention is defined in the `content-writing` skill. Apply it consistently: do not raise a blocking issue for word-count non-compliance unless the prose-only count falls outside the specified range. Counting code lines as prose will produce false positives.
+
+Additional content checklist:
+
+- [ ] All acceptance criteria that reference specific sections (e.g. WithCancel, WithTimeout) are satisfied by actual content, not placeholder text
+- [ ] No cross-artifact references (`[CODE REFERENCE: ...]`, `{artifact_image_placeholder: ...}`) in any deliverable article
+- [ ] Code examples in the article compile as-is if extracted (stdlib-only examples can be verified by inspection; flag if imports are missing or syntax is clearly wrong)
+- [ ] Logical flow matches the constitution's required section order
+
 ## API Review Checklist
 
 - [ ] Request and response types validated (not raw `map[string]any`)
@@ -172,24 +188,6 @@ When handling QA blocking issues:
 4. **Verify test correctness** — concurrent tests must use `wg.Wait()` and not hardcoded expectations
 5. **Check test isolation** — no shared state between tests, proper cleanup
 6. **Consistency** — use same patterns everywhere (e.g., always `UnixMilli()`)
-
-## Common Go False Positives — Do NOT Report as Issues
-
-The following are valid idiomatic Go. Reporting them as blocking issues wastes a full
-Architect → Implementer → QA remediation cycle and must be avoided:
-
-| Pattern | Why it is valid |
-|---|---|
-| `append(dst, src...)` | Core Go spec §Built-in functions; `...` spreads any slice expression |
-| `append(dst, fn()...)` | Method or function call returning a slice is a valid slice expression |
-| `fmt.Errorf("msg: %w", err)` | `%w` is the standard error wrapping verb since Go 1.13 |
-| `var _ Iface = (*T)(nil)` | Compile-time interface satisfaction check; not dead code |
-| `//go:embed ...` | Standard Go 1.16+ embed directive |
-| Named returns in `defer` | Idiomatic error-capture in deferred cleanup |
-| `errors.Is` / `errors.As` on wrapped error chains | Correct unwrapping API; do not replace with `==` |
-
-When in doubt, cross-reference `skills/code-generation/references/go-idioms.md` before
-raising a blocking syntax issue.
 
 ## Common Go False Positives — Do NOT Report as Issues
 
