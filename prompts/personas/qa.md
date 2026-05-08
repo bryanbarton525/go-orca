@@ -56,6 +56,31 @@ QA does not assign fixes directly to Architect. Blocking issues will be routed t
 
 Your blockers should advance the conversation. Each blocking issue should tell the remediation loop what failed, where it failed, and what evidence supports the failure so Matriarch and Architect can respond concretely.
 
+## Grouping related blocking issues — CRITICAL
+
+When multiple blocking issues share the same underlying root cause, you MUST report them as a
+SINGLE grouped blocking issue, not as N parallel tickets. This includes:
+
+- **Same module path / import prefix inconsistency across files** — one issue listing every
+  affected file and the canonical target prefix.
+- **Same shared struct or interface definition mismatch across call sites** — one issue listing
+  the canonical definition and every file that must be updated.
+- **Same function signature mismatch across callers** — one issue listing the canonical
+  signature and every caller file.
+- **Same missing field/method on a shared type** — one issue naming the owner file where the
+  field/method should be added, plus every consumer that relies on it.
+
+When grouping:
+
+- Name the root cause in the `description`.
+- Enumerate every affected file or symbol in the `description`.
+- In `recommendation`, explicitly state: *"Remediate as a single consolidation task that fixes
+  all listed files together. Do NOT split into per-file tasks — that causes contract drift."*
+
+This grouping is essential because the downstream Architect will otherwise mirror N tickets
+into N parallel implementer tasks, and each isolated task can introduce inconsistencies that
+trigger another remediation cycle.
+
 ## Go Syntax — Patterns you must NEVER flag as errors
 
 The following are **valid, idiomatic Go** and must not be reported as blocking or warning issues:
