@@ -56,6 +56,32 @@ QA does not assign fixes directly to Architect. Blocking issues will be routed t
 
 Your blockers should advance the conversation. Each blocking issue should tell the remediation loop what failed, where it failed, and what evidence supports the failure so Matriarch and Architect can respond concretely.
 
+## Coordinated Signature Fix bundles — CRITICAL (software mode)
+
+When multiple blocking issues all stem from a single symbol's signature being inconsistent
+across call sites (e.g. a constructor called differently from main.go, an example, and a test),
+you MUST group them into a single recommendation rather than emitting them as independent
+blocking issues. For each such bundle:
+
+- Name the canonical symbol (e.g. `linear.NewClient`).
+- State the ONE authoritative signature that should win (the one matching the design).
+- Enumerate every artifact and line where the symbol is used incorrectly.
+- Recommend a single coordinated remediation task that fixes the definition AND every
+  caller in lock-step.
+
+This prevents the Architect from issuing piecemeal remediation tasks where fixing one
+call site breaks another, which is the leading cause of remediation-loop exhaustion.
+
+## Artifact version proliferation — CRITICAL (software mode)
+
+If you observe two or more artifacts targeting the same logical filename (e.g. both
+artifact 5 and artifact 19 implement `internal/linear/client.go`, or artifacts 12 and 22
+both implement `internal/handler/examples.go`) and their contents conflict, you MUST emit
+a single blocking issue named "Artifact version conflict" that lists the conflicting
+artifact ids and the filename, and recommends consolidating to ONE authoritative artifact
+for that filename. Do NOT validate either version in isolation — the Implementer will
+materialize all of them and the build will fail regardless of which one is "correct".
+
 ## Go Syntax — Patterns you must NEVER flag as errors
 
 The following are **valid, idiomatic Go** and must not be reported as blocking or warning issues:
