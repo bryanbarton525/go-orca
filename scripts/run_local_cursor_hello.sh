@@ -8,18 +8,57 @@
 #
 # Optional:
 #   export GOORCA_PROVIDERS_CURSOR_DEFAULT_MODEL="composer-2"
+#   export GOORCA_PROVIDERS_CURSOR_STARTING_REF="main"   # branch/tag; omit to auto-detect from git
+#
+# If `.env` exists in the repo root, it is sourced automatically (use
+# `KEY=value` or `export KEY=value`; both work with `set -a`).
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
 if [[ -z "${GOORCA_PROVIDERS_CURSOR_API_KEY:-}" ]]; then
-  echo "error: set GOORCA_PROVIDERS_CURSOR_API_KEY" >&2
+  echo "error: set GOORCA_PROVIDERS_CURSOR_API_KEY in the environment or in .env" >&2
   exit 1
 fi
 if [[ -z "${GOORCA_PROVIDERS_CURSOR_REPO_URL:-}" ]]; then
-  echo "error: set GOORCA_PROVIDERS_CURSOR_REPO_URL to a GitHub repo URL your key can use with Cloud Agents" >&2
+  if git -C "$ROOT" remote get-url origin &>/dev/null; then
+    origin="$(git -C "$ROOT" remote get-url origin)"
+    case "$origin" in
+      https://github.com/*/*)
+        export GOORCA_PROVIDERS_CURSOR_REPO_URL="${origin%.git}"
+        echo "==> using GOORCA_PROVIDERS_CURSOR_REPO_URL from git origin: ${GOORCA_PROVIDERS_CURSOR_REPO_URL}"
+        ;;
+      git@github.com:*/*)
+        r="${origin#git@github.com:}"
+        r="${r%.git}"
+        export GOORCA_PROVIDERS_CURSOR_REPO_URL="https://github.com/${r}"
+        echo "==> using GOORCA_PROVIDERS_CURSOR_REPO_URL from git origin: ${GOORCA_PROVIDERS_CURSOR_REPO_URL}"
+        ;;
+    esac
+  fi
+fi
+if [[ -z "${GOORCA_PROVIDERS_CURSOR_REPO_URL:-}" ]]; then
+  echo "error: GOORCA_PROVIDERS_CURSOR_REPO_URL is required (GitHub repo URL for Cloud Agents)." >&2
+  echo "      Add to .env, e.g.: GOORCA_PROVIDERS_CURSOR_REPO_URL=https://github.com/your-org/your-repo" >&2
   exit 1
+fi
+
+if [[ -z "${GOORCA_PROVIDERS_CURSOR_STARTING_REF:-}" ]]; then
+  if sym="$(git -C "$ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    export GOORCA_PROVIDERS_CURSOR_STARTING_REF="${sym#origin/}"
+    echo "==> using GOORCA_PROVIDERS_CURSOR_STARTING_REF from origin/HEAD: ${GOORCA_PROVIDERS_CURSOR_STARTING_REF}"
+  elif br="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)" && [[ "$br" != "HEAD" ]]; then
+    export GOORCA_PROVIDERS_CURSOR_STARTING_REF="$br"
+    echo "==> using GOORCA_PROVIDERS_CURSOR_STARTING_REF from current branch: ${GOORCA_PROVIDERS_CURSOR_STARTING_REF}"
+  fi
 fi
 
 CFG="$ROOT/.cursor-orca-run/go-orca.yaml"
@@ -86,7 +125,8 @@ while (( SECONDS < deadline )); do
   if [[ "$ST" == "completed" || "$ST" == "failed" || "$ST" == "cancelled" ]]; then
     curl -sf "http://127.0.0.1:${PORT}/api/v1/workflows/${WF_ID}" \
       -H "X-Tenant-ID: ${TENANT_ID}" \
-      -H "X-Scope-ID: ${SCOPE_ID}" | python3 -m json.tool | head -n 80
+      -H "X-Scope-ID: ${SCOPE_ID}" \
+      | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2)[:12000])'
     if [[ "$ST" == "completed" ]]; then
       exit 0
     fi

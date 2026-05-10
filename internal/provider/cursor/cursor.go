@@ -127,16 +127,16 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, body any, ou
 
 // Models implements Provider.
 func (p *Provider) Models(ctx context.Context) ([]common.ModelInfo, error) {
-	var out struct {
-		Items []string `json:"items"`
+	var envelope struct {
+		Items []json.RawMessage `json:"items"`
 	}
-	if err := p.doJSON(ctx, http.MethodGet, "/v1/models", nil, &out); err != nil {
+	if err := p.doJSON(ctx, http.MethodGet, "/v1/models", nil, &envelope); err != nil {
 		return nil, err
 	}
 	caps := []common.Capability{common.CapabilityChat, common.CapabilityStreaming, common.CapabilityModelList}
-	infos := make([]common.ModelInfo, 0, len(out.Items))
-	for _, id := range out.Items {
-		id = strings.TrimSpace(id)
+	infos := make([]common.ModelInfo, 0, len(envelope.Items))
+	for _, raw := range envelope.Items {
+		id := decodeModelsItemID(raw)
 		if id == "" {
 			continue
 		}
@@ -148,6 +148,24 @@ func (p *Provider) Models(ctx context.Context) ([]common.ModelInfo, error) {
 		})
 	}
 	return infos, nil
+}
+
+func decodeModelsItemID(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	var obj struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return strings.TrimSpace(obj.ID)
+	}
+	return ""
 }
 
 // HealthCheck implements Provider.
@@ -208,6 +226,9 @@ func (p *Provider) resolveRepo(req common.ChatRequest) (url, ref string, err err
 		if u := strings.TrimSpace(req.Metadata[metaRepoURL]); u != "" {
 			url = u
 			ref = strings.TrimSpace(req.Metadata[metaStartingRef])
+			if ref == "" {
+				ref = strings.TrimSpace(p.cfg.StartingRef)
+			}
 			return url, ref, nil
 		}
 	}
