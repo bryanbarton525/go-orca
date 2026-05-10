@@ -444,14 +444,17 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 	// Phase 1: Director (always mandatory)
 	if !phaseComplete(state.PersonaDirector) {
-		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
-			return fmt.Errorf("director phase: %w", err)
-		}
+		// Materialize workspace and any requested GitHub repository before the
+		// first LLM call so cloud providers (e.g. Cursor) see workspace.repo_url
+		// in handoff metadata — including delivery "create-repo" workflows.
 		if err := e.ensureWorkspaceAndToolchain(ctx, ws); err != nil {
-			return fmt.Errorf("workspace setup: %w", err)
+			return fmt.Errorf("pre-director workspace setup: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
+		}
+		if err := e.runPersona(ctx, ws, state.PersonaDirector, snap); err != nil {
+			return fmt.Errorf("director phase: %w", err)
 		}
 	}
 	if err := e.ensureWorkspaceAndToolchain(ctx, ws); err != nil {
@@ -1447,7 +1450,11 @@ func (e *Engine) runRemediationTriage(ctx context.Context, ws *state.WorkflowSta
 }
 
 func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.WorkflowState) error {
-	if !workflowNeedsToolchain(ws.Mode) || len(e.opts.Toolchains) == 0 {
+	if !workflowNeedsToolchain(ws.Mode) {
+		return nil
+	}
+	_, needsRequestedRepo := requestedRepositoryConfig(ws)
+	if len(e.opts.Toolchains) == 0 && !needsRequestedRepo {
 		return nil
 	}
 	if ws.Execution.Workspace == nil && strings.TrimSpace(e.opts.WorkspaceRoot) != "" {
