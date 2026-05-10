@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/go-orca/go-orca/internal/state"
@@ -11,7 +12,7 @@ func TestApplyOutputDirectorPreservesExplicitMode(t *testing.T) {
 	ws.Mode = state.WorkflowModeContent
 
 	eng := New(nil, Options{})
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona:    state.PersonaDirector,
 		Summary:    "classified",
 		RawContent: `{"mode":"software","title":"Wrong"}`,
@@ -27,7 +28,7 @@ func TestApplyOutputDirectorUsesRequestOnParseFallback(t *testing.T) {
 	ws.Mode = state.WorkflowModeContent
 
 	eng := New(nil, Options{})
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona:    state.PersonaDirector,
 		Summary:    "fallback",
 		RawContent: "not-json",
@@ -45,7 +46,7 @@ func TestApplyOutputDirectorEnforcesSoftwarePipeline(t *testing.T) {
 	ws := state.NewWorkflowState("t1", "s1", "Build a software workflow")
 
 	eng := New(nil, Options{})
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona: state.PersonaDirector,
 		Summary: "classified",
 		RawContent: `{
@@ -82,7 +83,7 @@ func TestApplyOutputDirectorDefaultsContentPipeline(t *testing.T) {
 	ws.Mode = state.WorkflowModeContent
 
 	eng := New(nil, Options{})
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona: state.PersonaDirector,
 		Summary: "classified",
 		RawContent: `{

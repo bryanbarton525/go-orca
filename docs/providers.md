@@ -1,6 +1,6 @@
 # Providers
 
-go-orca supports four LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
+go-orca supports five LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
 
 ## Provider Registry
 
@@ -10,10 +10,11 @@ Providers are registered at startup via `internal/provider/common`. The global r
 
 At startup, the first enabled provider in this priority order becomes the default:
 
-1. OpenAI
+1. Ollama
 2. Anthropic
-3. Ollama
+3. OpenAI
 4. Copilot
+5. Cursor (Cloud Agents API)
 
 The default is used when the Director does not select a provider, or as a fallback.
 
@@ -177,6 +178,59 @@ providers:
 ### Token Requirements
 
 The PAT must have the `copilot` OAuth scope. Create one at: GitHub → Settings → Developer settings → Personal access tokens.
+
+---
+
+## Cursor (Cloud Agents)
+
+Package: `internal/provider/cursor`
+
+Runs models through the [Cursor Cloud Agents API](https://cursor.com/docs/cloud-agent/api/endpoints.md) (`https://api.cursor.com`, Basic auth with your API key as username and an empty password). Each go-orca workflow reuses a single cloud **agent id** stored on `WorkflowState.execution.cursor_cloud_agent_id` so follow-up persona turns call `POST /v1/agents/{id}/runs` instead of creating a new agent every time.
+
+This provider does **not** advertise tool-calling to go-orca: Phase A (MCP tools executed locally by the executor) is skipped, the same as for any provider without `CapabilityToolCalling`. Cloud agents may still use tools inside Cursor’s runtime on the cloned GitHub repo.
+
+### Repository URL
+
+`POST /v1/agents` requires a GitHub repository. Resolution order for each `Chat` call:
+
+1. `ChatRequest.Metadata["repo_url"]` (set by the executor from `HandoffPacket.Workspace.RepoURL` when present)
+2. `providers.cursor.repo_url` in configuration
+
+If neither is set, requests fail with a clear error. Align the configured repo with your workflow’s materialized workspace when using toolchains.
+
+### Attachment ingestion
+
+Parallel attachment summarization uses a mutex for the `cursor` provider so all summaries for one workflow share one cloud agent id. For heavy ingestion loads, set `workflow.ingestion.provider` (and `workflow.ingestion.model`) to a cheaper provider such as OpenAI or Ollama so Cursor is not invoked once per attachment.
+
+### Configuration
+
+```yaml
+providers:
+  cursor:
+    enabled: true
+    api_key: "..."              # required; GOORCA_PROVIDERS_CURSOR_API_KEY
+    base_url: ""                # optional; default https://api.cursor.com
+    default_model: "composer-2"
+    repo_url: "https://github.com/org/repo"   # required unless every chat supplies repo via workspace
+    starting_ref: "main"        # optional branch/tag/commit for the clone
+    timeout: "120s"
+    auto_create_pr: false         # maps to Cloud Agents autoCreatePR
+    include_thinking_sse: false   # append thinking deltas to Chat output when true
+    excluded_models: []
+```
+
+| Key | Required | Description |
+|---|---|---|
+| `enabled` | Yes | Must be `true` to activate |
+| `api_key` | Yes | Cursor API key from Dashboard → Integrations |
+| `base_url` | No | Override API base URL (tests, proxies) |
+| `default_model` | No | Default model id; must be valid for `GET /v1/models` when set |
+| `repo_url` | No | Default GitHub repo for agent creation; omit only if `Workspace.RepoURL` is always set |
+| `starting_ref` | No | Starting ref for the clone |
+| `timeout` | No | Per-chat wall timeout. Default: `120s` |
+| `auto_create_pr` | No | When true, requests `autoCreatePR` on new agents |
+| `include_thinking_sse` | No | Include `thinking` SSE events in concatenated output |
+| `excluded_models` | No | Deny-list for model catalog discovery |
 
 ---
 

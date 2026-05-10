@@ -40,6 +40,46 @@ func NewExecutor(schemaName string, schema map[string]any) Executor {
 	return Executor{SchemaName: schemaName, OutputSchema: schema}
 }
 
+// mergeProviderChatMetadata attaches workflow/session/repo hints for providers
+// that need them (e.g. Cursor Cloud Agents). Existing Metadata keys are copied.
+func mergeProviderChatMetadata(packet state.HandoffPacket, cursorAgentID string, req common.ChatRequest) common.ChatRequest {
+	m := req.Metadata
+	if m == nil {
+		m = make(map[string]string)
+	} else {
+		next := make(map[string]string, len(m)+4)
+		for k, v := range m {
+			next[k] = v
+		}
+		m = next
+	}
+	if id := strings.TrimSpace(packet.WorkflowID); id != "" {
+		m["workflow_id"] = id
+	}
+	if cursorAgentID != "" {
+		m["cursor_agent_id"] = cursorAgentID
+	}
+	if packet.Workspace != nil {
+		if u := strings.TrimSpace(packet.Workspace.RepoURL); u != "" {
+			m["repo_url"] = u
+		}
+	}
+	req.Metadata = m
+	return req
+}
+
+func applyChatSessionHints(cursorAgentID string, packet state.HandoffPacket, resp *common.ChatResponse) string {
+	if resp != nil && resp.SessionHints != nil {
+		if id := strings.TrimSpace(resp.SessionHints["cursor_agent_id"]); id != "" {
+			cursorAgentID = id
+		}
+		if packet.OnProviderSessionUpdate != nil {
+			packet.OnProviderSessionUpdate(resp.SessionHints)
+		}
+	}
+	return cursorAgentID
+}
+
 // Run sends a chat request to the provider resolved from the HandoffPacket,
 // returns the raw assistant response text.
 //
@@ -55,6 +95,8 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	if !ok {
 		return "", fmt.Errorf("executor: provider %q not registered", packet.ProviderName)
 	}
+
+	cursorAgentID := strings.TrimSpace(packet.CursorCloudAgentID)
 
 	// Phase A uses the full system content including tool descriptions.
 	// Phase B replaces the system message with a tools-stripped variant to
@@ -85,14 +127,16 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		toolDefs := specsToDefinitions(packet.ToolRegistry.Specs())
 		const maxToolRounds = 25
 		for range maxToolRounds {
-			toolResp, err := provider.Chat(ctx, common.ChatRequest{
+			toolReq := mergeProviderChatMetadata(packet, cursorAgentID, common.ChatRequest{
 				Model:    packet.ModelName,
 				Messages: msgs,
 				Tools:    toolDefs,
 			})
+			toolResp, err := provider.Chat(ctx, toolReq)
 			if err != nil {
 				return "", fmt.Errorf("executor: tool-call chat error: %w", err)
 			}
+			cursorAgentID = applyChatSessionHints(cursorAgentID, packet, toolResp)
 			if len(toolResp.Message.ToolCalls) == 0 {
 				// Model chose not to call any tools — skip to Phase B.
 				break
@@ -160,16 +204,18 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 		}
 	}
 
-	resp, err := provider.Chat(ctx, common.ChatRequest{
+	phaseBReq := mergeProviderChatMetadata(packet, cursorAgentID, common.ChatRequest{
 		Model:        packet.ModelName,
 		Messages:     phaseBMsgs,
 		JSONMode:     true,
 		OutputSchema: e.OutputSchema,
 		SchemaName:   e.SchemaName,
 	})
+	resp, err := provider.Chat(ctx, phaseBReq)
 	if err != nil {
 		return "", fmt.Errorf("executor: chat error: %w", err)
 	}
+	cursorAgentID = applyChatSessionHints(cursorAgentID, packet, resp)
 
 	// isPreambleResponse returns true when the model emitted prose text instead
 	// of a JSON object — e.g. "I'll write all 9 files now..." with no { present.
@@ -202,14 +248,16 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 			{Role: common.RoleSystem, Content: phaseBSystem},
 			{Role: common.RoleUser, Content: userPrompt + jsonConstraint},
 		}
-		retryResp, retryErr := provider.Chat(ctx, common.ChatRequest{
+		retryReq := mergeProviderChatMetadata(packet, cursorAgentID, common.ChatRequest{
 			Model:        packet.ModelName,
 			Messages:     slimMsgs,
 			JSONMode:     true,
 			OutputSchema: e.OutputSchema,
 			SchemaName:   e.SchemaName,
 		})
+		retryResp, retryErr := provider.Chat(ctx, retryReq)
 		if retryErr == nil && retryResp.Message.Content != "" && !retryResp.Truncated && !isPreambleResponse(retryResp.Message.Content) {
+			_ = applyChatSessionHints(cursorAgentID, packet, retryResp)
 			return retryResp.Message.Content, nil
 		}
 		// Both attempts failed — return a clear error.

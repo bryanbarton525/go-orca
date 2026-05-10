@@ -147,7 +147,7 @@ func (e *Engine) processAttachment(ctx context.Context, ws *state.WorkflowState,
 	}
 
 	// Summarise the document via LLM.
-	summary, err := e.summariseDocument(ctx, prov, model, att.RelativePath, text)
+		summary, err := e.summariseDocument(ctx, ws, prov, model, att.RelativePath, text)
 	if err != nil {
 		_ = e.opts.AttachmentStore.UpdateAttachmentStatus(ctx, att.ID, state.AttachmentFailed, "", len(chunks), err.Error())
 		return fmt.Errorf("summarise: %w", err)
@@ -172,7 +172,14 @@ func (e *Engine) processAttachment(ctx context.Context, ws *state.WorkflowState,
 }
 
 // summariseDocument calls the LLM to produce a concise summary of a document.
-func (e *Engine) summariseDocument(ctx context.Context, prov common.Provider, model, filename, content string) (string, error) {
+// When the provider is Cursor Cloud, parallel attachment workers are serialized
+// so they share one cloud agent id per workflow (see ingestCursorMu).
+func (e *Engine) summariseDocument(ctx context.Context, ws *state.WorkflowState, prov common.Provider, model, filename, content string) (string, error) {
+	if ws != nil && prov.Name() == "cursor" {
+		e.ingestCursorMu.Lock()
+		defer e.ingestCursorMu.Unlock()
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, e.opts.IngestionTimeout)
 	defer cancel()
 
@@ -182,8 +189,22 @@ func (e *Engine) summariseDocument(ctx context.Context, prov common.Provider, mo
 		content = content[:maxChars] + "\n\n[truncated]"
 	}
 
+	meta := map[string]string{}
+	if ws != nil {
+		meta["workflow_id"] = ws.ID
+		if id := strings.TrimSpace(ws.Execution.CursorCloudAgentID); id != "" {
+			meta["cursor_agent_id"] = id
+		}
+		if ws.Execution.Workspace != nil {
+			if u := strings.TrimSpace(ws.Execution.Workspace.RepoURL); u != "" {
+				meta["repo_url"] = u
+			}
+		}
+	}
+
 	resp, err := prov.Chat(ctx, common.ChatRequest{
-		Model: model,
+		Model:    model,
+		Metadata: meta,
 		Messages: []common.Message{
 			{
 				Role: common.RoleSystem,
@@ -201,6 +222,12 @@ func (e *Engine) summariseDocument(ctx context.Context, prov common.Provider, mo
 	})
 	if err != nil {
 		return "", err
+	}
+	if ws != nil && resp.SessionHints != nil {
+		if id := strings.TrimSpace(resp.SessionHints["cursor_agent_id"]); id != "" {
+			ws.Execution.CursorCloudAgentID = id
+			_ = e.store.SaveWorkflow(ctx, ws)
+		}
 	}
 	return strings.TrimSpace(resp.Message.Content), nil
 }
@@ -241,7 +268,7 @@ func (e *Engine) finalizeIngestion(ctx context.Context, ws *state.WorkflowState,
 	corpusSummary := ""
 	if len(summaryParts) > 1 {
 		var err error
-		corpusSummary, err = e.buildCorpusSummary(ctx, prov, model, summaryParts)
+		corpusSummary, err = e.buildCorpusSummary(ctx, ws, prov, model, summaryParts)
 		if err != nil {
 			return e.failIngestion(ctx, ws, fmt.Errorf("corpus summary: %w", err))
 		}
@@ -271,12 +298,31 @@ func (e *Engine) finalizeIngestion(ctx context.Context, ws *state.WorkflowState,
 }
 
 // buildCorpusSummary synthesises a single summary from per-document summaries.
-func (e *Engine) buildCorpusSummary(ctx context.Context, prov common.Provider, model string, parts []string) (string, error) {
+func (e *Engine) buildCorpusSummary(ctx context.Context, ws *state.WorkflowState, prov common.Provider, model string, parts []string) (string, error) {
+	if ws != nil && prov.Name() == "cursor" {
+		e.ingestCursorMu.Lock()
+		defer e.ingestCursorMu.Unlock()
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, e.opts.IngestionTimeout)
 	defer cancel()
 
+	meta := map[string]string{}
+	if ws != nil {
+		meta["workflow_id"] = ws.ID
+		if id := strings.TrimSpace(ws.Execution.CursorCloudAgentID); id != "" {
+			meta["cursor_agent_id"] = id
+		}
+		if ws.Execution.Workspace != nil {
+			if u := strings.TrimSpace(ws.Execution.Workspace.RepoURL); u != "" {
+				meta["repo_url"] = u
+			}
+		}
+	}
+
 	resp, err := prov.Chat(ctx, common.ChatRequest{
-		Model: model,
+		Model:    model,
+		Metadata: meta,
 		Messages: []common.Message{
 			{
 				Role: common.RoleSystem,
@@ -294,6 +340,12 @@ func (e *Engine) buildCorpusSummary(ctx context.Context, prov common.Provider, m
 	})
 	if err != nil {
 		return "", err
+	}
+	if ws != nil && resp.SessionHints != nil {
+		if id := strings.TrimSpace(resp.SessionHints["cursor_agent_id"]); id != "" {
+			ws.Execution.CursorCloudAgentID = id
+			_ = e.store.SaveWorkflow(ctx, ws)
+		}
 	}
 	return strings.TrimSpace(resp.Message.Content), nil
 }

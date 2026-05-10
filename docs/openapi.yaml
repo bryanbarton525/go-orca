@@ -813,6 +813,7 @@ components:
             - openai
             - ollama
             - copilot
+            - cursor
         default_model:
           type: string
           example: gpt-4o
@@ -1664,6 +1665,7 @@ paths:
               - openai
               - ollama
               - copilot
+              - cursor
           description: Provider name to test.
       responses:
         "200":

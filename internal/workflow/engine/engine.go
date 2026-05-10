@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/customization"
@@ -248,6 +249,10 @@ func (o *Options) applyDefaults() {
 type Engine struct {
 	store Store
 	opts  Options
+
+	// ingestCursorMu serializes Cursor Cloud Agent Chat calls during attachment
+	// ingestion so parallel workers share one cloud agent id per workflow.
+	ingestCursorMu sync.Mutex
 }
 
 // New creates a new Engine.
@@ -714,7 +719,7 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 		return fmt.Errorf("persona %q not registered", kind)
 	}
 
-	packet := e.buildPacket(ws, kind, snap)
+	packet := e.buildPacket(ctx, ws, kind, snap)
 	if packet.ProviderName == "" {
 		return fmt.Errorf("engine: no provider resolved for persona %q", kind)
 	}
@@ -812,7 +817,7 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	}
 
 	// Merge output back into workflow state.
-	e.applyOutput(ws, out)
+	e.applyOutput(ctx, ws, out)
 
 	// ── Finalizer post-processing ─────────────────────────────────────────────
 	if kind == state.PersonaFinalizer {
@@ -1034,7 +1039,7 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 
 	// Resolve the provider and model once for the whole phase so persona events
 	// carry accurate routing information even though tasks run serially.
-	implPacket := e.buildPacket(ws, state.PersonaPod, snap)
+		implPacket := e.buildPacket(ctx, ws, state.PersonaPod, snap)
 	implPhaseStart := time.Now()
 
 	implStartEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
@@ -1092,7 +1097,7 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 			ws.Execution.ActiveTaskTitle = t.Title
 
 			// Build a packet scoped to this single task.
-			packet := e.buildPacket(ws, state.PersonaPod, snap)
+			packet := e.buildPacket(ctx, ws, state.PersonaPod, snap)
 			packet.Tasks = []state.Task{*t}
 
 			// Mark task running before LLM call so callers see the transition.
@@ -1290,7 +1295,7 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		return fmt.Errorf("architect persona not registered")
 	}
 
-	packet := e.buildPacket(ws, state.PersonaArchitect, snap)
+	packet := e.buildPacket(ctx, ws, state.PersonaArchitect, snap)
 	packet.IsRemediation = true
 
 	archCtx, archCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
@@ -1364,7 +1369,7 @@ func (e *Engine) runRemediationMatriarch(ctx context.Context, ws *state.Workflow
 		return fmt.Errorf("matriarch persona not registered")
 	}
 
-	packet := e.buildPacket(ws, state.PersonaMatriarch, snap)
+	packet := e.buildPacket(ctx, ws, state.PersonaMatriarch, snap)
 	packet.IsRemediation = true
 
 	matCtx, matCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
@@ -1408,7 +1413,7 @@ func (e *Engine) runRemediationTriage(ctx context.Context, ws *state.WorkflowSta
 		return fmt.Errorf("project manager persona not registered")
 	}
 
-	packet := e.buildPacket(ws, state.PersonaProjectMgr, snap)
+	packet := e.buildPacket(ctx, ws, state.PersonaProjectMgr, snap)
 	packet.IsRemediation = true
 
 	pmCtx, pmCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
@@ -2256,7 +2261,7 @@ func trimValidationOutput(s string) string {
 //   - Only QA may set BlockingIssues (Finalizer/Refiner may suggest).
 //   - Violations are recorded as AllSuggestions warnings, not hard failures,
 //     so a misbehaving LLM does not crash the workflow.
-func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) {
+func (e *Engine) applyOutput(ctx context.Context, ws *state.WorkflowState, out *state.PersonaOutput) {
 	if ws.Summaries == nil {
 		ws.Summaries = make(map[state.PersonaKind]string)
 	}
@@ -2324,7 +2329,7 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 		explicitModel := ws.ModelName != ""
 
 		// Parse the raw JSON output from the Director to extract its decisions.
-		directorPacket := e.buildPacket(ws, state.PersonaDirector, nil)
+		directorPacket := e.buildPacket(ctx, ws, state.PersonaDirector, nil)
 		dirOut := director.OutputFromRaw(out.RawContent, directorPacket)
 
 		provider := directorPacket.ProviderName
@@ -2431,7 +2436,7 @@ func appendReviewThreadEntry(ws *state.WorkflowState, entry state.ReviewThreadEn
 
 // buildPacket constructs the HandoffPacket for the given persona from the
 // current WorkflowState snapshot.
-func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) state.HandoffPacket {
+func (e *Engine) buildPacket(ctx context.Context, ws *state.WorkflowState, kind state.PersonaKind, snap *customization.Snapshot) state.HandoffPacket {
 	provider := e.resolveProviderName(ws)
 	model := e.resolvePersonaModel(ws, kind, provider)
 	artifacts := ws.Artifacts
@@ -2468,6 +2473,7 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		RemediationAttempt:         ws.Execution.RemediationAttempt,
 		InputDocuments:             ws.InputDocuments,
 		InputDocumentCorpusSummary: ws.InputDocumentCorpusSummary,
+		CursorCloudAgentID:         strings.TrimSpace(ws.Execution.CursorCloudAgentID),
 		Workspace:                  ws.Execution.Workspace,
 		Toolchain:                  ws.Execution.Toolchain,
 		ValidationRuns:             ws.Execution.ValidationRuns,
@@ -2520,6 +2526,16 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 			events.PersonaFailedPayload{Persona: personaKind, Error: errMsg})
 		_ = e.store.AppendEvents(ctx, evt)
 		ws.Execution.CurrentPersona = kind
+		_ = e.store.SaveWorkflow(ctx, ws)
+	}
+
+	packet.OnProviderSessionUpdate = func(hints map[string]string) {
+		if hints == nil {
+			return
+		}
+		if id := strings.TrimSpace(hints["cursor_agent_id"]); id != "" {
+			ws.Execution.CursorCloudAgentID = id
+		}
 		_ = e.store.SaveWorkflow(ctx, ws)
 	}
 

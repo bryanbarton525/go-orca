@@ -37,6 +37,7 @@ import (
 	anthropicProvider "github.com/go-orca/go-orca/internal/provider/anthropic"
 	"github.com/go-orca/go-orca/internal/provider/common"
 	copilotProvider "github.com/go-orca/go-orca/internal/provider/copilot"
+	cursorProvider "github.com/go-orca/go-orca/internal/provider/cursor"
 	ollamaProvider "github.com/go-orca/go-orca/internal/provider/ollama"
 	openaiProvider "github.com/go-orca/go-orca/internal/provider/openai"
 	"github.com/go-orca/go-orca/internal/storage"
@@ -326,6 +327,17 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 			checkProviderReachability(p, log)
 		}
 	}
+
+	if cfg.Providers.Cursor.Enabled {
+		p, err := cursorProvider.New(cfg.Providers.Cursor)
+		if err != nil {
+			log.Warn("cursor provider init failed", zap.Error(err))
+		} else {
+			common.Register(p)
+			log.Info("provider registered", zap.String("name", "cursor"))
+			checkProviderReachability(p, log)
+		}
+	}
 }
 
 func buildToolchainConfigs(cfg *config.Config) []engine.ToolchainConfig {
@@ -393,6 +405,9 @@ func resolveDefaultProvider(cfg *config.Config) string {
 	if cfg.Providers.Copilot.Enabled {
 		return "copilot"
 	}
+	if cfg.Providers.Cursor.Enabled {
+		return "cursor"
+	}
 	return ""
 }
 
@@ -408,6 +423,9 @@ func resolveDefaultModel(cfg *config.Config) string {
 	}
 	if cfg.Providers.Copilot.Enabled && cfg.Providers.Copilot.DefaultModel != "" {
 		return cfg.Providers.Copilot.DefaultModel
+	}
+	if cfg.Providers.Cursor.Enabled && cfg.Providers.Cursor.DefaultModel != "" {
+		return cfg.Providers.Cursor.DefaultModel
 	}
 	return ""
 }
@@ -425,6 +443,9 @@ func buildProviderDefaults(cfg *config.Config) map[string]string {
 	}
 	if cfg.Providers.Anthropic.Enabled && strings.TrimSpace(cfg.Providers.Anthropic.DefaultModel) != "" {
 		defaults["anthropic"] = strings.TrimSpace(cfg.Providers.Anthropic.DefaultModel)
+	}
+	if cfg.Providers.Cursor.Enabled && strings.TrimSpace(cfg.Providers.Cursor.DefaultModel) != "" {
+		defaults["cursor"] = strings.TrimSpace(cfg.Providers.Cursor.DefaultModel)
 	}
 	return defaults
 }
@@ -449,6 +470,7 @@ func buildExcludedModels(cfg *config.Config) map[string]map[string]struct{} {
 	add("ollama", cfg.Providers.Ollama.ExcludedModels)
 	add("copilot", cfg.Providers.Copilot.ExcludedModels)
 	add("anthropic", cfg.Providers.Anthropic.ExcludedModels)
+	add("cursor", cfg.Providers.Cursor.ExcludedModels)
 	return out
 }
 

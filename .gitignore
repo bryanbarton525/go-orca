@@ -28,6 +28,9 @@
 /ui/dist/
 /ui/coverage/
 
+# Local go-orca API scratch (Cursor / SQLite smoke runs)
+.cursor-orca-run/
+
 # Local workflow scratch and output files
 .finalization.json
 .finalize

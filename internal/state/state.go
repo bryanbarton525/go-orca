@@ -152,6 +152,10 @@ type Execution struct {
 	// Checkpoints records repo checkpoint commits created after implementation
 	// phases or remediation cycles.
 	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	// CursorCloudAgentID is the durable Cursor Cloud Agents API agent id for
+	// this workflow, reused across persona Chat calls when the provider is
+	// "cursor". Persisted inside execution JSON (no separate DB column).
+	CursorCloudAgentID string `json:"cursor_cloud_agent_id,omitempty"`
 }
 
 // WorkspaceInfo describes the materialized repo/worktree used by toolchain
@@ -671,6 +675,15 @@ type HandoffPacket struct {
 	// IsRemediation signals to the Architect that this invocation is a
 	// targeted remediation pass (not the initial planning phase).
 	IsRemediation bool `json:"is_remediation,omitempty"`
+
+	// CursorCloudAgentID is copied from WorkflowState.Execution for providers
+	// that reuse a durable cloud session (Cursor Cloud Agents).
+	CursorCloudAgentID string `json:"cursor_cloud_agent_id,omitempty"`
+
+	// OnProviderSessionUpdate is invoked after a provider Chat returns
+	// SessionHints so the engine can persist session-scoped ids (e.g. Cursor
+	// cloud agent id). Never persisted on HandoffPacket.
+	OnProviderSessionUpdate func(hints map[string]string) `json:"-"`
 }
 
 // ─── Persona output ───────────────────────────────────────────────────────────

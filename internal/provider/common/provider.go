@@ -94,6 +94,9 @@ type ChatResponse struct {
 	// Truncated is true when the model stopped because it hit the token limit
 	// rather than producing a complete response.
 	Truncated bool `json:"truncated,omitempty"`
+	// SessionHints carries provider-specific durable session keys (e.g. cloud
+	// agent id) for the engine to merge into workflow execution state.
+	SessionHints map[string]string `json:"session_hints,omitempty"`
 }
 
 // StreamChunk is a single delta yielded during a streaming response.

@@ -145,16 +145,16 @@ func TestBuildPacketUsesPersonaAssignmentsForDownstreamPhases(t *testing.T) {
 		state.PersonaQA:          "review-model",
 	}
 
-	if got := eng.buildPacket(ws, state.PersonaDirector, nil).ModelName; got != "bootstrap-model" {
+	if got := eng.buildPacket(context.Background(), ws, state.PersonaDirector, nil).ModelName; got != "bootstrap-model" {
 		t.Fatalf("director model: got %q", got)
 	}
-	if got := eng.buildPacket(ws, state.PersonaPod, nil).ModelName; got != "code-model" {
+	if got := eng.buildPacket(context.Background(), ws, state.PersonaPod, nil).ModelName; got != "code-model" {
 		t.Fatalf("pod model: got %q", got)
 	}
-	if got := eng.buildPacket(ws, state.PersonaQA, nil).ModelName; got != "review-model" {
+	if got := eng.buildPacket(context.Background(), ws, state.PersonaQA, nil).ModelName; got != "review-model" {
 		t.Fatalf("qa model: got %q", got)
 	}
-	if got := eng.buildPacket(ws, state.PersonaArchitect, nil).ModelName; got != "bootstrap-model" {
+	if got := eng.buildPacket(context.Background(), ws, state.PersonaArchitect, nil).ModelName; got != "bootstrap-model" {
 		t.Fatalf("architect fallback model: got %q", got)
 	}
 }
@@ -184,7 +184,7 @@ func TestApplyOutputNormalizesDirectorPersonaSelections(t *testing.T) {
 		},
 	}
 
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona:    state.PersonaDirector,
 		Summary:    "use specialized downstream models",
 		RawContent: `{"mode":"software","title":"Route models","provider":"catalog-mock","model":"plan-model","persona_models":{"project_manager":"plan-model","pod":"code-model","qa":"blocked-model"},"finalizer_action":"artifact-bundle","required_personas":["project_manager","architect","pod","qa","finalizer"],"rationale":"Route coding separately.","summary":"Use the coding model for pod only."}`,
@@ -243,7 +243,7 @@ func TestBuildPacketForwardsFinalizerAction(t *testing.T) {
 	ws.ModelName = "bootstrap-model"
 	ws.FinalizerAction = "blog-draft"
 
-	packet := eng.buildPacket(ws, state.PersonaFinalizer, nil)
+	packet := eng.buildPacket(context.Background(), ws, state.PersonaFinalizer, nil)
 	if packet.FinalizerAction != "blog-draft" {
 		t.Fatalf("FinalizerAction: got %q, want %q", packet.FinalizerAction, "blog-draft")
 	}
@@ -267,7 +267,7 @@ func TestApplyOutputSetsRequiredPersonasAndFinalizerAction(t *testing.T) {
 		},
 	}
 
-	eng.applyOutput(ws, &state.PersonaOutput{
+	eng.applyOutput(context.Background(), ws, &state.PersonaOutput{
 		Persona:    state.PersonaDirector,
 		Summary:    "ops workflow",
 		RawContent: `{"mode":"ops","title":"Deploy","provider":"catalog-mock","model":"bootstrap-model","persona_models":{},"finalizer_action":"doc-draft","required_personas":["project_manager","finalizer"],"rationale":"Simple ops task.","summary":"Deploy to prod."}`,

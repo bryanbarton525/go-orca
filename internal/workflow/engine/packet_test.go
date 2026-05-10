@@ -83,7 +83,7 @@ func TestBuildPacket_DeduplicatesArtifactsForQA(t *testing.T) {
 		{Name: "sum_even_test.go", Kind: state.ArtifactKindCode, Content: "tests"},
 	}
 
-	packet := eng.buildPacket(ws, state.PersonaQA, nil)
+	packet := eng.buildPacket(context.Background(), ws, state.PersonaQA, nil)
 	if len(packet.Artifacts) != 2 {
 		t.Fatalf("expected 2 QA artifacts after dedupe, got %d", len(packet.Artifacts))
 	}
@@ -106,7 +106,7 @@ func TestBuildPacket_PreservesArtifactHistoryOutsideQA(t *testing.T) {
 		{Name: "sum_even_test.go", Kind: state.ArtifactKindCode, Content: "tests"},
 	}
 
-	packet := eng.buildPacket(ws, state.PersonaArchitect, nil)
+	packet := eng.buildPacket(context.Background(), ws, state.PersonaArchitect, nil)
 	if len(packet.Artifacts) != len(ws.Artifacts) {
 		t.Fatalf("expected non-QA packet to preserve all %d artifacts, got %d", len(ws.Artifacts), len(packet.Artifacts))
 	}

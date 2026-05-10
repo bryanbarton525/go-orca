@@ -104,6 +104,7 @@ type ProvidersConfig struct {
 	Ollama    OllamaConfig    `mapstructure:"ollama"`
 	Copilot   CopilotConfig   `mapstructure:"copilot"`
 	Anthropic AnthropicConfig `mapstructure:"anthropic"`
+	Cursor    CursorConfig    `mapstructure:"cursor"`
 }
 
 // AnthropicConfig holds Anthropic Claude API settings.
@@ -149,6 +150,21 @@ type CopilotConfig struct {
 	CLIPath        string   `mapstructure:"cli_path"`
 	DefaultModel   string   `mapstructure:"default_model"`
 	ExcludedModels []string `mapstructure:"excluded_models"`
+}
+
+// CursorConfig holds Cursor Cloud Agents API settings.
+// See https://cursor.com/docs/cloud-agent/api/endpoints.md
+type CursorConfig struct {
+	Enabled              bool          `mapstructure:"enabled"`
+	APIKey               string        `mapstructure:"api_key"`
+	BaseURL              string        `mapstructure:"base_url"`
+	DefaultModel         string        `mapstructure:"default_model"`
+	ExcludedModels       []string      `mapstructure:"excluded_models"`
+	Timeout              time.Duration `mapstructure:"timeout"`
+	RepoURL              string        `mapstructure:"repo_url"`
+	StartingRef          string        `mapstructure:"starting_ref"`
+	AutoCreatePR         bool          `mapstructure:"auto_create_pr"`
+	IncludeThinkingSSE   bool          `mapstructure:"include_thinking_sse"`
 }
 
 // CustomizationsConfig controls customization discovery sources.
@@ -360,6 +376,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("providers.copilot.enabled", false)
 	v.SetDefault("providers.copilot.default_model", "gpt-4o")
 
+	v.SetDefault("providers.cursor.enabled", false)
+	v.SetDefault("providers.cursor.timeout", 120*time.Second)
+	v.SetDefault("providers.cursor.default_model", "composer-2")
+	v.SetDefault("providers.cursor.auto_create_pr", false)
+	v.SetDefault("providers.cursor.include_thinking_sse", false)
+
 	// Workflow engine
 	v.SetDefault("workflow.max_concurrent_workflows", 10)
 	v.SetDefault("workflow.max_concurrent_tasks", 50)
@@ -390,6 +412,11 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Database.Driver != DriverPostgres && cfg.Database.Driver != DriverSQLite {
 		return fmt.Errorf("database: unsupported driver %q", cfg.Database.Driver)
+	}
+	if cfg.Providers.Cursor.Enabled {
+		if strings.TrimSpace(cfg.Providers.Cursor.APIKey) == "" {
+			return fmt.Errorf("providers.cursor: api_key is required when enabled")
+		}
 	}
 	return nil
 }
