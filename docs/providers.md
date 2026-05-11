@@ -1,6 +1,6 @@
 # Providers
 
-go-orca supports four LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
+go-orca supports four wired LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
 
 ## Provider Registry
 
@@ -10,20 +10,20 @@ Providers are registered at startup via `internal/provider/common`. The global r
 
 At startup, the first enabled provider in this priority order becomes the default:
 
-1. OpenAI
+1. Ollama
 2. Anthropic
-3. Ollama
+3. OpenAI
 4. Copilot
 
 The default is used when the Director does not select a provider, or as a fallback.
 
 ---
 
-## OpenAI
+## ChatGPT / OpenAI
 
 Package: `internal/provider/openai`
 
-Talks to the OpenAI Chat Completions API (or any OpenAI-compatible endpoint via `base_url`).
+Talks to the OpenAI Chat Completions API, which is the API-backed way to use ChatGPT models such as `gpt-4o`. The same provider can also target OpenAI-compatible endpoints via `base_url`.
 
 ### Configuration
 
@@ -47,7 +47,7 @@ providers:
 
 ### Compatible Models
 
-Any model available via the Chat Completions API: `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo`, `o1`, etc.
+Any model available via the Chat Completions API: `gpt-4o`, `gpt-4.1`, `gpt-4-turbo`, `gpt-3.5-turbo`, `o1`, etc.
 
 ### OpenAI-Compatible Endpoints
 
