@@ -1,10 +1,10 @@
 # examples/openai-quickstart.yaml
 #
-# Quickstart with OpenAI — simplest path to a working cloud-backed instance.
+# Quickstart with ChatGPT / OpenAI — simplest path to a working cloud-backed instance.
 # Uses SQLite so no database setup is required.
 #
 # Prerequisites:
-#   - An OpenAI API key
+#   - An OpenAI API key for ChatGPT API models such as gpt-4o
 #
 # Run:
 #   GOORCA_PROVIDERS_OPENAI_API_KEY=sk-... ./go-orca-api -config examples/openai-quickstart.yaml
@@ -59,6 +59,9 @@ providers:
     enabled: false
 
   copilot:
+    enabled: false
+
+  anthropic:
     enabled: false
 
 # ─── Customizations ───────────────────────────────────────────────────────────

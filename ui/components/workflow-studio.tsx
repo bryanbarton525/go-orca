@@ -2140,6 +2140,19 @@ export function WorkflowStudio() {
   const selectedWorkflow = selectedWorkflowQuery.data;
   const taskTotal = selectedWorkflow?.tasks?.length ?? 0;
   const taskDone = completedTaskCount(selectedWorkflow?.tasks);
+  const providers = providersQuery.data ?? [];
+  const selectedProvider = providers.find((provider) => provider.name === formState.provider);
+  const providerModels = modelsQuery.data?.items ?? [];
+  const providerModelDatalistId = "workflow-provider-model-options";
+  const modelFieldHint = !formState.provider
+    ? "Leave blank for server auto-selection."
+    : modelsQuery.isLoading
+      ? `Loading models for ${formState.provider}.`
+      : modelsQuery.isError
+        ? "Model inventory is unavailable; type a model name manually."
+        : providerModels.length > 0
+          ? "Choose an advertised model or type a compatible model name."
+          : "No models were advertised; type a model name or leave blank for the provider default.";
   const canLaunchWorkflow = Boolean(formState.request.trim()) && !launchLocked && !createWorkflowMutation.isPending;
   const canCancelWorkflow = Boolean(selectedWorkflowId) && Boolean(selectedWorkflow) && !isWorkflowTerminal(selectedWorkflow?.status);
   const canResumeWorkflow =
@@ -2285,35 +2298,47 @@ export function WorkflowStudio() {
               <InputLabel label="Provider" hint="Leave blank for server default.">
                 <select
                   value={formState.provider}
-                  onChange={(event) => setFormState((current) => ({ ...current, provider: event.target.value }))}
+                  onChange={(event) =>
+                    setFormState((current) => ({ ...current, provider: event.target.value, model: "" }))
+                  }
                   className={textFieldClassName()}
                 >
                   <option value="">Server default</option>
-                  {(providersQuery.data ?? []).map((p) => (
+                  {providers.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>
                   ))}
                 </select>
+                {providersQuery.isError ? (
+                  <span className="text-xs text-shell-danger-text">Provider inventory is unavailable.</span>
+                ) : selectedProvider ? (
+                  <span className="text-xs text-shell-soft">
+                    {selectedProvider.default_model ? `Default: ${selectedProvider.default_model}` : "Provider default model"}
+                    {selectedProvider.capabilities?.length ? ` · ${selectedProvider.capabilities.join(", ")}` : ""}
+                  </span>
+                ) : null}
               </InputLabel>
-              <InputLabel label="Model" hint="Leave blank for provider default.">
-                {formState.provider && (modelsQuery.data?.items?.length ?? 0) > 0 ? (
-                  <select
-                    value={formState.model}
-                    onChange={(event) => setFormState((current) => ({ ...current, model: event.target.value }))}
-                    className={textFieldClassName()}
-                  >
-                    <option value="">Provider default</option>
-                    {(modelsQuery.data?.items ?? []).map((m) => (
-                      <option key={m.id} value={m.id}>{m.name || m.id}</option>
+              <InputLabel label="Model" hint={modelFieldHint}>
+                <input
+                  value={formState.model}
+                  list={formState.provider && providerModels.length > 0 ? providerModelDatalistId : undefined}
+                  onChange={(event) => setFormState((current) => ({ ...current, model: event.target.value }))}
+                  placeholder={formState.provider ? `Default for ${formState.provider}` : "Auto-select"}
+                  className={textFieldClassName()}
+                />
+                {formState.provider && providerModels.length > 0 ? (
+                  <datalist id={providerModelDatalistId}>
+                    {providerModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name || m.id}
+                      </option>
                     ))}
-                  </select>
-                ) : (
-                  <input
-                    value={formState.model}
-                    onChange={(event) => setFormState((current) => ({ ...current, model: event.target.value }))}
-                    placeholder={formState.provider ? (modelsQuery.isLoading ? "Loading models…" : `Default for ${formState.provider}`) : "Auto-select"}
-                    className={textFieldClassName()}
-                  />
-                )}
+                  </datalist>
+                ) : null}
+                {formState.provider && modelsQuery.isError ? (
+                  <span className="text-xs text-shell-danger-text">
+                    Could not load models for {formState.provider}; manual entry is still supported.
+                  </span>
+                ) : null}
               </InputLabel>
               <InputLabel label="Delivery action">
                 <select

@@ -61,6 +61,14 @@ providers:
     cli_path: ""           # path to `gh` CLI binary; leave empty for PATH lookup
     default_model: "gpt-4o"
 
+  anthropic:
+    enabled: false
+    api_key: ""            # or set GOORCA_PROVIDERS_ANTHROPIC_API_KEY
+    base_url: ""           # leave empty for api.anthropic.com
+    default_model: "claude-sonnet-4-5"
+    max_tokens: 16384
+    timeout: "120s"
+
 # ─── Tools and MCP toolchains ─────────────────────────────────────────────────
 tools:
   mcp: []
