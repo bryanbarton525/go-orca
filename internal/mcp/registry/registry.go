@@ -38,17 +38,17 @@ import (
 
 // ServerStatus describes one entry in the server layer of the registry.
 type ServerStatus struct {
-	Name           string    `json:"name"`
-	Endpoint       string    `json:"endpoint,omitempty"`
-	Transport      string    `json:"transport,omitempty"`
-	Image          string    `json:"image,omitempty"`
-	HealthPath     string    `json:"health_path,omitempty"`
-	Required       bool     `json:"required"`
-	Connected      bool      `json:"connected"`
-	Healthy        bool      `json:"healthy"`
-	AdvertisedTools []string `json:"advertised_tools,omitempty"`
-	LastSeen       time.Time `json:"last_seen,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
+	Name            string    `json:"name"`
+	Endpoint        string    `json:"endpoint,omitempty"`
+	Transport       string    `json:"transport,omitempty"`
+	Image           string    `json:"image,omitempty"`
+	HealthPath      string    `json:"health_path,omitempty"`
+	Required        bool      `json:"required"`
+	Connected       bool      `json:"connected"`
+	Healthy         bool      `json:"healthy"`
+	AdvertisedTools []string  `json:"advertised_tools,omitempty"`
+	LastSeen        time.Time `json:"last_seen,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
 }
 
 // ToolchainStatus describes one toolchain binding in the registry.
@@ -120,12 +120,12 @@ type Registry struct {
 }
 
 type serverEntry struct {
-	cfg            config.MCPServerConfig
-	advertised     map[string]struct{} // tool names
-	connected      bool
-	healthy        bool
-	lastSeen       time.Time
-	lastErr        string
+	cfg        config.MCPServerConfig
+	advertised map[string]struct{} // tool names
+	connected  bool
+	healthy    bool
+	lastSeen   time.Time
+	lastErr    string
 }
 
 // New constructs an empty Registry.  Call [Registry.LoadServers] and

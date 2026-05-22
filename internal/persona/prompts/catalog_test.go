@@ -18,9 +18,9 @@ func writeAll(t *testing.T, overrides map[string]string) string {
 	defaults := map[string]string{
 		"director.md":          "You are the Director.",
 		"project_manager.md":   "You are the Project Manager.",
-		"matriarch.md":    "You are the Matriarch.",
+		"matriarch.md":         "You are the Matriarch.",
 		"architect.md":         "You are the Architect.",
-		"pod.md":       "You are the Pod.",
+		"pod.md":               "You are the Pod.",
 		"qa.md":                "You are the QA.",
 		"finalizer.md":         "You are the Finalizer.",
 		"finalizer_refiner.md": "You are the Finalizer Refiner.",
@@ -93,9 +93,9 @@ func TestLoad_PartialMissing(t *testing.T) {
 	dir := t.TempDir()
 	present := map[string]string{
 		"project_manager.md":   "pm",
-		"matriarch.md":    "eng",
+		"matriarch.md":         "eng",
 		"architect.md":         "arch",
-		"pod.md":       "impl",
+		"pod.md":               "impl",
 		"finalizer.md":         "fin",
 		"finalizer_refiner.md": "finref",
 		"refiner.md":           "ref",

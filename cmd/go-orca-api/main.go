@@ -473,4 +473,3 @@ func buildCustomizationRegistry(cfg *config.Config, log *zap.Logger) *customizat
 		zap.Int("sources", len(cfg.Customizations.Sources)))
 	return reg
 }
-

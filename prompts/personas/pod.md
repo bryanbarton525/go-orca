@@ -93,15 +93,15 @@ You MUST NOT:
      If your task requires code examples, inline them directly in the article content.
      If your task is a remediation task that references code in a supporting artifact,
      copy the relevant code blocks inline — do NOT reference the supporting artifact.
-   
+
      **Minimal Content Workflows Exemption — CRITICAL**: For minimal content (definitions, single-sentence summaries, quick overviews under ~200 words):
      - DO NOT add YAML markdown frontmatter to these artifacts
      - DO NOT add document-level meta-scaffolding markers
      - The content should be plain markdown only, suitable for direct consumption
      - This exemption applies only when the content is truly minimal and self-contained
-   
+
    - **Short Content Exemption — CRITICAL**: Single-sentence definitions, quick overviews, and content under ~200 words (such as two-sentence summaries) do NOT require a Conclusion/CTA section. Produce these as-is without adding conclusions that would feel unnatural to the reader.
-   
+
    - docs: write clear, structured technical documentation
    - ops: write runbooks, deployment scripts, or configuration
 
@@ -114,7 +114,7 @@ You MUST NOT:
    - **Error wrapping**: Always use `fmt.Errorf("%w", ...)` for error wrapping; never swallow errors
    - **Time precision**: Use `time.Now().UnixMilli()` consistently for sub-millisecond operations; never mix `UnixNano()` and `UnixMilli()` in the same codebase
 
-7. **Test Isolation — CRITICAL**: 
+7. **Test Isolation — CRITICAL**:
    - Use `httptest.NewServer()` with `defer ts.Close()` on ALL test artifacts
    - Create fresh `http.ServeMux` for each test
    - Never use `http.DefaultServeMux` in tests

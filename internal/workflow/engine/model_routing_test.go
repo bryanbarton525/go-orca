@@ -142,7 +142,7 @@ func TestBuildPacketUsesPersonaAssignmentsForDownstreamPhases(t *testing.T) {
 	}
 	ws.PersonaModels = state.PersonaModelAssignments{
 		state.PersonaPod: "code-model",
-		state.PersonaQA:          "review-model",
+		state.PersonaQA:  "review-model",
 	}
 
 	if got := eng.buildPacket(ws, state.PersonaDirector, nil).ModelName; got != "bootstrap-model" {
@@ -321,10 +321,10 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 	}
 
 	requested := state.PersonaModelAssignments{
-		state.PersonaPod: "codegemma:7b",    // no tools
-		state.PersonaQA:          "codegemma:7b",    // no tools
-		state.PersonaArchitect:   "codegemma:7b",    // no tools (architect doesn't need tools)
-		state.PersonaFinalizer:   "bootstrap-model", // no tools (finalizer doesn't need tools)
+		state.PersonaPod:       "codegemma:7b",    // no tools
+		state.PersonaQA:        "codegemma:7b",    // no tools
+		state.PersonaArchitect: "codegemma:7b",    // no tools (architect doesn't need tools)
+		state.PersonaFinalizer: "bootstrap-model", // no tools (finalizer doesn't need tools)
 	}
 
 	out := eng.normalizePersonaModels("catalog-mock", requested, "bootstrap-model", catalogs)

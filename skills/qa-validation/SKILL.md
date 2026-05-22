@@ -101,11 +101,11 @@ func allow(ctx context.Context, bucket *Bucket) bool {
         bucket.tokens = min(bucket.burst, bucket.tokens+tokensToAdd)
         bucket.lastReplenish = now
         bucket.mutex.Unlock()
-        
+
         if bucket.tokens >= 1 {
             return true
         }
-        
+
         select {
         case <-ctx.Done():
             return false

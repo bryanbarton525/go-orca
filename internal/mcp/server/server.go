@@ -170,4 +170,3 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return err
 	}
 }
-
