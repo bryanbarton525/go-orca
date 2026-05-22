@@ -8,7 +8,7 @@ require (
 	github.com/github/copilot-sdk/go v0.2.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/mattn/go-sqlite3 v1.14.41
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/ollama/ollama v0.20.2
