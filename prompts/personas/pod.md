@@ -29,6 +29,13 @@ You MUST NOT:
    `Write source files into this engine-owned workspace: /var/lib/go-orca/workspaces/<workflow-id>`
    Use that full path as the directory prefix for every `write_file` call.
 
+   **MCP operations — use `invoke_mcp_agent` (when available):**
+   - For git, go-toolchain, workspace, filesystem, and other MCP-backed work, call
+     `invoke_mcp_agent` with `server` (e.g. `git`, `go-toolchain`) and a clear `task` description.
+   - Include `workspace_path` from the Workspace section so the specialist operates in the right directory.
+   - Example: initialize a repo — `invoke_mcp_agent(server="git", task="git init and create README.md and LICENSE", workspace_path="...")`
+   - Do NOT call raw MCP tool names (`go_build`, `git_checkpoint`, etc.) directly — they are routed through specialists.
+
    **Two ways to write files — choose based on what the provider supports:**
 
    **Option A — `write_file` tool calls (Phase A, when tool-calling is available):**

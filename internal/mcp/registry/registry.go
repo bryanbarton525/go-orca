@@ -128,6 +128,49 @@ type serverEntry struct {
 	lastErr    string
 }
 
+// ServerNames returns connected MCP server names in stable sorted order.
+func (r *Registry) ServerNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.servers))
+	for name, entry := range r.servers {
+		if entry.connected {
+			out = append(out, name)
+		}
+	}
+	sortStrings(out)
+	return out
+}
+
+// AdvertisedTools returns tool names advertised by the named MCP server.
+func (r *Registry) AdvertisedTools(server string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.servers[server]
+	if !ok {
+		return nil, fmt.Errorf("mcp server %q not configured", server)
+	}
+	if !entry.connected {
+		return nil, fmt.Errorf("mcp server %q is not connected", server)
+	}
+	out := make([]string, 0, len(entry.advertised))
+	for name := range entry.advertised {
+		out = append(out, name)
+	}
+	sortStrings(out)
+	return out, nil
+}
+
+func sortStrings(ss []string) {
+	for i := 0; i < len(ss); i++ {
+		for j := i + 1; j < len(ss); j++ {
+			if ss[j] < ss[i] {
+				ss[i], ss[j] = ss[j], ss[i]
+			}
+		}
+	}
+}
+
 // New constructs an empty Registry.  Call [Registry.LoadServers] and
 // [Registry.LoadToolchains] from config, then [Registry.Probe] before serving
 // requests.

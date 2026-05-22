@@ -109,6 +109,13 @@ customizations:
 
 # ─── Workflow engine ──────────────────────────────────────────────────────────
 workflow:
+  # Pod delegates MCP work to per-server specialist agents (small model + scoped tools).
+  mcp_agents:
+    enabled: false
+    provider: ""   # defaults to workflow provider
+    model: ""      # defaults to workflow default model
+    max_rounds: 15
+    timeout: "10m"
   max_concurrent_workflows: 10
   max_concurrent_tasks: 50
   default_persona_timeout_ms: 120000

@@ -248,6 +248,19 @@ type WorkflowConfig struct {
 
 	// Ingestion controls the pre-Director attachment processing stage.
 	Ingestion IngestionConfig `mapstructure:"ingestion"`
+
+	// MCPAgents enables per-MCP specialist agents for the Pod persona.
+	// When enabled, Pod uses invoke_mcp_agent instead of calling MCP tools directly.
+	MCPAgents MCPAgentsConfig `mapstructure:"mcp_agents"`
+}
+
+// MCPAgentsConfig controls small-model specialist agents for MCP toolchains.
+type MCPAgentsConfig struct {
+	Enabled   bool          `mapstructure:"enabled"`
+	Provider  string        `mapstructure:"provider"`
+	Model     string        `mapstructure:"model"`
+	MaxRounds int           `mapstructure:"max_rounds"`
+	Timeout   time.Duration `mapstructure:"timeout"`
 }
 
 // IngestionConfig controls the pre-Director attachment processing stage.
