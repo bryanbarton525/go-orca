@@ -44,11 +44,10 @@ Rules:
 Before writing any Go source file, verify that the `module` directive in `go.mod` exactly matches
 the import prefix used throughout the codebase.
 
-- If internal packages are imported as `linear-sync/internal/config`, then `go.mod` **must** declare `module linear-sync`.
-- A mismatch (e.g. `module workflow/some-uuid` while code uses `linear-sync/...`) causes the Go
-  compiler to treat those import paths as standard-library lookups, producing `package X is not in std` errors.
+- If internal packages are imported as `github.com/go-orca/go-orca/internal/config`, then `go.mod` **must** declare `module github.com/go-orca/go-orca`.
+- A mismatch (for example, if `go.mod` declares a different module path while code imports `github.com/go-orca/go-orca/...`) typically causes Go to report module-resolution errors such as `no required module provides package github.com/go-orca/go-orca/...` rather than resolving those imports correctly.
 - When attaching to an existing repository, **read `go.mod` first**. If the module path does not
-  match the intended import prefix, correct it before writing any source files.
+  match the intended import prefix used by the repository, correct it before writing any source files.
 - Keep the `go` version directive unchanged when correcting the module path.
 
 ### Python (package/service)
