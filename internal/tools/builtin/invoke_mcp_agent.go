@@ -43,36 +43,41 @@ func (t *InvokeMCPAgentTool) Description() string {
 
 func (t *InvokeMCPAgentTool) Parameters() json.RawMessage {
 	servers := t.deps.MCPReg.ServerNames()
-	serverProp := `"type": "string", "description": "MCP server name to invoke."`
-	if len(servers) > 0 {
-		enum, _ := json.Marshal(servers)
-		serverProp = fmt.Sprintf(`"type": "string", "description": "MCP server name to invoke.", "enum": %s`, string(enum))
+	serverProp := map[string]any{
+		"type":        "string",
+		"description": "MCP server name to invoke.",
 	}
-	return json.RawMessage(fmt.Sprintf(`{
-  "type": "object",
-  "properties": {
-    "server": {
-      %s
-    },
-    "task": {
-      "type": "string",
-      "description": "Clear description of what the specialist should accomplish."
-    },
-    "context": {
-      "type": "string",
-      "description": "Optional extra context (paths, constraints, expected outcomes)."
-    },
-    "workflow_id": {
-      "type": "string",
-      "description": "Workflow ID (for logging)."
-    },
-    "workspace_path": {
-      "type": "string",
-      "description": "Absolute workspace path the specialist should use."
-    }
-  },
-  "required": ["server", "task"]
-}`, serverProp))
+	if len(servers) > 0 {
+		serverProp["enum"] = servers
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"server": serverProp,
+			"task": map[string]any{
+				"type":        "string",
+				"description": "Clear description of what the specialist should accomplish.",
+			},
+			"context": map[string]any{
+				"type":        "string",
+				"description": "Optional extra context (paths, constraints, expected outcomes).",
+			},
+			"workflow_id": map[string]any{
+				"type":        "string",
+				"description": "Workflow ID (for logging).",
+			},
+			"workspace_path": map[string]any{
+				"type":        "string",
+				"description": "Absolute workspace path the specialist should use.",
+			},
+		},
+		"required": []string{"server", "task"},
+	}
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return json.RawMessage(`{"type":"object","properties":{"server":{"type":"string"},"task":{"type":"string"}},"required":["server","task"]}`)
+	}
+	return b
 }
 
 type invokeMCPAgentArgs struct {
