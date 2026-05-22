@@ -29,6 +29,45 @@ Before adding any third-party module to `go.mod`, `package.json`, `Cargo.toml`, 
 2. When the user names a service ("Linear", "Stripe", "OpenAI"), pick a package that the user can verify. If unsure, prefer the official SDK from the vendor's docs page; if no official Go SDK exists, write a thin HTTP client against the documented REST API instead of inventing a module path.
 3. Pin to a specific version when known. Avoid `latest` in lockfiles.
 
+#### Known hallucinated Go packages — do NOT use these
+
+The following packages appear plausible but **do not exist** and will always fail `go mod tidy`:
+
+| Hallucinated path | Real alternative |
+|---|---|
+| `github.com/gin-contrib/oidc` | `github.com/coreos/go-oidc/v3` — write a thin gin middleware wrapping it |
+| `golang.org/x/oauth2/auth0` | `golang.org/x/oauth2` — configure `oauth2.Endpoint{AuthURL: …, TokenURL: …}` manually |
+| `github.com/gin-contrib/jwt` | `github.com/golang-jwt/jwt/v5` — wrap it in a custom gin middleware |
+| `github.com/gorilla/oauth2` | `golang.org/x/oauth2` |
+| `github.com/google/uuid/v2` | `github.com/google/uuid` (no `/v2` suffix exists) |
+
+**OIDC with Authentik / Auth0 / any provider in Go — use this pattern:**
+```go
+// require github.com/coreos/go-oidc/v3 v3.x.x
+// require golang.org/x/oauth2 vX.x.x
+import (
+    oidc "github.com/coreos/go-oidc/v3/oidc"
+    "golang.org/x/oauth2"
+)
+provider, err := oidc.NewProvider(ctx, "https://authentik.example.com/application/o/<slug>/")
+conf := &oauth2.Config{
+    ClientID:     os.Getenv("OIDC_CLIENT_ID"),
+    ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+    RedirectURL:  "http://localhost:8080/callback",
+    Endpoint:     provider.Endpoint(),
+    Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+}
+verifier := provider.Verifier(&oidc.Config{ClientID: conf.ClientID})
+```
+
+### Go project bootstrap — CRITICAL
+
+Every Go project artifact set MUST include a `go.mod` file as an explicit artifact (`artifact_kind: "config"`, `artifact_name: "go.mod"`). Without it the toolchain auto-creates a module with a random path and `go mod tidy` will fail on every subsequent run.
+
+- Set the module path to a stable, intentional value (e.g. `github.com/<org>/<repo>`).
+- List every direct dependency with an explicit version in `require` blocks.
+- Do NOT include a `go.sum` artifact; let the toolchain generate it via `go mod tidy`.
+
 ### Go module versioning — CRITICAL
 
 Go uses Major Version Suffixes for v2+ modules. **Failure to follow this rule causes `go mod tidy` / `go build` to fail with "version invalid: should be v0 or v1, not v2".**

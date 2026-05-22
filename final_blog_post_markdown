@@ -143,7 +143,7 @@ func (t *MyTask) Execute(ctx context.Context) error {
 
 func main() {
     ctx := context.Background()
-    
+
     // Register MCP tools for external integration
     orca.RegisterTool(ctx, "my-tool", func(ctx context.Context, args any) any {
         fmt.Println("MCP Tool invoked")
@@ -152,11 +152,11 @@ func main() {
             "data":   "result from external tool",
         }
     })
-    
+
     // Discover registered tools
     tools := orca.DiscoverTools(ctx)
     fmt.Printf("Registered %d tools\n", len(tools))
-    
+
     workflow := orca.NewWorkflow()
     workflow.Add(&MyTask{id: "task-1"})
     workflow.Add(&MyTask{id: "task-2"})
@@ -196,18 +196,18 @@ type MyTask struct {
 func (t *MyTask) Execute(ctx context.Context) error {
     state.Set(ctx, "taskName", t.name)
     value, exists := state.Get(ctx, "taskName")
-    
+
     if exists {
         fmt.Printf("Retrieved value for %s: %v\n", t.name, value)
     } else {
         fmt.Println("No value found in state")
     }
-    
+
     // Add timestamp metadata
     if timestamp, ok := state.Get(ctx, "createdAt"); ok {
         fmt.Printf("Task created at: %v\n", timestamp)
     }
-    
+
     return nil
 }
 
@@ -215,12 +215,12 @@ func main() {
     ctx := context.Background()
     workflow := orca.NewWorkflow()
     workflow.Add(&MyTask{name: "processing-job"})
-    
+
     err := workflow.Run(ctx)
     if err != nil {
         panic(err)
     }
-    
+
     // Retrieve workflow state after execution
     workflowState := state.RetrieveWorkflowState(ctx)
     if workflowState != nil {
@@ -248,7 +248,7 @@ The framework's design philosophy aligns with Go's core principles: simplicity, 
 
 ## Call to Action
 
-We invite you to explore the full capabilities of **go-orca** by visiting our [documentation](https://github.com/go-orca/go-orca#documentation) and checking out the [source code repository](https://github.com/go-orca/go-orca). 
+We invite you to explore the full capabilities of **go-orca** by visiting our [documentation](https://github.com/go-orca/go-orca#documentation) and checking out the [source code repository](https://github.com/go-orca/go-orca).
 
 Join the growing community of Go developers who have simplified their workflow orchestration challenges with go-orca. Let's harness the power of streamlined workflow orchestration to build better software faster.
 

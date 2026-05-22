@@ -29,7 +29,7 @@ func TestOutputFromRawNormalizesPersonaModels(t *testing.T) {
 		"model":    "qwen3.5:9b",
 		"persona_models": map[string]string{
 			"director":        "ignored",
-			"pod":     "qwen3.5-coder:14b",
+			"pod":             "qwen3.5-coder:14b",
 			"project_manager": "qwen3.5:9b",
 		},
 		"finalizer_action":  "artifact-bundle",

@@ -267,7 +267,7 @@ export function createUploadSession() {
 export async function uploadFile(sessionId: string, file: File): Promise<Attachment> {
   const formData = new FormData();
   formData.append("file", file);
-  
+
   // Include relative path if available (from folder uploads with webkitdirectory).
   // webkitRelativePath is a non-standard File property available when using webkitdirectory.
   const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;

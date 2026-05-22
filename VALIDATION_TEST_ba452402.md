@@ -116,7 +116,7 @@ run_build:         FAILED - session not found
 
 **Error:**
 ```
-architect remediation: architect: execution error: executor: chat error: ollama: 
+architect remediation: architect: execution error: executor: chat error: ollama:
 chat error: Post "https://ollama.barton.local/api/chat": context deadline exceeded
 ```
 
@@ -177,7 +177,7 @@ Repository exists with initial commit before Pod execution.
 **Symptom:**
 All MCP toolchain validation calls fail with:
 ```
-mcp: call tool "go_mod_tidy": failed to connect 
+mcp: call tool "go_mod_tidy": failed to connect
 (session ID: YLHVJKJM7AQI54QFOAZGBGWCYS): session not found
 ```
 
@@ -378,8 +378,8 @@ This test **successfully validated 4/7 target fixes** but **exposed 2 new critic
 
 ### Error Message (Final)
 ```
-remediation planning (cycle 2): architect remediation: architect: 
-execution error: executor: chat error: ollama: chat error: 
+remediation planning (cycle 2): architect remediation: architect:
+execution error: executor: chat error: ollama: chat error:
 Post "https://ollama.barton.local/api/chat": context deadline exceeded
 ```
 

@@ -60,11 +60,11 @@ func registerModel(ctx context.Context, name string, config Config) error {
     if err := validateConfig(config); err != nil {
         return fmt.Errorf("failed to validate model %q: %w", name, err)
     }
-    
+
     if err := storage.Put(ctx, "models", name, config); err != nil {
         return fmt.Errorf("failed to store model config: %w", err)
     }
-    
+
     return nil
 }
 
@@ -88,17 +88,17 @@ func handleRequest(ctx context.Context, req *api.Request) (*api.Response, error)
         err := errors.New("model name required")
         return nil, err
     }
-    
+
     model, err := registry.Get(ctx, req.ModelName)
     if err != nil {
         return nil, err
     }
-    
+
     resp, err := model.Handle(ctx, req)
     if err != nil {
         return nil, err
     }
-    
+
     return resp, nil
 }
 
@@ -110,17 +110,17 @@ func handleRequest(ctx context.Context, req *api.Request) (*api.Response, error)
     if req.ModelName == "" {
         return nil, errors.New("model name required")
     }
-    
+
     model, err := registry.Get(ctx, req.ModelName)
     if err != nil {
         return nil, err
     }
-    
+
     resp, err := model.Handle(ctx, req)
     if err != nil {
         return nil, err
     }
-    
+
     // success path is the main code path
     return resp, nil
 }
@@ -159,12 +159,12 @@ type ModelConfig struct {
     Name        string          `json:"name"`
     Version     string          `json:"version"`
     Endpoint    string          `json:"endpoint"`
-    
+
     // Optional fields with defaults
     Timeout     time.Duration   `json:"timeout,omitempty"`
     RetryCount  int             `json:"retry_count,omitempty"`
     MetricsPort uint            `json:"metrics_port,omitempty"`
-    
+
     // Validation tags
     Validate() error
 }
@@ -176,12 +176,12 @@ type ModelRegistration struct {
     Name        string `json:"name"`
     Version     string `json:"version"`
     CreatedAt   time.Time `json:"created_at"`
-    
+
     // Mutable configuration
     Config      *ModelConfig
     Status      ModelStatus `json:"status"`
     Capabilities []Capability `json:"capabilities,omitempty"`
-    
+
     // Metrics
     Requests     uint64 `json:"requests"`
     Errors       uint64 `json:"errors"`
@@ -195,10 +195,10 @@ type ModelRegistration struct {
 // GOOD: Use embedding for related behaviors
 type Model struct {
     Base    // Embed base model functionality
-    
+
     // Type-specific methods
     *llm.Handler
-    
+
     // Type-specific fields
     modelVersion string
 }
@@ -207,7 +207,7 @@ type Model struct {
 type Base struct {
     ID   string
     Name string
-    
+
     // Protected by mutex for concurrent access
     mu     sync.RWMutex
     config atomic.Value // Use atomic.Value for safe config updates
@@ -231,7 +231,7 @@ func processRequest(ctx context.Context, req Request) (*Response, error) {
     defer func() {
         log.Printf("request %s completed: %s", req.ID, status)
     }()
-    
+
     // Check context before blocking
     select {
     case <-ctx.Done():
@@ -239,12 +239,12 @@ func processRequest(ctx context.Context, req Request) (*Response, error) {
     default:
         // proceed
     }
-    
+
     result, err := makeBlockingCall(ctx, req)
     if err != nil {
         return nil, err
     }
-    
+
     return result, nil
 }
 
@@ -256,16 +256,16 @@ func makeBlockingCall(ctx context.Context, req Request) (*Response, error) {
             return nil, ctx.Err()
         default:
         }
-        
+
         result, err := attemptRequest(ctx, req)
         if err == nil {
             return result, nil
         }
-        
+
         log.Printf("attempt %d failed: %v", i+1, err)
         time.Sleep(backoffTime)
     }
-    
+
     return nil, fmt.Errorf("max retries reached: %w", req.Err)
 }
 ```
@@ -285,33 +285,33 @@ func worker(id int, wg *sync.WaitGroup) {
 func processBatch(ctx context.Context, requests []Request) ([]Response, error) {
     results := make(chan Response, len(requests))
     wg := new(sync.WaitGroup)
-    
+
     for i, req := range requests {
         wg.Add(1)
         go func(idx int, r Request) {
             defer wg.Done()
-            
+
             resp, err := handleRequest(ctx, r)
             if err != nil {
                 log.Printf("worker %d: %v", idx, err)
                 return
             }
-            
+
             results <- *resp
         }(i, req)
     }
-    
+
     // Collect results
     go func() {
         wg.Wait()
         close(results)
     }()
-    
+
     var responses []Response
     for resp := range results {
         responses = append(responses, resp)
     }
-    
+
     return responses, nil
 }
 ```
@@ -323,9 +323,9 @@ func processBatch(ctx context.Context, requests []Request) ([]Response, error) {
 func registerModels(ctx context.Context, configs []*ModelConfig) error {
     ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
     defer cancel()
-    
+
     g, ctx := errgroup.WithContext(ctx)
-    
+
     for _, cfg := range configs {
         cfg := cfg // capture loop variable
         g.Go(func() error {
@@ -334,20 +334,20 @@ func registerModels(ctx context.Context, configs []*ModelConfig) error {
                 return ctx.Err()
             default:
             }
-            
+
             if err := validateModel(cfg); err != nil {
                 return fmt.Errorf("model %q: %w", cfg.Name, err)
             }
-            
+
             if err := registry.Store(cfg); err != nil {
                 return fmt.Errorf("failed to register model %q: %w", cfg.Name, err)
             }
-            
+
             log.Printf("registered model %q version %q", cfg.Name, cfg.Version)
             return nil
         })
     }
-    
+
     return g.Wait()
 }
 ```
@@ -372,7 +372,7 @@ func (b *ModelBucket) consumeToken() bool {
     b.mutex.Lock()
     atomic.AddInt64(&b.tokenCount, -1)
     b.mutex.Unlock()
-    
+
     return b.tokenCount >= 0
 }
 
@@ -388,40 +388,40 @@ type ModelBucket struct {
 func (b *ModelBucket) consumeToken() bool {
     b.mutex.Lock()
     defer b.mutex.Unlock()
-    
+
     if b.tokens > 0 {
         b.tokens--
         return true
     }
-    
+
     // Replenish if allowed
     now := time.Now().UnixMilli()
     elapsed := now - b.lastReplenish
     tokensToAdd := elapsed * b.rate / 1000
-    
+
     if tokensToAdd > 0 {
         b.lastReplenish = time.UnixMilli(now)
         b.tokens = min(b.tokens+tokensToAdd, b.burst)
         b.tokens--
     }
-    
+
     return b.tokens >= 0
 }
 
 func (b *ModelBucket) allow(ctx context.Context, bucket *Bucket) bool {
     b.mutex.Lock()
     defer b.mutex.Unlock()
-    
+
     if b.tokens >= 1 {
         return true
     }
-    
+
     // Check context while waiting
     for {
         if b.tokens >= 1 {
             return true
         }
-        
+
         select {
         case <-ctx.Done():
             return false
@@ -456,18 +456,18 @@ func (c *ModelConfig) Validate() error {
     if c.Endpoint == "" {
         return fmt.Errorf("model endpoint is required")
     }
-    
+
     // Validate endpoint URL
     u, err := url.Parse(c.Endpoint)
     if err != nil {
         return fmt.Errorf("invalid endpoint URL: %w", err)
     }
-    
+
     // Validate version semver
     if !semver.IsValid(c.Version) {
         return fmt.Errorf("invalid semver version: %q", c.Version)
     }
-    
+
     return nil
 }
 
@@ -480,18 +480,18 @@ func (r *ModelRegistration) Validate() error {
     if r.Config == nil {
         return ErrInvalidConfig
     }
-    
+
     if err := r.Config.Validate(); err != nil {
         return fmt.Errorf("invalid config: %w", err)
     }
-    
+
     // Validate capabilities
     for i, cap := range r.Capabilities {
         if cap == "" {
             return fmt.Errorf("capability at index %d cannot be empty", i)
         }
     }
-    
+
     return nil
 }
 ```
@@ -510,17 +510,17 @@ func registerModel(ctx context.Context, cfg *ModelConfig) error {
         "version", cfg.Version,
         "event", "register",
     )
-    
-    log.Infow("starting model registration", 
+
+    log.Infow("starting model registration",
         "duration", time.Since(start))
-    
+
     if err := registry.Store(cfg); err != nil {
         log.Errorw("failed to register model",
             "error", err,
             "stack", strings.TrimPrefix(debug.Stack(), "\n"))
         return err
     }
-    
+
     log.Infow("model registered successfully")
     return nil
 }
@@ -603,7 +603,7 @@ func TestModelRegistration(t *testing.T) {
             wantErr: fmt.Errorf("invalid endpoint URL: %w", urlParseError),
         },
     }
-    
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             err := tt.cfg.Validate()
@@ -622,15 +622,15 @@ func TestModelEndpoint(t *testing.T) {
     // GOOD: Always use fresh mux and close test server
     mux := http.NewServeMux()
     mux.HandleFunc("/v1/models", handleRegister)
-    
+
     ts := httptest.NewServer(mux)
     defer ts.Close() // CRITICAL: Prevent goroutine leaks
-    
+
     resp, err := http.Post(ts.URL+"/v1/models", "application/json", nil)
     if err != nil {
         t.Fatal(err)
     }
-    
+
     defer resp.Body.Close()
 }
 ```
