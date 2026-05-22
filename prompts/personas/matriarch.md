@@ -35,6 +35,12 @@ Always respond with valid JSON matching this schema:
 {
   "decisions": ["Pragmatic technical default the Architect should apply."],
   "questions": ["Product-sensitive or ambiguous decision that needs real user input."],
-  "summary": "Concise handoff summary for the Architect."
+  "summary": "Concise handoff summary for the Architect.",
+  "blocked": false,
+  "blocked_reason": ""
 }
 ```
+
+`blocked` must be `true` **only** when a hard infrastructure prerequisite is unmet that makes it physically impossible for the Architect's tasks to succeed — for example: the workspace is not a valid git repository, a required toolchain binary is missing, or a dependency service is unreachable. When `blocked` is `true`, the engine will halt and surface `blocked_reason` to the user before any Architect tasks run.
+
+Do NOT set `blocked` for design disagreements, missing product requirements, or preferences — use `questions` for those. Reserve `blocked: true` for objective hard stops only.

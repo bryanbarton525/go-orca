@@ -258,6 +258,11 @@ type WorkflowState struct {
 	// Blocking issues raised during QA.
 	BlockingIssues []string `json:"blocking_issues,omitempty"`
 
+	// MatriarchBlocked is set when the Matriarch determines a hard prerequisite
+	// is unmet and the Architect must not proceed until it is resolved.
+	MatriarchBlocked       bool   `json:"matriarch_blocked,omitempty"`
+	MatriarchBlockedReason string `json:"matriarch_blocked_reason,omitempty"`
+
 	// Suggestions accumulated across all persona phases (from Refiner/QA).
 	AllSuggestions []string `json:"all_suggestions,omitempty"`
 
@@ -682,6 +687,12 @@ type PersonaOutput struct {
 	RawContent     string      `json:"raw_content"`
 	BlockingIssues []string    `json:"blocking_issues,omitempty"`
 	Suggestions    []string    `json:"suggestions,omitempty"`
+
+	// MatriarchBlocked is set when the Matriarch determines that a hard
+	// prerequisite is unmet and the next phase must not proceed.
+	// The engine gates the Architect (initial and remediation) on this flag.
+	MatriarchBlocked       bool   `json:"matriarch_blocked,omitempty"`
+	MatriarchBlockedReason string `json:"matriarch_blocked_reason,omitempty"`
 
 	// Typed phase outputs; only one should be set per persona.
 	Constitution *Constitution       `json:"constitution,omitempty"`
