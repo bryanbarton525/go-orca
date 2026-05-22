@@ -31,6 +31,7 @@ import (
 	"github.com/go-orca/go-orca/internal/persona/engineer"
 	"github.com/go-orca/go-orca/internal/persona/finalizer"
 	"github.com/go-orca/go-orca/internal/persona/implementer"
+	"github.com/go-orca/go-orca/internal/persona/mcpagent"
 	"github.com/go-orca/go-orca/internal/persona/pm"
 	"github.com/go-orca/go-orca/internal/persona/qa"
 	"github.com/go-orca/go-orca/internal/persona/refiner"
@@ -126,6 +127,16 @@ func main() {
 	mcpReg.LoadServers(ctx, cfg.Tools.MCP)
 	mcpReg.LoadToolchains(buildRegistryToolchains(cfg))
 	mcpReg.Probe(ctx)
+
+	var podToolReg *tools.Registry
+	if cfg.Workflow.MCPAgents.Enabled {
+		podToolReg = buildPodToolRegistry(toolReg, store, mcpReg, cfg)
+		log.Info("pod mcp agent handoff enabled",
+			zap.String("provider", cfg.Workflow.MCPAgents.Provider),
+			zap.String("model", cfg.Workflow.MCPAgents.Model),
+			zap.Int("pod_tools", len(podToolReg.All())),
+		)
+	}
 	defer func() {
 		for _, s := range mcpReg.Sessions() {
 			_ = s.Close()
@@ -170,6 +181,8 @@ func main() {
 		WorkspaceRoot:         cfg.Workflow.WorkspaceRoot,
 		Toolchains:            buildToolchainConfigs(cfg),
 		ToolRegistry:          toolReg,
+		PodToolRegistry:       podToolReg,
+		MCPAgents:             cfg.Workflow.MCPAgents,
 		MCPRegistry:           mcpReg,
 		EnforceValidationGate: cfg.Workflow.EnforceValidationGate,
 		AttachmentStore:       store,
@@ -471,5 +484,38 @@ func buildCustomizationRegistry(cfg *config.Config, log *zap.Logger) *customizat
 	}
 	log.Info("customization registry built",
 		zap.Int("sources", len(cfg.Customizations.Sources)))
+	return reg
+}
+
+// buildPodToolRegistry returns builtins + invoke_mcp_agent for the Pod persona.
+func buildPodToolRegistry(fullReg *tools.Registry, store storage.Store, mcpReg *mcpregistry.Registry, cfg *config.Config) *tools.Registry {
+	reg := tools.NewRegistry()
+	builtin.RegisterAll(reg)
+	builtin.RegisterAttachmentTools(reg, store)
+
+	agentCfg := cfg.Workflow.MCPAgents
+	if strings.TrimSpace(agentCfg.Provider) == "" {
+		agentCfg.Provider = resolveDefaultProvider(cfg)
+	}
+	if strings.TrimSpace(agentCfg.Model) == "" {
+		agentCfg.Model = resolveDefaultModel(cfg)
+	}
+	if agentCfg.Timeout <= 0 {
+		agentCfg.Timeout = cfg.Workflow.HandoffTimeout
+		if agentCfg.Timeout <= 0 {
+			agentCfg.Timeout = 10 * time.Minute
+		}
+	}
+
+	builtin.RegisterInvokeMCPAgent(reg, builtin.InvokeMCPAgentDeps{
+		MCPReg:  mcpReg,
+		FullReg: fullReg,
+		AgentCfg: mcpagent.Config{
+			ProviderName: agentCfg.Provider,
+			ModelName:    agentCfg.Model,
+			MaxRounds:    agentCfg.MaxRounds,
+			Timeout:      agentCfg.Timeout,
+		},
+	})
 	return reg
 }

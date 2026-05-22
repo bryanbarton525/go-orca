@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
@@ -168,6 +169,13 @@ type Options struct {
 	// ## Available tools section.
 	// When nil, no tool context is injected.
 	ToolRegistry *tools.Registry
+
+	// PodToolRegistry, when set and MCPAgents.Enabled, is the tool registry
+	// passed to the Pod persona (builtins + invoke_mcp_agent only).
+	PodToolRegistry *tools.Registry
+
+	// MCPAgents configures per-MCP specialist agent handoffs for Pod.
+	MCPAgents config.MCPAgentsConfig
 
 	// MCPRegistry, when set, becomes the sole resolution path for toolchain
 	// capability invocations.  When nil, the engine falls back to direct
@@ -2504,7 +2512,12 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	}
 
 	// Populate tool context from the registry.
-	if e.opts.ToolRegistry != nil {
+	if kind == state.PersonaPod && e.opts.MCPAgents.Enabled && e.opts.PodToolRegistry != nil {
+		packet.ToolsContext = formatToolSpecs(e.opts.PodToolRegistry.Specs()) +
+			"\n\nUse `invoke_mcp_agent` to run git, go-toolchain, workspace, and other MCP operations. " +
+			"Do not attempt to call MCP tool names directly — they are not available to you."
+		packet.ToolRegistry = e.opts.PodToolRegistry
+	} else if e.opts.ToolRegistry != nil {
 		packet.ToolsContext = formatToolSpecs(e.opts.ToolRegistry.Specs())
 		packet.ToolRegistry = e.opts.ToolRegistry
 	}
