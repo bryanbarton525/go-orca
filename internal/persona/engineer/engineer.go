@@ -13,19 +13,23 @@ import (
 )
 
 type output struct {
-	Decisions []string `json:"decisions"`
-	Questions []string `json:"questions"`
-	Summary   string   `json:"summary"`
+	Decisions     []string `json:"decisions"`
+	Questions     []string `json:"questions"`
+	Summary       string   `json:"summary"`
+	Blocked       bool     `json:"blocked"`
+	BlockedReason string   `json:"blocked_reason"`
 }
 
 var outputSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"decisions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"questions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"summary":   map[string]any{"type": "string"},
+		"decisions":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"questions":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"summary":        map[string]any{"type": "string"},
+		"blocked":        map[string]any{"type": "boolean", "description": "Set to true only when a hard infrastructure prerequisite is unmet and the Architect must not proceed until it is resolved."},
+		"blocked_reason": map[string]any{"type": "string", "description": "Human-readable explanation of what must be resolved before the Architect can proceed. Required when blocked is true."},
 	},
-	"required": []string{"decisions", "questions", "summary"},
+	"required": []string{"decisions", "questions", "summary", "blocked"},
 }
 
 // EngineerProxy implements persona.Persona.
@@ -79,10 +83,12 @@ func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 	}
 
 	return &state.PersonaOutput{
-		Persona:     state.PersonaMatriarch,
-		Summary:     out.Summary,
-		RawContent:  raw,
-		Suggestions: suggestions,
-		CompletedAt: base.Timestamp(),
+		Persona:                state.PersonaMatriarch,
+		Summary:                out.Summary,
+		RawContent:             raw,
+		Suggestions:            suggestions,
+		MatriarchBlocked:       out.Blocked,
+		MatriarchBlockedReason: out.BlockedReason,
+		CompletedAt:            base.Timestamp(),
 	}, nil
 }

@@ -475,6 +475,13 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		if err := e.runPersona(ctx, ws, state.PersonaMatriarch, snap); err != nil {
 			return fmt.Errorf("matriarch phase: %w", err)
 		}
+		if ws.MatriarchBlocked {
+			reason := ws.MatriarchBlockedReason
+			if reason == "" {
+				reason = "Matriarch blocked progression — a hard prerequisite is unmet"
+			}
+			return fmt.Errorf("matriarch blocked architect: %s", reason)
+		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
@@ -1391,7 +1398,18 @@ func (e *Engine) runRemediationMatriarch(ctx context.Context, ws *state.Workflow
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
 	}
 
-	return e.store.SaveWorkflow(ctx, ws)
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return err
+	}
+
+	if out.MatriarchBlocked {
+		reason := out.MatriarchBlockedReason
+		if reason == "" {
+			reason = "Matriarch blocked remediation — a hard prerequisite is unmet"
+		}
+		return fmt.Errorf("matriarch blocked remediation architect (cycle %d): %s", qaCycle, reason)
+	}
+	return nil
 }
 
 // runRemediationTriage routes QA failures through the Project Manager before
@@ -2311,6 +2329,10 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	}
 	if len(out.Suggestions) > 0 {
 		ws.AllSuggestions = append(ws.AllSuggestions, out.Suggestions...)
+	}
+	if out.Persona == state.PersonaMatriarch && out.MatriarchBlocked {
+		ws.MatriarchBlocked = true
+		ws.MatriarchBlockedReason = out.MatriarchBlockedReason
 	}
 	e.appendReviewThreadEntries(ws, out, out.Summary)
 
