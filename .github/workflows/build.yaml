@@ -37,6 +37,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: bryanbarton525/go-orca-api
 
+# Default least-privilege token; jobs that push images or create releases override below.
+permissions:
+  contents: read
+
 jobs:
   image-tag:
     runs-on: ubuntu-latest
@@ -50,6 +54,9 @@ jobs:
   # ── Go unit tests ────────────────────────────────────────────────────────────
   test-go:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -272,6 +279,10 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build-push, build-push-ui, build-push-mcp]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      actions: write
     defaults:
       run:
         working-directory: e2e
@@ -345,6 +356,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -373,6 +385,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@v4
         with:
