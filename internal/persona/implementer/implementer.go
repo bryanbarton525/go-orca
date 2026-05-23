@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -157,7 +158,11 @@ func (im *Pod) Execute(ctx context.Context, packet state.HandoffPacket) (*state.
 		return nil, fmt.Errorf("pod: parse error: %w", err)
 	}
 
-	if err := validateOutput(packet.Mode, task.Title, &out); err != nil {
+	workspacePath := ""
+	if packet.Workspace != nil {
+		workspacePath = packet.Workspace.Path
+	}
+	if err := validateOutput(packet.Mode, task.Title, workspacePath, &out); err != nil {
 		return nil, err
 	}
 
@@ -232,7 +237,7 @@ func normalizeArtifactKind(mode state.WorkflowMode, raw string) state.ArtifactKi
 	return state.ArtifactKindDocument
 }
 
-func validateOutput(mode state.WorkflowMode, taskTitle string, out *implOutput) error {
+func validateOutput(mode state.WorkflowMode, taskTitle, workspacePath string, out *implOutput) error {
 	if strings.TrimSpace(out.Content) != "" {
 		return nil
 	}
@@ -243,11 +248,30 @@ func validateOutput(mode state.WorkflowMode, taskTitle string, out *implOutput) 
 
 	// Software workflows must fail fast here. Summary-only success causes the
 	// engine to carry descriptive prose into QA even when no files were written.
+	// Exception: Phase A may have written files via write_file or invoke_mcp_agent
+	// while Phase B only returns a summary JSON object.
 	if mode == state.WorkflowModeSoftware && strings.TrimSpace(out.Summary) != "" {
+		if workspaceHasDeliverables(workspacePath) {
+			return nil
+		}
 		return fmt.Errorf("pod: model produced summary-only output for software task %q — write the files or return artifact content", taskTitle)
 	}
 
 	return fmt.Errorf("pod: model produced an empty content field for task %q — check model output or prompt", taskTitle)
+}
+
+// workspaceHasDeliverables reports whether the workflow workspace contains at
+// least one file or directory besides "." and "..".
+func workspaceHasDeliverables(workspacePath string) bool {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return false
+	}
+	entries, err := os.ReadDir(workspacePath)
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
 }
 
 // buildSpecialistPrompt returns the base pod system prompt with an optional

@@ -1,6 +1,8 @@
 package implementer
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-orca/go-orca/internal/state"
@@ -38,7 +40,7 @@ func TestLatestSynthesisArtifact_FallsBackToTextualArtifact(t *testing.T) {
 func TestValidateOutput_SoftwareSummaryOnlyFails(t *testing.T) {
 	out := &implOutput{Summary: "wrote main.go and go.mod"}
 
-	err := validateOutput(state.WorkflowModeSoftware, "write source files", out)
+	err := validateOutput(state.WorkflowModeSoftware, "write source files", "", out)
 	if err == nil {
 		t.Fatal("expected software summary-only output to fail")
 	}
@@ -50,10 +52,22 @@ func TestValidateOutput_SoftwareSummaryOnlyFails(t *testing.T) {
 	}
 }
 
+func TestValidateOutput_SoftwareSummaryOnlyPassesWhenWorkspaceHasFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := &implOutput{Summary: "initialized git repo via invoke_mcp_agent"}
+
+	if err := validateOutput(state.WorkflowModeSoftware, "Initialize Git Repository", dir, out); err != nil {
+		t.Fatalf("validateOutput() error = %v, want nil when workspace has files", err)
+	}
+}
+
 func TestValidateOutput_ContentWins(t *testing.T) {
 	out := &implOutput{Content: "package main", Summary: "wrote main.go"}
 
-	if err := validateOutput(state.WorkflowModeSoftware, "write source files", out); err != nil {
+	if err := validateOutput(state.WorkflowModeSoftware, "write source files", "", out); err != nil {
 		t.Fatalf("validateOutput() error = %v, want nil", err)
 	}
 }

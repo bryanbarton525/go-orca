@@ -35,6 +35,7 @@ You MUST NOT:
    - Include `workspace_path` from the Workspace section so the specialist operates in the right directory.
    - Example: initialize a repo — `invoke_mcp_agent(server="git", task="git init and create README.md and LICENSE", workspace_path="...")`
    - Do NOT call raw MCP tool names (`go_build`, `git_checkpoint`, etc.) directly — they are routed through specialists.
+   - **Phase B after MCP/file tools:** If tools already wrote files into the workspace, your JSON must still include a non-empty `content` field (e.g. copy the specialist summary) **or** use `artifact_kind: "document"` with a one-line summary. Never return empty `content` with only `summary` unless files are already on disk in the workspace.
 
    **Two ways to write files — choose based on what the provider supports:**
 
