@@ -210,7 +210,9 @@ server:
     - "127.0.0.1"
 ```
 
-**SSE note:** `proxy_buffering off` is required for `GET /workflows/:id/stream` to deliver events in real time.
+**SSE note:** `proxy_buffering off` is required for `GET /workflows/:id/stream` to deliver events in real time. When [Redpanda streaming](streaming.md) is enabled, the same proxy settings apply; live frames may arrive in bursts from the hub rather than on a fixed one-second poll.
+
+For edge ingest (`POST /api/v1/events` on a dedicated host such as `events.example.com`), configure JWT validation and rate limits at the gateway; see [Event Streaming](streaming.md#edge-ingest-jwt-to-redpanda).
 
 ---
 

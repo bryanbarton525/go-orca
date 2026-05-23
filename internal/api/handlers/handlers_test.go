@@ -298,7 +298,7 @@ func newRouter(store *memStore) *gin.Engine {
 	wf.GET("/:id/events", handlers.GetWorkflowEvents(store))
 	wf.POST("/:id/cancel", handlers.CancelWorkflow(store, log))
 	wf.POST("/:id/resume", handlers.ResumeWorkflow(store, nil, log))
-	wf.GET("/:id/stream", handlers.StreamWorkflowEvents(store))
+	wf.GET("/:id/stream", handlers.StreamWorkflowEvents(store, nil))
 
 	r.GET("/healthz", handlers.Healthz())
 	r.GET("/readyz", handlers.Readyz(store))

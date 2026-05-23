@@ -45,6 +45,7 @@ type Config struct {
 	Database       DatabaseConfig       `mapstructure:"database"`
 	Logging        LoggingConfig        `mapstructure:"logging"`
 	Scoping        ScopingConfig        `mapstructure:"scoping"`
+	Streaming      StreamingConfig      `mapstructure:"streaming"`
 	Providers      ProvidersConfig      `mapstructure:"providers"`
 	Tools          ToolsConfig          `mapstructure:"tools"`
 	Customizations CustomizationsConfig `mapstructure:"customizations"`
@@ -96,6 +97,20 @@ type ScopingConfig struct {
 	RequireTeamParentOrg bool        `mapstructure:"require_team_parent_org"`
 	DefaultTenantSlug    string      `mapstructure:"default_tenant"`
 	DefaultScopeSlug     string      `mapstructure:"default_scope"`
+}
+
+// StreamingConfig controls edge-authenticated event ingestion to Redpanda.
+type StreamingConfig struct {
+	Enabled                bool          `mapstructure:"enabled"`
+	Brokers                []string      `mapstructure:"brokers"`
+	Topic                  string        `mapstructure:"topic"`
+	ClientID               string        `mapstructure:"client_id"`
+	ProduceTimeout         time.Duration `mapstructure:"produce_timeout"`
+	RequiredAcks           string        `mapstructure:"required_acks"` // all | leader | none
+	UserIDHeader           string        `mapstructure:"user_id_header"`
+	ReadinessProbeInterval time.Duration `mapstructure:"readiness_probe_interval"`
+	ReadinessPingTimeout   time.Duration `mapstructure:"readiness_ping_timeout"`
+	ConsumerGroup          string        `mapstructure:"consumer_group"`
 }
 
 // ProvidersConfig holds per-provider settings.
@@ -362,6 +377,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scoping.default_tenant", "default")
 	v.SetDefault("scoping.default_scope", "global")
 
+	// Streaming
+	v.SetDefault("streaming.enabled", false)
+	v.SetDefault("streaming.brokers", []string{"redpanda.redpanda.svc.cluster.local:9092"})
+	v.SetDefault("streaming.topic", "orca.events")
+	v.SetDefault("streaming.client_id", "go-orca-api")
+	v.SetDefault("streaming.produce_timeout", 5*time.Second)
+	v.SetDefault("streaming.required_acks", "all")
+	v.SetDefault("streaming.user_id_header", "X-User-Id")
+	v.SetDefault("streaming.readiness_probe_interval", 10*time.Second)
+	v.SetDefault("streaming.readiness_ping_timeout", 2*time.Second)
+	v.SetDefault("streaming.consumer_group", "go-orca-workflow-stream")
+
 	// Providers
 	v.SetDefault("providers.openai.enabled", false)
 	v.SetDefault("providers.openai.default_model", "gpt-4o")
@@ -403,6 +430,17 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Database.Driver != DriverPostgres && cfg.Database.Driver != DriverSQLite {
 		return fmt.Errorf("database: unsupported driver %q", cfg.Database.Driver)
+	}
+	if cfg.Streaming.Enabled {
+		if len(cfg.Streaming.Brokers) == 0 {
+			return fmt.Errorf("streaming: brokers must not be empty when enabled")
+		}
+		if strings.TrimSpace(cfg.Streaming.Topic) == "" {
+			return fmt.Errorf("streaming: topic must not be empty when enabled")
+		}
+		if strings.TrimSpace(cfg.Streaming.UserIDHeader) == "" {
+			return fmt.Errorf("streaming: user_id_header must not be empty when enabled")
+		}
 	}
 	return nil
 }

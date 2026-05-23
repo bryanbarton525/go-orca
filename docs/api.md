@@ -333,9 +333,35 @@ Return all journal events for a workflow in insertion order. Events are immutabl
 
 ---
 
+### GET /api/v1/streaming
+
+Returns how the server delivers live workflow events. The Workflow Studio uses this to populate the SSE transport selector.
+
+**Response 200**
+
+```json
+{
+  "enabled": true,
+  "workflow_stream": "redpanda",
+  "workflow_topic": "orca.events"
+}
+```
+
+| Field | Description |
+|---|---|
+| `enabled` | Whether Redpanda streaming is configured |
+| `workflow_stream` | Transport selected by `source=auto`: `database` or `redpanda` |
+| `workflow_topic` | Topic name when enabled (optional) |
+
+See [Event Streaming](streaming.md) for architecture diagrams.
+
+---
+
 ### GET /workflows/:id/stream
 
-Server-Sent Events stream of workflow events. Polls the event journal every second and pushes new events as they arrive. Sends periodic keepalive comments (`": keepalive"`) to prevent proxy timeouts.
+Server-Sent Events stream of workflow events.
+
+With **Redpanda enabled**, the handler sends an initial snapshot from the database, then pushes live events from the in-process hub (`X-Stream-Transport: redpanda`). With streaming disabled, or `?source=database`, it polls the journal every second (`X-Stream-Transport: database`). Both modes send periodic keepalive comments (`": keepalive"`) to prevent proxy timeouts.
 
 Nested sub-phases may emit additional persona boundary events before the parent persona completes. For example, the Finalizer's inline Refiner pass can emit `persona.started` and `persona.completed` events with `persona="refiner"` while the workflow still reports the broader Finalizer phase.
 
@@ -348,6 +374,13 @@ The stream closes automatically when the workflow reaches a terminal state (`com
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `timeout` | integer (seconds) | 300 | Maximum stream duration |
+| `source` | string | `auto` | `auto` \| `redpanda` \| `database` — transport selection |
+
+**Response headers**
+
+| Header | Description |
+|---|---|
+| `X-Stream-Transport` | `redpanda` or `database` for this connection |
 
 **Response** — `text/event-stream`
 
@@ -362,6 +395,33 @@ data: {"type":"persona.completed","persona":"director","payload":{"duration_ms":
 ```
 
 **Response 404** — workflow not found
+
+---
+
+### POST /api/v1/events
+
+Edge-authenticated event ingest to Redpanda. Requires `streaming.enabled` and a producer. Identity is taken from the mesh user header (default `X-User-Id`), not tenant/scope headers.
+
+**Request headers**
+
+| Header | Required | Description |
+|---|---|---|
+| `X-User-Id` | Yes | End-user id (often set by Istio from JWT `sub`) |
+| `Content-Type` | No | Any; body is stored opaque |
+
+**Request body** — non-empty JSON (or other bytes); not wrapped in `workflow.event`.
+
+**Response 202**
+
+```json
+{"status": "accepted"}
+```
+
+**Response 400** — missing user header or empty body
+
+**Response 503** — streaming disabled or enqueue failed
+
+Full flow: [Event Streaming](streaming.md#edge-ingest-jwt-to-redpanda).
 
 ---
 

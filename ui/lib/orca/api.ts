@@ -141,10 +141,27 @@ function normalizeCustomizationItems(items: unknown): CustomizationItem[] {
     }));
 }
 
-export function buildWorkflowStreamUrl(workflowId: string, context?: OrcaContext, timeout = 300) {
-  const params = new URLSearchParams({ timeout: String(timeout) });
+export type WorkflowStreamSource = "auto" | "redpanda" | "database";
+
+export interface StreamingCapabilities {
+  enabled: boolean;
+  workflow_stream: "database" | "redpanda" | (string & {});
+  workflow_topic?: string;
+}
+
+export function buildWorkflowStreamUrl(
+  workflowId: string,
+  context?: OrcaContext,
+  timeout = 300,
+  source: WorkflowStreamSource = "auto"
+) {
+  const params = new URLSearchParams({ timeout: String(timeout), source });
   appendContext(params, context);
   return `/api/orca/workflows/${workflowId}/stream?${params.toString()}`;
+}
+
+export function getStreamingCapabilities() {
+  return orcaRequest<StreamingCapabilities>("streaming");
 }
 
 export function getHealthz() {

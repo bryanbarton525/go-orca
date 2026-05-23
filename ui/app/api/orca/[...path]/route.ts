@@ -8,6 +8,7 @@ const allowedRoutes = {
   GET: [
     /^healthz$/,
     /^readyz$/,
+    /^streaming$/,
     /^workflows$/,
     /^workflows\/[^/]+$/,
     /^workflows\/[^/]+\/events$/,
