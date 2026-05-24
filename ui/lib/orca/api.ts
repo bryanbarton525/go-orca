@@ -160,8 +160,23 @@ export function buildWorkflowStreamUrl(
   return `/api/orca/workflows/${workflowId}/stream?${params.toString()}`;
 }
 
-export function getStreamingCapabilities() {
-  return orcaRequest<StreamingCapabilities>("streaming");
+const defaultStreamingCapabilities: StreamingCapabilities = {
+  enabled: false,
+  workflow_stream: "database",
+};
+
+export async function getStreamingCapabilities() {
+  const params = new URLSearchParams();
+  const url = `/api/orca/streaming${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, { method: "GET", cache: "no-store" });
+  if (response.status === 404) {
+    return defaultStreamingCapabilities;
+  }
+  const payload = await parsePayload(response);
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `go-orca request failed with status ${response.status}`));
+  }
+  return payload as StreamingCapabilities;
 }
 
 export function getHealthz() {
