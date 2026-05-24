@@ -510,7 +510,7 @@ func TestRunPodPhase_RespectsDependsOnOrdering(t *testing.T) {
 	}
 }
 
-func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyMissing(t *testing.T) {
+func TestRunPodPhase_DropsUnknownDependencyAndRuns(t *testing.T) {
 	order := []string{}
 	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})
 	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
@@ -542,19 +542,65 @@ func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyMissing(t *testing.T)
 		WorkspaceRoot:   t.TempDir(),
 	})
 
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(order) != 1 || order[0] != "task-dependent-only" {
+		t.Fatalf("expected sanitized task to run, got order %v", order)
+	}
+}
+
+func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyIncomplete(t *testing.T) {
+	order := []string{}
+	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{
+		{
+			ID:         "task-upstream",
+			WorkflowID: ws.ID,
+			Title:      "upstream",
+			Status:     state.TaskStatusPending,
+			AssignedTo: state.PersonaArchitect,
+			CreatedAt:  time.Now().UTC(),
+		},
+		{
+			ID:         "task-dependent",
+			WorkflowID: ws.ID,
+			Title:      "dependent",
+			Status:     state.TaskStatusPending,
+			AssignedTo: state.PersonaPod,
+			DependsOn:  []string{"task-upstream"},
+			CreatedAt:  time.Now().UTC(),
+		},
+	}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+	})
+
 	err := eng.Run(context.Background(), ws.ID)
 	if err == nil {
-		t.Fatal("expected dependency-blocked pod phase to fail")
+		t.Fatal("expected incomplete dependency chain to fail pod phase")
 	}
 	if !strings.Contains(err.Error(), "no runnable pod tasks") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(order) != 0 {
 		t.Fatalf("expected blocked task not to execute, got order %v", order)
-	}
-	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
-	if got := stored.Tasks[0].Status; got != state.TaskStatusPending {
-		t.Fatalf("blocked task status = %s, want pending", got)
 	}
 }
 
