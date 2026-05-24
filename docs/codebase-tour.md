@@ -302,7 +302,7 @@ flowchart TD
 
 ## 9. Process startup recovery
 
-`reconcileInterruptedWorkflows` (`cmd/go-orca-api/recovery.go`) runs at boot: any workflow still marked `running` in the DB (crash mid-flight) is transitioned to **failed** with a specific error message so operators can **resume** intentionally.
+`reconcileInterruptedWorkflows` (`cmd/go-orca-api/recovery.go`) runs at boot: any workflow still marked `running` in the DB (crash or rollout mid-flight) is paused, its in-flight task pointers cleared, and the workflow is **re-enqueued** on the scheduler so completed phases are skipped via summaries. If the scheduler is unavailable, the workflow stays **paused** with a resume hint.
 
 ---
 

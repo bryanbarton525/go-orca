@@ -36,6 +36,7 @@ type Config struct {
 	StreamingReadiness    handlers.ReadinessProbe
 	StreamingHub          *streaming.Hub
 	StreamingTopic        string
+	StreamingUserinfoURL  string
 	MetricsHandler        http.Handler
 	// GinMode sets gin.SetMode; defaults to "release".
 	GinMode string
@@ -130,7 +131,11 @@ func New(cfg Config) *gin.Engine {
 		v1.GET("/streaming", handlers.GetStreamingCapabilities(cfg.StreamingEnabled, cfg.StreamingTopic))
 
 		if cfg.StreamingEnabled {
-			events := v1.Group("/events", middleware.RequireMeshUserID(cfg.StreamingUserIDHeader))
+			eventMiddleware := []gin.HandlerFunc{
+				middleware.StreamingBearerUserinfo(cfg.StreamingUserinfoURL, cfg.StreamingUserIDHeader),
+				middleware.RequireMeshUserID(cfg.StreamingUserIDHeader),
+			}
+			events := v1.Group("/events", eventMiddleware...)
 			events.POST("", handlers.IngestEvent(cfg.StreamingProducer, cfg.StreamingMetrics, cfg.Logger))
 		}
 	}

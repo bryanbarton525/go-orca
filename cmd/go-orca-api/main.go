@@ -242,7 +242,7 @@ func main() {
 		MaxRetries:  0,
 	}, log)
 
-	if recovered, err := reconcileInterruptedWorkflows(ctx, store, log); err != nil {
+	if recovered, err := reconcileInterruptedWorkflows(ctx, store, sched, log); err != nil {
 		log.Warn("workflow recovery sweep incomplete", zap.Error(err))
 	} else if recovered > 0 {
 		log.Info("workflow recovery sweep completed", zap.Int("recovered", recovered))
@@ -271,6 +271,7 @@ func main() {
 		StreamingReadiness:    streamReadiness,
 		StreamingHub:          streamHub,
 		StreamingTopic:        cfg.Streaming.Topic,
+		StreamingUserinfoURL:  cfg.Streaming.UserinfoURL,
 		MetricsHandler:        promhttp.Handler(),
 		GinMode:               cfg.Server.Mode,
 	})
