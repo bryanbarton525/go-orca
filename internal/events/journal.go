@@ -27,11 +27,12 @@ const (
 	EventPersonaFailed    EventType = "persona.failed"
 	EventPersonaRetrying  EventType = "persona.retrying"
 
-	EventTaskCreated   EventType = "task.created"
-	EventTaskStarted   EventType = "task.started"
-	EventTaskCompleted EventType = "task.completed"
-	EventTaskFailed    EventType = "task.failed"
-	EventTaskSkipped   EventType = "task.skipped"
+	EventTaskCreated      EventType = "task.created"
+	EventTaskStarted      EventType = "task.started"
+	EventTaskCompleted    EventType = "task.completed"
+	EventTaskFailed       EventType = "task.failed"
+	EventTaskSkipped      EventType = "task.skipped"
+	EventTaskGraphBlocked EventType = "task.graph.blocked"
 
 	EventArtifactProduced  EventType = "artifact.produced"
 	EventStateTransition   EventType = "state.transition"
@@ -154,6 +155,15 @@ type TaskFailedPayload struct {
 	TaskID string `json:"task_id"`
 	Title  string `json:"title"`
 	Error  string `json:"error"`
+}
+
+// TaskGraphBlockedPayload is the payload for EventTaskGraphBlocked.
+type TaskGraphBlockedPayload struct {
+	PodTasksSeen          int                 `json:"pod_tasks_seen"`
+	BlockedByDependencies int                 `json:"blocked_by_dependencies"`
+	BlockedTaskIDs        []string            `json:"blocked_task_ids,omitempty"`
+	BlockedByTask         map[string][]string `json:"blocked_by_task,omitempty"`
+	HotUnmetDependencies  map[string]int      `json:"hot_unmet_dependencies,omitempty"`
 }
 
 // ArtifactProducedPayload is the payload for EventArtifactProduced.
