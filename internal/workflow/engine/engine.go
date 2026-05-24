@@ -1608,16 +1608,23 @@ func (e *Engine) ensureRequestedRepository(ctx context.Context, ws *state.Workfl
 	}
 	fullName := requestedRepositoryFullName(cfg)
 	repoURL := "https://github.com/" + fullName
+	action := strings.ToLower(strings.TrimSpace(ws.DeliveryAction))
+	if action == string(actions.ActionGitHubPR) || action == string(actions.ActionRepoCommit) {
+		ws.Execution.Workspace.RepoURL = repoURL
+		ws.AllSuggestions = append(ws.AllSuggestions,
+			fmt.Sprintf("[workspace] attached delivery repository %s for checkpoint push", repoURL))
+		return nil
+	}
 	rawCfg, _ := json.Marshal(cfg)
 	out, err := actions.Global.Execute(ctx, actions.ActionCreateRepo, actions.Input{
 		Workflow: ws,
 		Config:   rawCfg,
 	})
 	if err != nil {
-		// Treat "already exists" as attach-to-existing. GitHub returns 422 for
-		// duplicate repository creation, and attaching is safer than burning the
-		// workflow before implementation has a chance to checkpoint locally.
-		if strings.Contains(err.Error(), "422") || strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		// Treat "already exists" or wrong org endpoint (404 for user-owned repos
+		// mislabeled as org) as attach-to-existing.
+		errText := strings.ToLower(err.Error())
+		if strings.Contains(err.Error(), "422") || strings.Contains(errText, "already exists") || strings.Contains(err.Error(), "404") {
 			ws.Execution.Workspace.RepoURL = repoURL
 			ws.AllSuggestions = append(ws.AllSuggestions, fmt.Sprintf("[workspace] attached existing repository %s", repoURL))
 			return nil
