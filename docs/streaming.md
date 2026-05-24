@@ -119,6 +119,16 @@ sequenceDiagram
 - **400** — missing user header or empty body.
 - **503** — producer unavailable or enqueue failed.
 
+Homelab installs `RequestAuthentication` / `AuthorizationPolicy` on the API workload. The API pod must run an **Istio sidecar** (`sidecar.istio.io/inject: "true"`) so JWT validation and `sub` → `X-User-Id` mapping run on inbound requests. Without a sidecar, ingest returns **400** even with a valid Bearer token.
+
+Validate end-to-end after deploy:
+
+```bash
+kubectl -n zitadel get secret iam-admin -o jsonpath='{.data.iam-admin\.json}' | base64 -d > /tmp/iam-admin.json
+go run ./hack/streaming-e2e -sa /tmp/iam-admin.json
+rm -f /tmp/iam-admin.json
+```
+
 Prometheus metrics on `/metrics` track ingest volume and latency when streaming is enabled.
 
 ---

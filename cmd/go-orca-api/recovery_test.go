@@ -13,7 +13,7 @@ import (
 	"github.com/go-orca/go-orca/internal/state"
 )
 
-func TestReconcileInterruptedWorkflowsMarksRunningWorkflowsFailed(t *testing.T) {
+func TestReconcileInterruptedWorkflowsRequeuesRunningWorkflows(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
@@ -50,55 +50,68 @@ func TestReconcileInterruptedWorkflowsMarksRunningWorkflowsFailed(t *testing.T) 
 			},
 		},
 	}
+	sched := &recoveryTestScheduler{}
 
-	recovered, err := reconcileInterruptedWorkflows(context.Background(), store, zap.NewNop())
+	recovered, err := reconcileInterruptedWorkflows(context.Background(), store, sched, zap.NewNop())
 	if err != nil {
 		t.Fatalf("reconcileInterruptedWorkflows returned error: %v", err)
 	}
 	if recovered != 1 {
 		t.Fatalf("expected 1 recovered workflow, got %d", recovered)
 	}
+	if len(sched.enqueued) != 1 || sched.enqueued[0] != "workflow-running" {
+		t.Fatalf("expected workflow-running to be enqueued, got %v", sched.enqueued)
+	}
 
 	workflow := store.workflows["workflow-running"]
-	if workflow.Status != state.WorkflowStatusFailed {
-		t.Fatalf("expected running workflow to be failed, got %s", workflow.Status)
+	if workflow.Status != state.WorkflowStatusPending {
+		t.Fatalf("expected workflow to be pending for scheduler, got %s", workflow.Status)
 	}
-	if workflow.ErrorMessage != interruptedWorkflowError {
-		t.Fatalf("expected interrupted error message %q, got %q", interruptedWorkflowError, workflow.ErrorMessage)
+	if workflow.ErrorMessage != "" {
+		t.Fatalf("expected error message cleared before enqueue, got %q", workflow.ErrorMessage)
 	}
 	if workflow.Execution.CurrentPersona != "" || workflow.Execution.ActiveTaskID != "" || workflow.Execution.ActiveTaskTitle != "" {
 		t.Fatalf("expected execution state to be cleared, got %+v", workflow.Execution)
 	}
-	if workflow.CompletedAt == nil {
-		t.Fatal("expected completed_at to be set")
+	if workflow.CompletedAt != nil {
+		t.Fatal("expected completed_at to remain unset")
 	}
-	if workflow.Tasks[0].Status != state.TaskStatusFailed {
-		t.Fatalf("expected active task to be failed, got %s", workflow.Tasks[0].Status)
+	if workflow.Tasks[0].Status != state.TaskStatusPending {
+		t.Fatalf("expected active task to return to pending, got %s", workflow.Tasks[0].Status)
 	}
-	if workflow.Tasks[0].CompletedAt == nil {
-		t.Fatal("expected interrupted task completed_at to be set")
+	if workflow.Tasks[0].CompletedAt != nil {
+		t.Fatal("expected interrupted task completed_at to be cleared")
 	}
 
-	var sawTaskFailed bool
-	var sawPersonaFailed bool
+	var sawPaused bool
 	var sawTransition bool
+	var sawResumed bool
 	for _, evt := range store.appendedEvents {
 		switch evt.Type {
-		case events.EventTaskFailed:
-			sawTaskFailed = true
-		case events.EventPersonaFailed:
-			sawPersonaFailed = true
+		case events.EventWorkflowPaused:
+			sawPaused = true
+		case events.EventWorkflowResumed:
+			sawResumed = true
 		case events.EventStateTransition:
 			sawTransition = true
 		}
 	}
-	if !sawTaskFailed || !sawPersonaFailed || !sawTransition {
-		t.Fatalf("expected recovery events taskFailed=%t personaFailed=%t transition=%t", sawTaskFailed, sawPersonaFailed, sawTransition)
+	if !sawPaused || !sawTransition || !sawResumed {
+		t.Fatalf("expected recovery events paused=%t transition=%t resumed=%t", sawPaused, sawTransition, sawResumed)
 	}
 
 	if got := store.workflows["workflow-completed"].Status; got != state.WorkflowStatusCompleted {
 		t.Fatalf("expected completed workflow to remain completed, got %s", got)
 	}
+}
+
+type recoveryTestScheduler struct {
+	enqueued []string
+}
+
+func (s *recoveryTestScheduler) Enqueue(workflowID string) error {
+	s.enqueued = append(s.enqueued, workflowID)
+	return nil
 }
 
 type recoveryTestStore struct {
@@ -113,18 +126,15 @@ func (s *recoveryTestStore) load() {
 	if s.loaded {
 		return
 	}
-	s.workflows = make(map[string]*state.WorkflowState)
-	for tenantID, workflows := range s.workflowsByTenant {
-		copied := make([]*state.WorkflowState, 0, len(workflows))
-		for _, workflow := range workflows {
-			clone := *workflow
-			clone.Tasks = append([]state.Task(nil), workflow.Tasks...)
-			copied = append(copied, &clone)
-			s.workflows[clone.ID] = &clone
-		}
-		s.workflowsByTenant[tenantID] = copied
-	}
 	s.loaded = true
+	if s.workflows == nil {
+		s.workflows = make(map[string]*state.WorkflowState)
+	}
+	for _, list := range s.workflowsByTenant {
+		for _, ws := range list {
+			s.workflows[ws.ID] = ws
+		}
+	}
 }
 
 func (s *recoveryTestStore) CreateWorkflow(context.Context, *state.WorkflowState) error {
@@ -133,45 +143,41 @@ func (s *recoveryTestStore) CreateWorkflow(context.Context, *state.WorkflowState
 
 func (s *recoveryTestStore) GetWorkflow(_ context.Context, id string) (*state.WorkflowState, error) {
 	s.load()
-	workflow, ok := s.workflows[id]
+	ws, ok := s.workflows[id]
 	if !ok {
-		return nil, fmt.Errorf("workflow %s not found", id)
+		return nil, fmt.Errorf("workflow not found: %s", id)
 	}
-	return workflow, nil
+	return ws, nil
 }
 
 func (s *recoveryTestStore) SaveWorkflow(_ context.Context, ws *state.WorkflowState) error {
 	s.load()
 	s.workflows[ws.ID] = ws
-	workflows := s.workflowsByTenant[ws.TenantID]
-	for index, workflow := range workflows {
-		if workflow.ID == ws.ID {
-			workflows[index] = ws
-			return nil
-		}
-	}
-	s.workflowsByTenant[ws.TenantID] = append(s.workflowsByTenant[ws.TenantID], ws)
 	return nil
 }
 
 func (s *recoveryTestStore) ListWorkflows(_ context.Context, tenantID string, limit, offset int) ([]*state.WorkflowState, error) {
 	s.load()
-	workflows := append([]*state.WorkflowState(nil), s.workflowsByTenant[tenantID]...)
-	sort.Slice(workflows, func(i, j int) bool {
-		return workflows[i].CreatedAt.After(workflows[j].CreatedAt)
-	})
-	if offset >= len(workflows) {
-		return []*state.WorkflowState{}, nil
+	list := s.workflowsByTenant[tenantID]
+	if offset >= len(list) {
+		return nil, nil
 	}
 	end := offset + limit
-	if end > len(workflows) {
-		end = len(workflows)
+	if end > len(list) {
+		end = len(list)
 	}
-	return workflows[offset:end], nil
+	out := make([]*state.WorkflowState, end-offset)
+	copy(out, list[offset:end])
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
-func (s *recoveryTestStore) UpdateWorkflowStatus(context.Context, string, state.WorkflowStatus, string) error {
-	return fmt.Errorf("not implemented")
+func (s *recoveryTestStore) UpdateWorkflowStatus(_ context.Context, id string, status state.WorkflowStatus, errMsg string) error {
+	s.load()
+	ws := s.workflows[id]
+	ws.Status = status
+	ws.ErrorMessage = errMsg
+	return nil
 }
 
 func (s *recoveryTestStore) AppendEvents(_ context.Context, evts ...*events.Event) error {
@@ -243,41 +249,50 @@ func (s *recoveryTestStore) Close() error {
 	return nil
 }
 
-// ── AttachmentStore stubs ────────────────────────────────────────────────────
-
 func (s *recoveryTestStore) CreateUploadSession(context.Context, *state.UploadSession) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) GetUploadSession(context.Context, string) (*state.UploadSession, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) ConsumeUploadSession(context.Context, string, string, string) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) AbortUploadSession(context.Context, string, string) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) CreateAttachment(context.Context, *state.Attachment) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) GetAttachment(context.Context, string) (*state.Attachment, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) ListAttachmentsBySession(context.Context, string) ([]*state.Attachment, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) ListAttachmentsByWorkflow(context.Context, string) ([]*state.Attachment, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) UpdateAttachmentStatus(context.Context, string, state.AttachmentStatus, string, int, string) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) CreateAttachmentChunks(context.Context, []state.AttachmentChunk) error {
 	return fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) GetAttachmentChunk(context.Context, string, int) (*state.AttachmentChunk, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
 func (s *recoveryTestStore) ListAttachmentChunks(context.Context, string) ([]state.AttachmentChunk, error) {
 	return nil, fmt.Errorf("not implemented")
 }
