@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -49,5 +50,20 @@ func TestRequestedRepositoryConfig_PrefersDeliveryOverRequestText(t *testing.T) 
 	cfg, ok := requestedRepositoryConfig(ws)
 	if !ok || cfg.Name != "rss-newspaper" {
 		t.Fatalf("cfg = %+v ok=%v", cfg, ok)
+	}
+}
+
+func TestEnsureRequestedRepository_GitHubPRAttachesWithoutCreate(t *testing.T) {
+	e := New(nil, Options{})
+	ws := state.NewWorkflowState("t", "s", "Build app")
+	ws.ID = "wf-attach"
+	ws.DeliveryAction = string(actions.ActionGitHubPR)
+	ws.DeliveryConfig = json.RawMessage(`{"org":"bryanbarton525","name":"rss-newspaper"}`)
+	ws.Execution.Workspace = &state.WorkspaceInfo{Path: "/tmp/wf-attach", Branch: "workflow/wf-attach"}
+	if err := e.ensureRequestedRepository(context.Background(), ws); err != nil {
+		t.Fatal(err)
+	}
+	if ws.Execution.Workspace.RepoURL != "https://github.com/bryanbarton525/rss-newspaper" {
+		t.Fatalf("repo_url = %q", ws.Execution.Workspace.RepoURL)
 	}
 }
