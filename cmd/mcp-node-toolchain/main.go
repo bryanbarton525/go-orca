@@ -59,7 +59,7 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 
 	server.AddCapability(srv, "npm_ci", "Run `npm ci` or `npm install` depending on lockfile presence.",
 		npmInstallHandler(root, allow, auditor))
-	server.AddCapability(srv, "pnpm_install", "Run `pnpm install` (frozen lockfile when pnpm-lock.yaml exists).",
+	server.AddCapability(srv, "pnpm_install", "Run `pnpm install` in the workspace.",
 		pnpmInstallHandler(root, allow, auditor))
 	server.AddCapability(srv, "prettier_format", "Run `npx prettier --write .`.",
 		run(capabilities.FormatCode, []string{"npx", "prettier", "--write", "."}, 5*time.Minute))
