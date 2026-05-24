@@ -1060,6 +1060,10 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 			ModelName:    implPacket.ModelName,
 		})
 	_ = e.store.AppendEvents(ctx, implStartEvt)
+	if warnings := e.sanitizePodTaskGraph(ws); len(warnings) > 0 {
+		ws.AllSuggestions = append(ws.AllSuggestions, warnings...)
+		_ = e.store.SaveWorkflow(ctx, ws)
+	}
 	e.refreshPodTaskReadiness(ws)
 
 	var implErr error
@@ -1246,6 +1250,15 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	return e.store.SaveWorkflow(ctx, ws)
 }
 
+func (e *Engine) sanitizePodTaskGraph(ws *state.WorkflowState) []string {
+	if ws == nil || len(ws.Tasks) == 0 {
+		return nil
+	}
+	fixed, warnings := state.ResolveAndSanitizeTaskDependencies(ws.Tasks)
+	ws.Tasks = fixed
+	return warnings
+}
+
 func (e *Engine) refreshPodTaskReadiness(ws *state.WorkflowState) {
 	if ws == nil {
 		return
@@ -1284,7 +1297,8 @@ func (e *Engine) taskDependenciesSatisfied(ws *state.WorkflowState, task *state.
 		if depID == "" {
 			continue
 		}
-		if statuses[depID] != state.TaskStatusCompleted {
+		depStatus, known := statuses[depID]
+		if !known || depStatus != state.TaskStatusCompleted {
 			return false
 		}
 	}
