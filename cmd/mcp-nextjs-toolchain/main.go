@@ -21,6 +21,7 @@ import (
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
 	"github.com/go-orca/go-orca/internal/mcp/policy"
 	"github.com/go-orca/go-orca/internal/mcp/server"
+	"github.com/go-orca/go-orca/internal/mcp/toolchaindeps"
 )
 
 func main() {
@@ -59,10 +60,11 @@ func main() {
 func register(srv *server.Server, root string, allow policy.Allowlist, auditor policy.Auditor) {
 	run := makeRunner(root, allow, auditor)
 
-	// Install — frozen lockfile ensures reproducible builds in CI.
+	// Install — use frozen lockfile when pnpm-lock.yaml exists; greenfield
+	// workspaces only have package.json until the first successful install.
 	server.AddCapability(srv, "next_install",
-		"Run `pnpm install --frozen-lockfile` in the Next.js workspace.",
-		run(capabilities.InstallDependencies, []string{"pnpm", "install", "--frozen-lockfile"}, 10*time.Minute))
+		"Run `pnpm install` in the Next.js workspace (frozen lockfile when pnpm-lock.yaml exists).",
+		installHandler(root, allow, auditor))
 
 	// Build — invokes the project's build script which calls `next build`.
 	// 15 min ceiling: large Next.js apps with many static pages can be slow.
@@ -92,6 +94,25 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 	server.AddCapability(srv, "next_test",
 		"Run `pnpm test` (Jest or Vitest, depending on project setup).",
 		run(capabilities.RunTests, []string{"pnpm", "test"}, 15*time.Minute))
+}
+
+func installHandler(root string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
+	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
+		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
+		if err != nil {
+			return capabilities.Result{Error: err.Error()}
+		}
+		return policy.Run(ctx, policy.RunOptions{
+			Argv:       toolchaindeps.PnpmInstallArgv(workdir),
+			WorkingDir: workdir,
+			Timeout:    10 * time.Minute,
+			Capability: capabilities.InstallDependencies,
+			WorkflowID: args.WorkflowID,
+			Allow:      allow,
+			Auditor:    auditor,
+			Env:        baseEnv(),
+		})
+	}
 }
 
 func makeRunner(root string, allow policy.Allowlist, auditor policy.Auditor) func(string, []string, time.Duration) server.CapabilityHandler {
