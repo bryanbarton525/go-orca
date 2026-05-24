@@ -87,7 +87,7 @@ func register(srv *server.Server, root, authorEmail, authorName string, allow po
 
 	server.AddCheckpointCapability(srv, "git_checkpoint", "Stage all changes and create a checkpoint commit.",
 		func(ctx context.Context, args capabilities.Args) (capabilities.CheckpointResult, error) {
-			return doCheckpoint(ctx, root, args, false, authorEmail, authorName, allow, auditor)
+			return doCheckpoint(ctx, root, args, args.Push, authorEmail, authorName, allow, auditor)
 		})
 
 	server.AddCheckpointCapability(srv, "git_push_checkpoint", "Stage, commit, and push the checkpoint to origin.",

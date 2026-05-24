@@ -1644,15 +1644,8 @@ func requestedRepositoryConfig(ws *state.WorkflowState) (repositoryConfig, bool)
 	if ws == nil {
 		return repositoryConfig{}, false
 	}
-	if strings.EqualFold(ws.DeliveryAction, string(actions.ActionCreateRepo)) && len(ws.DeliveryConfig) > 0 {
-		var cfg repositoryConfig
-		if err := json.Unmarshal(ws.DeliveryConfig, &cfg); err == nil && cfg.Name != "" {
-			cfg.Owner = cfg.Org
-			if cfg.Description == "" {
-				cfg.Description = firstNonEmpty(ws.Title, "go-orca workflow "+ws.ID)
-			}
-			return cfg, true
-		}
+	if cfg, ok := repositoryConfigFromDelivery(ws); ok {
+		return cfg, true
 	}
 	owner, repo, ok := githubRepoFromText(ws.Request)
 	if !ok {
@@ -1664,6 +1657,64 @@ func requestedRepositoryConfig(ws *state.WorkflowState) (repositoryConfig, bool)
 		Description: firstNonEmpty(ws.Title, "go-orca workflow "+ws.ID),
 		Private:     mentionsPrivateRepo(ws.Request),
 	}, true
+}
+
+// repositoryConfigFromDelivery resolves the target GitHub repository from
+// delivery_action + delivery_config (create-repo, github-pr, repo-commit-only).
+func repositoryConfigFromDelivery(ws *state.WorkflowState) (repositoryConfig, bool) {
+	if ws == nil || len(ws.DeliveryConfig) == 0 {
+		return repositoryConfig{}, false
+	}
+	action := strings.ToLower(strings.TrimSpace(ws.DeliveryAction))
+	switch action {
+	case string(actions.ActionCreateRepo), string(actions.ActionGitHubPR), string(actions.ActionRepoCommit):
+	default:
+		return repositoryConfig{}, false
+	}
+	var cfg struct {
+		Repo        string `json:"repo"`
+		Org         string `json:"org"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Private     bool   `json:"private"`
+	}
+	if err := json.Unmarshal(ws.DeliveryConfig, &cfg); err != nil {
+		return repositoryConfig{}, false
+	}
+	owner, name := parseGitHubRepoSlug(cfg.Repo)
+	if name == "" {
+		name = strings.TrimSpace(cfg.Name)
+		owner = strings.TrimSpace(cfg.Org)
+	}
+	if name == "" {
+		return repositoryConfig{}, false
+	}
+	out := repositoryConfig{
+		Name:        name,
+		Owner:       owner,
+		Org:         owner,
+		Description: strings.TrimSpace(cfg.Description),
+		Private:     cfg.Private,
+	}
+	if out.Description == "" {
+		out.Description = firstNonEmpty(ws.Title, "go-orca workflow "+ws.ID)
+	}
+	return out, true
+}
+
+func parseGitHubRepoSlug(repo string) (owner, name string) {
+	repo = strings.TrimSpace(repo)
+	repo = strings.TrimPrefix(repo, "https://")
+	repo = strings.TrimPrefix(repo, "http://")
+	repo = strings.TrimPrefix(strings.ToLower(repo), "github.com/")
+	repo = strings.TrimPrefix(repo, "www.github.com/")
+	repo = strings.TrimSuffix(repo, ".git")
+	repo = strings.Trim(repo, "/")
+	parts := strings.Split(repo, "/")
+	if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0], parts[1]
+	}
+	return "", ""
 }
 
 func requestedRepositoryFullName(cfg repositoryConfig) string {
@@ -2002,6 +2053,11 @@ func workspaceHasFilesWithExt(root, ext string) (bool, error) {
 }
 
 func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowState, phase string) error {
+	if ws.Execution.Workspace != nil && strings.TrimSpace(ws.Execution.Workspace.RepoURL) == "" {
+		if err := e.ensureRequestedRepository(ctx, ws); err != nil {
+			return err
+		}
+	}
 	if ws.Execution.Toolchain == nil || e.opts.ToolRegistry == nil {
 		return nil
 	}

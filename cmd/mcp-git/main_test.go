@@ -244,6 +244,53 @@ func TestCheckpoint_RejectsEscape(t *testing.T) {
 	}
 }
 
+func TestCheckpoint_PushRespectsArgsPushFlag(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH; skipping integration test")
+	}
+
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	workspace := filepath.Join(root, "wf-push")
+	for _, args := range [][]string{
+		{"init", "--bare", bare},
+		{"init", workspace},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# pushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, root)
+	session := connectClient(t, srv)
+	defer session.Close()
+
+	res, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "git_checkpoint",
+		Arguments: map[string]any{
+			"workflow_id":    "wf-push",
+			"phase":          "implementation",
+			"workspace_path": "wf-push",
+			"repo_url":       "file://" + bare,
+			"branch":         "workflow/wf-push",
+			"push":           true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	cp := decodeCheckpoint(t, res)
+	if cp.CommitSHA == "" {
+		t.Fatal("expected commit sha")
+	}
+	if !cp.Pushed {
+		t.Fatal("expected pushed=true when push arg is true")
+	}
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func newTestServer(t *testing.T, root string) *server.Server {
