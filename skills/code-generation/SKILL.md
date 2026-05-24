@@ -1,8 +1,7 @@
 ---
 name: code-generation
-description: Best practices for writing idiomatic, production-quality code and project layouts across Go, Python, TypeScript/Node, Rust, and Java.
+description: Use this skill when implementing code for any module in this repository.
 ---
-
 # Code Generation Skill
 
 Use this skill when implementing code for any module in this repository.
@@ -39,6 +38,17 @@ Rules:
 - Keep business logic in `internal/`; handlers call services, not raw SQL.
 - Put `go.mod` at repo root (single-module default).
 - For small libraries (not services), use a simpler root package layout and omit `cmd/`.
+
+#### Module Path Alignment — CRITICAL
+
+Before writing any Go source file, verify that the `module` directive in `go.mod` exactly matches
+the import prefix used throughout the codebase.
+
+- If internal packages are imported as `github.com/go-orca/go-orca/internal/config`, then `go.mod` **must** declare `module github.com/go-orca/go-orca`.
+- A mismatch (for example, if `go.mod` declares a different module path while code imports `github.com/go-orca/go-orca/...`) typically causes Go to report module-resolution errors such as `no required module provides package github.com/go-orca/go-orca/...` rather than resolving those imports correctly.
+- When attaching to an existing repository, **read `go.mod` first**. If the module path does not
+  match the intended import prefix used by the repository, correct it before writing any source files.
+- Keep the `go` version directive unchanged when correcting the module path.
 
 ### Python (package/service)
 
