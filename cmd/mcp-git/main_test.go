@@ -244,6 +244,49 @@ func TestCheckpoint_RejectsEscape(t *testing.T) {
 	}
 }
 
+func TestDoCheckpoint_PushRespectsArgsPushFlag(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH; skipping integration test")
+	}
+
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	workspaceRel := "wf-push"
+	workspace := filepath.Join(root, workspaceRel)
+	for _, args := range [][]string{
+		{"init", "--bare", bare},
+		{"init", workspace},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# pushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	allow := policy.Allowlist{
+		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout", "remote"},
+	}
+	cp, err := doCheckpoint(context.Background(), root, capabilities.Args{
+		WorkflowID:    "wf-push",
+		Phase:         "implementation",
+		WorkspacePath: workspaceRel,
+		RepoURL:       "file://" + bare,
+		Branch:        "workflow/wf-push",
+		Push:          true,
+	}, true, "t@x", "t", allow, policy.NopAuditor{})
+	if err != nil {
+		t.Skipf("git push unavailable in this environment: %v", err)
+	}
+	if cp.CommitSHA == "" {
+		t.Fatal("expected commit sha")
+	}
+	if !cp.Pushed {
+		t.Fatal("expected pushed=true when push arg is true")
+	}
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func newTestServer(t *testing.T, root string) *server.Server {
