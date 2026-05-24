@@ -129,6 +129,11 @@ type Execution struct {
 	ActiveTaskTitle string `json:"active_task_title,omitempty"`
 	// QACycle is the current QA/remediation pass number (1-based).
 	QACycle int `json:"qa_cycle,omitempty"`
+	// ImplementationCycle is the current implementation validation pass (1-based).
+	ImplementationCycle int `json:"implementation_cycle,omitempty"`
+	// ImplementationGate records engine verification that build/test, docs, and
+	// git checkpoint requirements passed before QA runs.
+	ImplementationGate *ImplementationGate `json:"implementation_gate,omitempty"`
 	// RemediationAttempt is the Pod re-run count within the current QA cycle.
 	RemediationAttempt int `json:"remediation_attempt,omitempty"`
 	// WorkflowKind distinguishes standard workflow runs from improvement workflows
@@ -199,6 +204,17 @@ type ValidationStep struct {
 	Passed     bool   `json:"passed"`
 	Output     string `json:"output,omitempty"`
 	Error      string `json:"error,omitempty"`
+}
+
+// ImplementationGate records engine-owned verification completed before QA.
+type ImplementationGate struct {
+	Ready                 bool      `json:"ready"`
+	ValidationPassed      bool      `json:"validation_passed"`
+	LatestValidationPhase string    `json:"latest_validation_phase,omitempty"`
+	CheckpointSHA         string    `json:"checkpoint_sha,omitempty"`
+	CheckpointPhase       string    `json:"checkpoint_phase,omitempty"`
+	DocumentationOK       bool      `json:"documentation_ok"`
+	VerifiedAt            time.Time `json:"verified_at,omitempty"`
 }
 
 // Checkpoint records a source-control checkpoint returned by a toolchain MCP.
@@ -735,8 +751,10 @@ type HandoffPacket struct {
 
 	// QACycle and RemediationAttempt are populated during the QA remediation
 	// loop so persona prompts can reference the current pass number.
-	QACycle            int `json:"qa_cycle,omitempty"`
-	RemediationAttempt int `json:"remediation_attempt,omitempty"`
+	QACycle             int                 `json:"qa_cycle,omitempty"`
+	ImplementationCycle int                 `json:"implementation_cycle,omitempty"`
+	ImplementationGate  *ImplementationGate `json:"implementation_gate,omitempty"`
+	RemediationAttempt  int                 `json:"remediation_attempt,omitempty"`
 	// IsRemediation signals to the Architect that this invocation is a
 	// targeted remediation pass (not the initial planning phase).
 	IsRemediation bool `json:"is_remediation,omitempty"`

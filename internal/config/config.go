@@ -256,6 +256,10 @@ type WorkflowConfig struct {
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	// Set to -1 for unlimited remediation loops.
 	MaxQARetries int `mapstructure:"max_qa_retries"`
+	// MaxImplementationRetries is the maximum Architect→Pod cycles after
+	// implementation toolchain validation fails, before QA runs. When zero,
+	// defaults to max_qa_retries. Set to -1 for unlimited.
+	MaxImplementationRetries int `mapstructure:"max_implementation_retries"`
 	// RunUntilSuccess enables continuous retries for failed workflows. When set,
 	// the scheduler retries indefinitely and QA remediation loops are unbounded
 	// (unless max_qa_retries is explicitly set to another value at runtime).
@@ -428,6 +432,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.persona_max_retries", 3)
 	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)
 	v.SetDefault("workflow.max_qa_retries", 2)
+	v.SetDefault("workflow.max_implementation_retries", 0)
 	v.SetDefault("workflow.run_until_success", false)
 	v.SetDefault("workflow.scheduler_retry_delay", 5*time.Second)
 	v.SetDefault("workflow.scheduler_max_retries", 0)
@@ -467,6 +472,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Workflow.MaxQARetries < -1 {
 		return fmt.Errorf("workflow: max_qa_retries must be >= -1")
+	}
+	if cfg.Workflow.MaxImplementationRetries < -1 {
+		return fmt.Errorf("workflow: max_implementation_retries must be >= -1")
 	}
 	if cfg.Workflow.SchedulerMaxRetries < -1 {
 		return fmt.Errorf("workflow: scheduler_max_retries must be >= -1")

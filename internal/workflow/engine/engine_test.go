@@ -337,6 +337,182 @@ func TestMockStoreAppendEvents(t *testing.T) {
 	}
 }
 
+type flipFlopTestsTool struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (t *flipFlopTestsTool) Name() string { return "run_tests" }
+func (t *flipFlopTestsTool) Description() string {
+	return "fails first call, passes thereafter"
+}
+func (t *flipFlopTestsTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *flipFlopTestsTool) Call(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
+	t.mu.Lock()
+	t.calls++
+	pass := t.calls > 1
+	t.mu.Unlock()
+	return json.Marshal(map[string]any{"passed": pass, "output": "tests"})
+}
+
+type implValidationArchitect struct{}
+
+func (p *implValidationArchitect) Kind() state.PersonaKind { return state.PersonaArchitect }
+func (p *implValidationArchitect) Name() string            { return "architect" }
+func (p *implValidationArchitect) Description() string     { return "test architect" }
+func (p *implValidationArchitect) Execute(_ context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
+	if !packet.IsRemediation {
+		return &state.PersonaOutput{Persona: state.PersonaArchitect, Summary: "planned"}, nil
+	}
+	return &state.PersonaOutput{
+		Persona: state.PersonaArchitect,
+		Summary: "fix validation failures",
+		Tasks: []state.Task{{
+			ID:         "remed-task-12345678",
+			WorkflowID: packet.WorkflowID,
+			Title:      "fix build",
+			Status:     state.TaskStatusPending,
+			AssignedTo: state.PersonaPod,
+			CreatedAt:  time.Now().UTC(),
+		}},
+	}, nil
+}
+
+func TestImplementationValidationIteratesBeforeQA(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&implValidationArchitect{})
+	t.Cleanup(func() { persona.Unregister(state.PersonaArchitect) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	runTests := &flipFlopTestsTool{}
+	reg := tools.NewRegistry()
+	reg.Register(runTests)
+	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc123","branch":"workflow/test","message":"checkpoint","pushed":true}`)})
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{
+		state.PersonaArchitect, state.PersonaPod, state.PersonaQA, state.PersonaFinalizer,
+	}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-123456789",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaPod,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider:          "mock",
+		DefaultModel:             "mock-model",
+		MaxImplementationRetries: 2,
+		WorkspaceRoot:            t.TempDir(),
+		ToolRegistry:             reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go"},
+			Capabilities:         []string{"run_tests", "git_checkpoint"},
+			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
+			CheckpointCapability: "git_checkpoint",
+		}},
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if runTests.calls < 2 {
+		t.Fatalf("expected validation to run at least twice (fail then pass), got %d calls", runTests.calls)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if len(stored.Tasks) < 2 {
+		t.Fatalf("expected remediation task appended, got %d tasks", len(stored.Tasks))
+	}
+	var qaStarted bool
+	for _, evt := range ms.events {
+		if evt.Type == events.EventPersonaStarted && evt.Persona == state.PersonaQA {
+			qaStarted = true
+		}
+	}
+	if !qaStarted {
+		t.Fatal("expected QA to run after implementation validation passed")
+	}
+	var implReady bool
+	for _, evt := range ms.events {
+		if evt.Type == events.EventImplementationReady {
+			implReady = true
+		}
+	}
+	if !implReady {
+		t.Fatal("expected implementation.ready event before QA")
+	}
+	if stored.Execution.ImplementationGate == nil || !stored.Execution.ImplementationGate.Ready {
+		t.Fatalf("expected implementation gate ready, got %+v", stored.Execution.ImplementationGate)
+	}
+}
+
+func TestImplementationValidationExhaustedBeforeQA(t *testing.T) {
+	persona.Register(&artifactPersona{kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&implValidationArchitect{})
+	t.Cleanup(func() { persona.Unregister(state.PersonaArchitect) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+
+	reg := tools.NewRegistry()
+	reg.Register(fakeTool{name: "run_tests", out: json.RawMessage(`{"passed":false,"output":"still broken"}`)})
+	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc123","branch":"workflow/test","message":"checkpoint"}`)})
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaArchitect, state.PersonaPod, state.PersonaQA}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ws.Tasks = []state.Task{{
+		ID:         "task-123456789",
+		WorkflowID: ws.ID,
+		Title:      "write main",
+		Status:     state.TaskStatusPending,
+		AssignedTo: state.PersonaPod,
+		CreatedAt:  time.Now().UTC(),
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider:          "mock",
+		DefaultModel:             "mock-model",
+		MaxImplementationRetries: 1,
+		WorkspaceRoot:            t.TempDir(),
+		ToolRegistry:             reg,
+		Toolchains: []engine.ToolchainConfig{{
+			ID:                   "go",
+			Languages:            []string{"go"},
+			Capabilities:         []string{"run_tests", "git_checkpoint"},
+			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
+			CheckpointCapability: "git_checkpoint",
+		}},
+	})
+
+	err := eng.Run(context.Background(), ws.ID)
+	if err == nil {
+		t.Fatal("expected implementation exhaustion error")
+	}
+	for _, evt := range ms.events {
+		if evt.Type == events.EventPersonaStarted && evt.Persona == state.PersonaQA {
+			t.Fatal("QA should not run when implementation validation is exhausted")
+		}
+	}
+}
+
 func TestToolchainValidationAndCheckpointRunAfterImplementation(t *testing.T) {
 	persona.Register(&artifactPersona{kind: state.PersonaPod})
 	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
@@ -783,68 +959,74 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// TestEnforceValidationGate_BlocksFinalizerOnFailedValidation verifies that
-// when EnforceValidationGate is set and the most recent toolchain validation
-// run fails, the engine emits validation.gate.blocked, marks the workflow
-// failed, and skips the Finalizer.
+// twoPhaseTestsTool passes on the first validation call (implementation) and
+// fails thereafter (e.g. QA remediation validation) so the finalizer gate can
+// be exercised without failing the implementation loop.
+type twoPhaseTestsTool struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (t *twoPhaseTestsTool) Name() string        { return "run_tests" }
+func (t *twoPhaseTestsTool) Description() string { return "passes once then fails" }
+func (t *twoPhaseTestsTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (t *twoPhaseTestsTool) Call(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
+	t.mu.Lock()
+	t.calls++
+	pass := t.calls == 1
+	t.mu.Unlock()
+	if pass {
+		return json.Marshal(map[string]any{"passed": true, "output": "ok"})
+	}
+	return json.Marshal(map[string]any{"passed": false, "error": "test suite failed"})
+}
+
+// qaBlocksOnceThenPasses reports a blocker on the first QA pass only so the
+// remediation loop runs and leaves a failed validation as the latest run.
+type qaBlocksOnceThenPasses struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *qaBlocksOnceThenPasses) Kind() state.PersonaKind { return state.PersonaQA }
+func (p *qaBlocksOnceThenPasses) Name() string            { return "qa-blocks-once" }
+func (p *qaBlocksOnceThenPasses) Description() string     { return "blocks once then passes" }
+func (p *qaBlocksOnceThenPasses) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.mu.Lock()
+	p.calls++
+	first := p.calls == 1
+	p.mu.Unlock()
+	if first {
+		return &state.PersonaOutput{
+			Persona:        state.PersonaQA,
+			Summary:        "found issues",
+			BlockingIssues: []string{"needs remediation"},
+		}, nil
+	}
+	return &state.PersonaOutput{Persona: state.PersonaQA, Summary: "passed"}, nil
+}
+
+// TestEnforceValidationGate_BlocksFinalizerOnFailedValidation verifies the
+// finalizer gate when the latest validation run failed.
 func TestEnforceValidationGate_BlocksFinalizerOnFailedValidation(t *testing.T) {
-	persona.Register(&artifactPersona{kind: state.PersonaPod})
-	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
-	persona.Register(&noopPersona{kind: state.PersonaQA})
-	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
-	// Finalizer must NOT run.  Register a sentinel that fails the test if it does.
-	persona.Register(&forbiddenPersona{t: t, kind: state.PersonaFinalizer})
-	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
-
-	reg := tools.NewRegistry()
-	// run_tests deliberately reports passed=false so the validation gate fires.
-	reg.Register(fakeTool{name: "run_tests", out: json.RawMessage(`{"passed":false,"error":"test suite failed"}`)})
-	reg.Register(fakeTool{name: "git_checkpoint", out: json.RawMessage(`{"commit_sha":"abc","branch":"x","pushed":false}`)})
-
 	ms := newMockStore()
 	ws := state.NewWorkflowState("t1", "s1", "build a go app")
 	ws.Mode = state.WorkflowModeSoftware
-	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
-	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
-	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
-	ws.Tasks = []state.Task{{
-		ID:         "task-fail-1",
-		WorkflowID: ws.ID,
-		Title:      "write main",
-		Status:     state.TaskStatusPending,
-		AssignedTo: state.PersonaPod,
-		CreatedAt:  time.Now().UTC(),
+	ws.Execution.ValidationRuns = []state.ValidationRun{{
+		ID:          "validation-1",
+		Phase:       "implementation",
+		ToolchainID: "go",
+		Passed:      false,
+		Summary:     "go test failed",
 	}}
 	ms.workflows[ws.ID] = ws
 
-	eng := engine.New(ms, engine.Options{
-		DefaultProvider:       "mock",
-		DefaultModel:          "mock-model",
-		WorkspaceRoot:         t.TempDir(),
-		ToolRegistry:          reg,
-		EnforceValidationGate: true,
-		Toolchains: []engine.ToolchainConfig{{
-			ID:                   "go",
-			Languages:            []string{"go"},
-			Capabilities:         []string{"run_tests", "git_checkpoint"},
-			ValidationProfiles:   map[string][]string{"default": {"run_tests"}},
-			CheckpointCapability: "git_checkpoint",
-		}},
-	})
-
-	err := eng.Run(context.Background(), ws.ID)
-	if err == nil {
-		t.Fatal("expected validation gate to return an error")
+	eng := engine.New(ms, engine.Options{EnforceValidationGate: true})
+	if err := eng.EnforceFinalizerValidationGate(context.Background(), ws); err == nil {
+		t.Fatal("expected validation gate error")
 	}
-	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
-	if stored.Status != state.WorkflowStatusFailed {
-		t.Errorf("expected status=failed, got %q", stored.Status)
-	}
-	// Validation runs should still be recorded for observability.
-	if len(stored.Execution.ValidationRuns) == 0 || stored.Execution.ValidationRuns[len(stored.Execution.ValidationRuns)-1].Passed {
-		t.Errorf("expected last validation run to be failed, got %+v", stored.Execution.ValidationRuns)
-	}
-	// validation.gate.blocked event should be present.
 	found := false
 	for _, e := range ms.events {
 		if e.Type == events.EventValidationGateBlocked {

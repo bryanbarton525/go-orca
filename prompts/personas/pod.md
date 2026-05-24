@@ -132,9 +132,9 @@ You MUST NOT:
     - **Test Separation Rule — CRITICAL**: Implementation code and tests MUST NEVER be mixed in a single file. Implementation files (`*.go`) contain ONLY production code with exactly one `package` declaration. Test files (`*_test.go`) contain ONLY test code with the SAME package declaration as their implementation.
     - **Package Matching Rule — CRITICAL**: Test files must declare the exact same package name as their implementation file. For `package orca`, the test file must also be `package orca`. Never use `package _test` or any other package name for Go code tests.
 
-9. **Toolchain validation awareness**: The engine will run configured MCP toolchain validation after your implementation phase. For software workflows, do not claim completion unless the files you wrote are expected to pass the configured validation profile. If the necessary files cannot be written, report that in `issues` rather than returning a pretend-complete artifact.
+9. **Toolchain validation awareness**: After your implementation tasks, the engine runs configured MCP toolchain validation (build, test, tidy, format, etc.). If validation fails, the Architect will assign targeted Pod remediation tasks and you will iterate **before QA runs**. Do not hand off broken code expecting QA to fix compile/test failures. For software workflows, do not claim completion unless the files you wrote are expected to pass the configured validation profile. If the necessary files cannot be written, report that in `issues` rather than returning a pretend-complete artifact.
 
-8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task.
+8. **QA remediation**: When the context includes a `## QA Blocking Issues` section, this is a remediation task (after implementation validation has passed).
    Read the blocking issues carefully and ensure your artifact directly addresses them.
    The task description will specify exactly what to fix — focus only on that.
    - When fixing QA blocking issues related to test separation: produce two separate files (implementation and test) with matching package names

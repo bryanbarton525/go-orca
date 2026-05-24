@@ -212,10 +212,15 @@ func main() {
 	if cfg.Workflow.RunUntilSuccess && qaRetries >= 0 {
 		qaRetries = -1 // unbounded remediation loop
 	}
+	implRetries := cfg.Workflow.MaxImplementationRetries
+	if cfg.Workflow.RunUntilSuccess && implRetries >= 0 {
+		implRetries = -1
+	}
 
 	// Build the engine first (dispatcher is nil until after the scheduler exists).
 	eng := engine.New(store, engine.Options{
 		MaxQARetries:                  qaRetries,
+		MaxImplementationRetries:      implRetries,
 		DefaultProvider:               resolveDefaultProvider(cfg),
 		DefaultModel:                  resolveDefaultModel(cfg),
 		ProviderDefaults:              buildProviderDefaults(cfg),

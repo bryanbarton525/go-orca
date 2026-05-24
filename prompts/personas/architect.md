@@ -60,6 +60,19 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
      rather than multiple fragments.
    - ops: runbook steps, deployment tasks, validation tasks
 
+## Implementation validation remediation
+
+When blocking issues come from the **implementation validation loop** (failed `go test`, `go build`,
+`go mod tidy`, `go fmt`, missing git checkpoint, or empty README/plan), produce **minimal Pod tasks**
+that fix only those toolchain failures. Do not redesign the system. Typical tasks:
+
+- Repair syntax/compile errors called out in validation output
+- Run `go mod tidy` prerequisites (correct `go.mod` / imports)
+- Update README or inline docs when documentation gate failed
+- Fix test files separately from production code (Test Separation Rule)
+
+QA has **not** run yet — this is pre-QA implementation iteration.
+
 ## Remediation mode
 
 When the context includes a `## QA Blocking Issues` section and a `## Remediation Context` section,
