@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	ollamaapi "github.com/ollama/ollama/api"
 	ollamamodel "github.com/ollama/ollama/types/model"
 
@@ -75,27 +76,7 @@ func (p *Provider) Name() string { return ProviderName }
 func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.ChatResponse, error) {
 	start := time.Now()
 
-	msgs := make([]ollamaapi.Message, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		om := ollamaapi.Message{
-			Role:       string(m.Role),
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-		}
-		for _, tc := range m.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			var args ollamaapi.ToolCallFunctionArguments
-			_ = json.Unmarshal(argsJSON, &args)
-			om.ToolCalls = append(om.ToolCalls, ollamaapi.ToolCall{
-				ID: tc.ID,
-				Function: ollamaapi.ToolCallFunction{
-					Name:      tc.Name,
-					Arguments: args,
-				},
-			})
-		}
-		msgs = append(msgs, om)
-	}
+	msgs := convertToOllamaMessages(req.Messages)
 
 	model := req.Model
 	if model == "" {
@@ -129,6 +110,8 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 	// to return a tool_calls message rather than a JSON-formatted text reply.
 	if len(req.Tools) > 0 {
 		ollamaReq.Tools = convertToOllamaTools(req.Tools)
+		// Qwen3 + tools: disable thinking so reasoning output does not corrupt XML tool calls.
+		ollamaReq.Think = &ollamaapi.ThinkValue{Value: false}
 	} else {
 		// Use the strongest structured-output mode available.
 		// Schema-constrained format is strictly better than plain "json" — the model
@@ -181,6 +164,44 @@ func (p *Provider) Chat(ctx context.Context, req common.ChatRequest) (*common.Ch
 		Latency:      time.Since(start),
 		Truncated:    truncated,
 	}, nil
+}
+
+func convertToOllamaMessages(messages []common.Message) []ollamaapi.Message {
+	out := make([]ollamaapi.Message, 0, len(messages))
+	for _, m := range messages {
+		om := ollamaapi.Message{
+			Role:       string(m.Role),
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+			ToolName:   m.ToolName,
+		}
+		for _, tc := range m.ToolCalls {
+			id := strings.TrimSpace(tc.ID)
+			if id == "" {
+				id = "call_" + uuid.NewString()
+			}
+			args := tc.Arguments
+			if args == nil {
+				args = map[string]interface{}{}
+			}
+			argsJSON, _ := json.Marshal(args)
+			var parsed ollamaapi.ToolCallFunctionArguments
+			_ = json.Unmarshal(argsJSON, &parsed)
+			om.ToolCalls = append(om.ToolCalls, ollamaapi.ToolCall{
+				ID: id,
+				Function: ollamaapi.ToolCallFunction{
+					Name:      tc.Name,
+					Arguments: parsed,
+				},
+			})
+		}
+		if len(om.ToolCalls) > 0 && strings.TrimSpace(om.Content) == "" {
+			// Avoid mixing empty assistant text with tool_calls; Qwen3 XML parser is sensitive.
+			om.Content = ""
+		}
+		out = append(out, om)
+	}
+	return out
 }
 
 // convertToOllamaTools converts canonical ToolDefinitions to the Ollama SDK
@@ -279,7 +300,7 @@ func (p *Provider) Models(ctx context.Context) ([]common.ModelInfo, error) {
 			common.CapabilityStreaming,
 		}
 		toolsVal := "no"
-		if toolSupport[i] {
+		if toolSupport[i] && !NativeToolCallingUnstable(m.Name) {
 			capabilities = append(capabilities, common.CapabilityToolCalling)
 			toolsVal = "yes"
 		}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/provider/common"
+	ollamaprovider "github.com/go-orca/go-orca/internal/provider/ollama"
 	"github.com/go-orca/go-orca/internal/state"
 )
 
@@ -299,11 +300,18 @@ func firstToolCapableModel(provider string, catalogs map[string]state.ProviderMo
 		return ""
 	}
 	for _, item := range catalog.Models {
-		if item.Metadata["tools"] == "yes" {
+		if item.Metadata["tools"] == "yes" && !ollamaNativeToolCallingUnstable(provider, item.ID) {
 			return item.ID
 		}
 	}
 	return ""
+}
+
+func ollamaNativeToolCallingUnstable(provider, model string) bool {
+	if canonicalProviderName(provider) != ollamaprovider.ProviderName {
+		return false
+	}
+	return ollamaprovider.NativeToolCallingUnstable(model)
 }
 
 func (e *Engine) normalizePersonaModels(provider string, requested state.PersonaModelAssignments, fallback string, catalogs map[string]state.ProviderModelCatalog) state.PersonaModelAssignments {
@@ -337,6 +345,12 @@ func (e *Engine) normalizePersonaModels(provider string, requested state.Persona
 			}
 			// If no tool-capable model exists at all, keep whatever we have
 			// and let the runtime error surface naturally.
+		}
+		// Qwen3 models advertise tools in Ollama but frequently 500 on XML tool output.
+		if model != "" && personaRequiresTools(kind) && ollamaNativeToolCallingUnstable(provider, model) {
+			if stable := firstToolCapableModel(provider, catalogs); stable != "" {
+				model = stable
+			}
 		}
 
 		if model != "" {

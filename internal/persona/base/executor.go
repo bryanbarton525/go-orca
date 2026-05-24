@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-orca/go-orca/internal/logger"
 	"github.com/go-orca/go-orca/internal/provider/common"
+	ollamaprovider "github.com/go-orca/go-orca/internal/provider/ollama"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
 )
@@ -79,8 +80,7 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	// If tools are available and the provider claims tool-calling capability,
 	// give the model up to maxToolRounds to gather live context before the
 	// final structured response.
-	if packet.ToolRegistry != nil && len(packet.ToolRegistry.All()) > 0 &&
-		provider.HasCapability(common.CapabilityToolCalling) {
+	if shouldRunNativeToolLoop(provider, packet) {
 
 		toolDefs := specsToDefinitions(packet.ToolRegistry.Specs())
 		const maxToolRounds = 25
@@ -91,6 +91,15 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 				Tools:    toolDefs,
 			})
 			if err != nil {
+				if packet.ProviderName == ollamaprovider.ProviderName && ollamaprovider.IsRecoverableToolCallError(err) {
+					logger.Warn("executor: ollama tool-call round failed, continuing with partial tool context",
+						zap.String("workflow_id", packet.WorkflowID),
+						zap.String("persona", string(packet.CurrentPersona)),
+						zap.String("model", packet.ModelName),
+						zap.Error(err),
+					)
+					break
+				}
 				return "", fmt.Errorf("executor: tool-call chat error: %w", err)
 			}
 			if len(toolResp.Message.ToolCalls) == 0 {
@@ -123,12 +132,13 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 						zap.String("tool", tc.Name),
 						zap.Int("result_bytes", len(result.Output)),
 					)
-					content = trimToolResult(result.Output)
+					content = trimToolResultForProvider(packet.ProviderName, packet.ModelName, result.Output)
 				}
 				msgs = append(msgs, common.Message{
 					Role:       common.RoleTool,
 					Content:    content,
 					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
 				})
 			}
 		}
@@ -224,6 +234,38 @@ func (e *Executor) Run(ctx context.Context, packet state.HandoffPacket, systemPr
 	return resp.Message.Content, nil
 }
 
+func shouldRunNativeToolLoop(provider common.Provider, packet state.HandoffPacket) bool {
+	if packet.ToolRegistry == nil || len(packet.ToolRegistry.All()) == 0 {
+		return false
+	}
+	if !provider.HasCapability(common.CapabilityToolCalling) {
+		return false
+	}
+	if packet.ProviderName == ollamaprovider.ProviderName && ollamaprovider.NativeToolCallingUnstable(packet.ModelName) {
+		return false
+	}
+	return modelCatalogSupportsTools(packet)
+}
+
+func modelCatalogSupportsTools(packet state.HandoffPacket) bool {
+	provider := strings.TrimSpace(packet.ProviderName)
+	model := strings.TrimSpace(packet.ModelName)
+	if provider == "" || model == "" || packet.ProviderCatalogs == nil {
+		return true
+	}
+	catalog, ok := packet.ProviderCatalogs[provider]
+	if !ok {
+		return true
+	}
+	for _, item := range catalog.Models {
+		if strings.EqualFold(strings.TrimSpace(item.ID), model) {
+			tools := strings.TrimSpace(item.Metadata["tools"])
+			return tools == "" || tools == "yes"
+		}
+	}
+	return true
+}
+
 // specsToDefinitions converts tool specs from the registry into the canonical
 // ToolDefinition type the provider Chat API accepts.
 func specsToDefinitions(specs []tools.ToolSpec) []common.ToolDefinition {
@@ -245,15 +287,34 @@ func specsToDefinitions(specs []tools.ToolSpec) []common.ToolDefinition {
 // is tight; Context7 and HTTP responses can easily exceed 10 KB per call.
 const maxToolResultBytes = 6000
 
+// ollamaQwenToolResultBytes is a tighter cap for Qwen3 on Ollama to reduce
+// truncated XML tool-call payloads that trigger HTTP 500 from the server.
+const ollamaQwenToolResultBytes = 3500
+
 // trimToolResult ensures a tool result fits within the context window budget.
 // If the raw bytes exceed maxToolResultBytes the content is truncated and a
 // notice appended so the model knows the response was cut short.
 func trimToolResult(raw []byte) string {
-	if len(raw) <= maxToolResultBytes {
+	return trimToolResultWithLimit(raw, maxToolResultBytes)
+}
+
+func trimToolResultForProvider(providerName, modelName string, raw []byte) string {
+	limit := maxToolResultBytes
+	if providerName == ollamaprovider.ProviderName && ollamaprovider.NativeToolCallingUnstable(modelName) {
+		limit = ollamaQwenToolResultBytes
+	}
+	return trimToolResultWithLimit(raw, limit)
+}
+
+func trimToolResultWithLimit(raw []byte, limit int) string {
+	if limit <= 0 {
+		limit = maxToolResultBytes
+	}
+	if len(raw) <= limit {
 		return string(raw)
 	}
-	return string(raw[:maxToolResultBytes]) +
-		fmt.Sprintf("\n\n[... truncated: %d bytes omitted to stay within context budget ...]", len(raw)-maxToolResultBytes)
+	return string(raw[:limit]) +
+		fmt.Sprintf("\n\n[... truncated: %d bytes omitted to stay within context budget ...]", len(raw)-limit)
 }
 
 // buildSystemContent layers the base system prompt with any skill/agent

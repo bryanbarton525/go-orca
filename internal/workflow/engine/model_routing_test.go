@@ -345,3 +345,37 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 		t.Fatalf("finalizer: want bootstrap-model, got %q", got)
 	}
 }
+
+func TestNormalizePersonaModelsSwapsUnstableOllamaQwen3(t *testing.T) {
+	ensureCatalogMockProviderRegistered()
+
+	eng := New(routingStore{}, Options{
+		DefaultProvider:  "catalog-mock",
+		DefaultModel:     "bootstrap-model",
+		ProviderDefaults: map[string]string{"catalog-mock": "bootstrap-model"},
+	})
+
+	catalogs := map[string]state.ProviderModelCatalog{
+		"ollama": {
+			ProviderName: "ollama",
+			DefaultModel: "qwen3.5:9b",
+			Models: []state.ProviderModelInfo{
+				{ID: "qwen3.5:9b", Metadata: map[string]string{"tools": "yes"}},
+				{ID: "qwen2.5-coder:14b", Metadata: map[string]string{"tools": "yes"}},
+			},
+		},
+	}
+
+	requested := state.PersonaModelAssignments{
+		state.PersonaPod: "qwen3.5:9b",
+		state.PersonaQA:  "qwen3.5:9b",
+	}
+
+	out := eng.normalizePersonaModels("ollama", requested, "qwen3.5:9b", catalogs)
+	if got := out[state.PersonaPod]; got != "qwen2.5-coder:14b" {
+		t.Fatalf("pod: want qwen2.5-coder:14b, got %q", got)
+	}
+	if got := out[state.PersonaQA]; got != "qwen2.5-coder:14b" {
+		t.Fatalf("qa: want qwen2.5-coder:14b, got %q", got)
+	}
+}
