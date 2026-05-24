@@ -120,6 +120,16 @@ type DeliveryRequest struct {
 	Config json.RawMessage `json:"config"` // action-specific non-secret config
 }
 
+// PlanningRequest captures optional builder planning state at workflow creation.
+type PlanningRequest struct {
+	Mode      string   `json:"mode"` // e.g. "builder"
+	Prompt    string   `json:"prompt"`
+	Plan      string   `json:"plan"`
+	Summary   string   `json:"summary"`
+	Decisions []string `json:"decisions"`
+	Questions []string `json:"questions"`
+}
+
 // CreateWorkflowRequest is the request body for POST /workflows.
 type CreateWorkflowRequest struct {
 	Request         string          `json:"request" binding:"required"`
@@ -129,6 +139,8 @@ type CreateWorkflowRequest struct {
 	Model           string          `json:"model"`             // optional override
 	Delivery        DeliveryRequest `json:"delivery"`          // optional delivery action + config
 	UploadSessionID string          `json:"upload_session_id"` // optional; links staged uploads to this workflow
+	Planning        PlanningRequest `json:"planning"`          // optional builder plan seed
+	AutoMode        bool            `json:"auto_mode"`         // enable dynamic auto-mode orchestration
 }
 
 func normalizeWorkflowMode(raw string) state.WorkflowMode {
@@ -139,6 +151,8 @@ func normalizeWorkflowMode(raw string) state.WorkflowMode {
 		return state.WorkflowModeSoftware
 	case "documentation", "docs-generation", "docs_generation":
 		return state.WorkflowModeDocs
+	case "auto", "auto_mode", "auto-mode":
+		return state.WorkflowModeAuto
 	default:
 		return state.WorkflowMode(raw)
 	}
@@ -176,6 +190,23 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		if req.UploadSessionID != "" {
 			ws.UploadSessionID = req.UploadSessionID
 		}
+		if req.AutoMode || ws.Mode == state.WorkflowModeAuto {
+			ws.Mode = state.WorkflowModeAuto
+			ws.Execution.AutoMode = &state.AutoModeState{Enabled: true}
+		}
+		if strings.TrimSpace(req.Planning.Mode) != "" ||
+			strings.TrimSpace(req.Planning.Prompt) != "" ||
+			strings.TrimSpace(req.Planning.Plan) != "" {
+			ws.Execution.Planning = &state.PlanningState{
+				Mode:      strings.TrimSpace(req.Planning.Mode),
+				Prompt:    strings.TrimSpace(req.Planning.Prompt),
+				Plan:      strings.TrimSpace(req.Planning.Plan),
+				Summary:   strings.TrimSpace(req.Planning.Summary),
+				Decisions: append([]string(nil), req.Planning.Decisions...),
+				Questions: append([]string(nil), req.Planning.Questions...),
+				UpdatedAt: time.Now().UTC(),
+			}
+		}
 
 		if err := store.CreateWorkflow(c.Request.Context(), ws); err != nil {
 			log.Error("create workflow", zap.Error(err))
@@ -200,6 +231,56 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		}
 
 		c.JSON(http.StatusCreated, ws)
+	}
+}
+
+// UpdateWorkflowPlanningRequest patches persisted planning state for a workflow.
+type UpdateWorkflowPlanningRequest struct {
+	Prompt    *string  `json:"prompt"`
+	Plan      *string  `json:"plan"`
+	Summary   *string  `json:"summary"`
+	Decisions []string `json:"decisions"`
+	Questions []string `json:"questions"`
+}
+
+// UpdateWorkflowPlanning handles PATCH /workflows/:id/planning.
+func UpdateWorkflowPlanning(store storage.Store, log *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ws, ok := checkWorkflowOwnership(c, store)
+		if !ok {
+			return
+		}
+		var req UpdateWorkflowPlanningRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			respondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if ws.Execution.Planning == nil {
+			ws.Execution.Planning = &state.PlanningState{Mode: "builder"}
+		}
+		if req.Prompt != nil {
+			ws.Execution.Planning.Prompt = strings.TrimSpace(*req.Prompt)
+		}
+		if req.Plan != nil {
+			ws.Execution.Planning.Plan = strings.TrimSpace(*req.Plan)
+		}
+		if req.Summary != nil {
+			ws.Execution.Planning.Summary = strings.TrimSpace(*req.Summary)
+		}
+		if req.Decisions != nil {
+			ws.Execution.Planning.Decisions = append([]string(nil), req.Decisions...)
+		}
+		if req.Questions != nil {
+			ws.Execution.Planning.Questions = append([]string(nil), req.Questions...)
+		}
+		ws.Execution.Planning.UpdatedAt = time.Now().UTC()
+		ws.UpdatedAt = time.Now().UTC()
+		if err := store.SaveWorkflow(c.Request.Context(), ws); err != nil {
+			log.Error("update workflow planning", zap.Error(err))
+			respondError(c, http.StatusInternalServerError, "failed to update planning state")
+			return
+		}
+		c.JSON(http.StatusOK, ws)
 	}
 }
 

@@ -19,6 +19,7 @@ func writeAll(t *testing.T, overrides map[string]string) string {
 		"director.md":          "You are the Director.",
 		"project_manager.md":   "You are the Project Manager.",
 		"matriarch.md":         "You are the Matriarch.",
+		"matriarch_builder.md": "You are the Matriarch Builder.",
 		"architect.md":         "You are the Architect.",
 		"pod.md":               "You are the Pod.",
 		"qa.md":                "You are the QA.",
@@ -94,6 +95,7 @@ func TestLoad_PartialMissing(t *testing.T) {
 	present := map[string]string{
 		"project_manager.md":   "pm",
 		"matriarch.md":         "eng",
+		"matriarch_builder.md": "eng-builder",
 		"architect.md":         "arch",
 		"pod.md":               "impl",
 		"finalizer.md":         "fin",

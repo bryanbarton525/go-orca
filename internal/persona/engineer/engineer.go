@@ -49,9 +49,20 @@ func (e *Matriarch) Description() string {
 }
 
 func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*state.PersonaOutput, error) {
-	systemPrompt := packet.PersonaPromptSnapshot[prompts.KeyMatriarch]
+	systemPromptKey := prompts.KeyMatriarch
+	builderMode := packet.Planning != nil && strings.EqualFold(packet.Planning.Mode, "builder")
+	if builderMode {
+		systemPromptKey = prompts.KeyMatriarchBuilder
+	}
+	systemPrompt := packet.PersonaPromptSnapshot[systemPromptKey]
+	if strings.TrimSpace(systemPrompt) == "" {
+		systemPrompt = packet.PersonaPromptSnapshot[prompts.KeyMatriarch]
+	}
 	handoffCtx := base.BuildHandoffContext(packet)
 	instruction := "Act as the user's pragmatic matriarch. Continue the review thread by challenging weak assumptions, supplying concrete design defaults for the Architect, and escalating product-sensitive questions that need a real user answer."
+	if builderMode {
+		instruction = "Act as the user's pragmatic matriarch in application-builder mode. Use available skills and MCP/tool context to produce a concrete implementation plan, identify non-negotiable decisions, and surface only critical unresolved questions."
+	}
 	if packet.IsRemediation {
 		instruction = "Act as the user's pragmatic matriarch during remediation. Review the QA blockers, the current review thread, and the Architect's direction; question weak remediation decisions, suggest safer defaults, and escalate any missing context that blocks a sound fix."
 	}
@@ -89,6 +100,8 @@ func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 		Suggestions:            suggestions,
 		MatriarchBlocked:       out.Blocked,
 		MatriarchBlockedReason: out.BlockedReason,
+		MatriarchDecisions:     out.Decisions,
+		MatriarchQuestions:     out.Questions,
 		CompletedAt:            base.Timestamp(),
 	}, nil
 }

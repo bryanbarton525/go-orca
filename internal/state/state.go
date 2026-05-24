@@ -36,6 +36,7 @@ const (
 	WorkflowModeResearch WorkflowMode = "research"
 	WorkflowModeOps      WorkflowMode = "ops"
 	WorkflowModeMixed    WorkflowMode = "mixed"
+	WorkflowModeAuto     WorkflowMode = "auto"
 )
 
 // TaskStatus represents the lifecycle state of a single task.
@@ -152,6 +153,10 @@ type Execution struct {
 	// Checkpoints records repo checkpoint commits created after implementation
 	// phases or remediation cycles.
 	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	// Planning stores interactive planning context (Builder UI + Matriarch).
+	Planning *PlanningState `json:"planning,omitempty"`
+	// AutoMode tracks dynamic workflow/pod definition selection attempts.
+	AutoMode *AutoModeState `json:"auto_mode,omitempty"`
 }
 
 // WorkspaceInfo describes the materialized repo/worktree used by toolchain
@@ -203,6 +208,47 @@ type Checkpoint struct {
 	Message     string    `json:"message,omitempty"`
 	Pushed      bool      `json:"pushed,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PlanningState captures interactive planning session state from the Builder UI.
+type PlanningState struct {
+	Mode      string    `json:"mode,omitempty"` // e.g. "builder"
+	Prompt    string    `json:"prompt,omitempty"`
+	Plan      string    `json:"plan,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	Decisions []string  `json:"decisions,omitempty"`
+	Questions []string  `json:"questions,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+// AutoDefinition describes a candidate logical pod/workflow definition.
+type AutoDefinition struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	PodSpecialties []string `json:"pod_specialties,omitempty"`
+	WorkflowHints  []string `json:"workflow_hints,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	Source         string   `json:"source,omitempty"` // catalog | generated
+}
+
+// AutoDefinitionAttempt tracks one attempted auto-mode definition.
+type AutoDefinitionAttempt struct {
+	Attempt      int       `json:"attempt"`
+	DefinitionID string    `json:"definition_id"`
+	Succeeded    bool      `json:"succeeded"`
+	Notes        string    `json:"notes,omitempty"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
+// AutoModeState tracks dynamic definition selection and promotion.
+type AutoModeState struct {
+	Enabled            bool                    `json:"enabled"`
+	MaxAttempts        int                     `json:"max_attempts,omitempty"`
+	DefinitionAttempts int                     `json:"definition_attempts,omitempty"`
+	ActiveDefinition   *AutoDefinition         `json:"active_definition,omitempty"`
+	PromotedDefinition *AutoDefinition         `json:"promoted_definition,omitempty"`
+	Attempts           []AutoDefinitionAttempt `json:"attempts,omitempty"`
 }
 
 // ReviewThreadEntry captures the running conversation between personas during
@@ -638,6 +684,10 @@ type HandoffPacket struct {
 	ValidationRuns []ValidationRun `json:"validation_runs,omitempty"`
 	// Checkpoints are source-control snapshots created after implementation.
 	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	// Planning carries interactive planning state.
+	Planning *PlanningState `json:"planning,omitempty"`
+	// AutoMode carries dynamic definition state for auto workflows.
+	AutoMode *AutoModeState `json:"auto_mode,omitempty"`
 	// Nested persona event hooks are runtime-only callbacks used by personas
 	// that execute internal sub-phases, such as the Finalizer's inline Refiner
 	// pass. They allow those sub-phases to surface progress in the workflow
@@ -691,8 +741,10 @@ type PersonaOutput struct {
 	// MatriarchBlocked is set when the Matriarch determines that a hard
 	// prerequisite is unmet and the next phase must not proceed.
 	// The engine gates the Architect (initial and remediation) on this flag.
-	MatriarchBlocked       bool   `json:"matriarch_blocked,omitempty"`
-	MatriarchBlockedReason string `json:"matriarch_blocked_reason,omitempty"`
+	MatriarchBlocked       bool     `json:"matriarch_blocked,omitempty"`
+	MatriarchBlockedReason string   `json:"matriarch_blocked_reason,omitempty"`
+	MatriarchDecisions     []string `json:"matriarch_decisions,omitempty"`
+	MatriarchQuestions     []string `json:"matriarch_questions,omitempty"`
 
 	// Typed phase outputs; only one should be set per persona.
 	Constitution *Constitution       `json:"constitution,omitempty"`

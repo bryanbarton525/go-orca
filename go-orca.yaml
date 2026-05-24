@@ -142,3 +142,6 @@ workflow:
   run_until_success: false          # true => scheduler retries forever until completion/cancel
   scheduler_retry_delay: "5s"
   scheduler_max_retries: 0          # set -1 for unlimited retries (auto when run_until_success=true)
+  enable_builder_mode: true
+  enable_auto_mode: true
+  auto_mode_max_definition_attempts: 5

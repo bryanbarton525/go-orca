@@ -7,6 +7,7 @@ export const workflowModes: Array<{ value: WorkflowMode; label: string }> = [
   { value: "research", label: "Research" },
   { value: "ops", label: "Ops" },
   { value: "mixed", label: "Mixed" },
+  { value: "auto", label: "Auto" },
 ];
 
 export const deliveryActions: Array<{ value: string; label: string; description: string }> = [

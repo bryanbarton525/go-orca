@@ -203,6 +203,20 @@ export function getWorkflow(id: string, context?: OrcaContext) {
   return orcaRequest<WorkflowState>(`workflows/${id}`, { context });
 }
 
+export function updateWorkflowPlanning(
+  id: string,
+  payload: {
+    prompt?: string;
+    plan?: string;
+    summary?: string;
+    decisions?: string[];
+    questions?: string[];
+  },
+  context?: OrcaContext
+) {
+  return orcaRequest<WorkflowState>(`workflows/${id}/planning`, { method: "PATCH", body: payload, context });
+}
+
 export async function getWorkflowEvents(id: string, context?: OrcaContext) {
   return normalizeList<EventRecord>(await orcaRequest<unknown>(`workflows/${id}/events`, { context }), "events");
 }

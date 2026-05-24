@@ -298,6 +298,7 @@ func newRouter(store *memStore) *gin.Engine {
 	wf.GET("/:id/events", handlers.GetWorkflowEvents(store))
 	wf.POST("/:id/cancel", handlers.CancelWorkflow(store, log))
 	wf.POST("/:id/resume", handlers.ResumeWorkflow(store, nil, log))
+	wf.PATCH("/:id/planning", handlers.UpdateWorkflowPlanning(store, log))
 	wf.GET("/:id/stream", handlers.StreamWorkflowEvents(store, nil))
 
 	r.GET("/healthz", handlers.Healthz())
@@ -403,6 +404,7 @@ func TestCreateWorkflowNormalizesModeAliases(t *testing.T) {
 	}{
 		{name: "content alias", mode: "content-creation", want: state.WorkflowModeContent},
 		{name: "software alias", mode: "software-creation", want: state.WorkflowModeSoftware},
+		{name: "auto alias", mode: "auto-mode", want: state.WorkflowModeAuto},
 	}
 
 	for _, tc := range tests {
@@ -423,6 +425,76 @@ func TestCreateWorkflowNormalizesModeAliases(t *testing.T) {
 				t.Fatalf("Mode: got %q, want %q", created.Mode, tc.want)
 			}
 		})
+	}
+}
+
+func TestCreateWorkflowPersistsPlanningAndAutoMode(t *testing.T) {
+	ms := newMemStore()
+	now := time.Now().UTC()
+	_ = ms.CreateTenant(context.Background(), &state.Tenant{ID: "t1", Slug: "t1", Name: "T1", CreatedAt: now, UpdatedAt: now})
+	_ = ms.CreateScope(context.Background(), &state.Scope{ID: "s1", TenantID: "t1", Kind: state.ScopeKindGlobal, Name: "G", Slug: "global", CreatedAt: now, UpdatedAt: now})
+
+	r := newRouter(ms)
+	w := doRequest(r, http.MethodPost, "/workflows", map[string]any{
+		"request":   "build an auto mode workflow",
+		"auto_mode": true,
+		"planning": map[string]any{
+			"mode":   "builder",
+			"prompt": "plan this project",
+			"plan":   "step 1\nstep 2",
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST /workflows: got %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+
+	var created state.WorkflowState
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.Mode != state.WorkflowModeAuto {
+		t.Fatalf("Mode: got %q, want %q", created.Mode, state.WorkflowModeAuto)
+	}
+	if created.Execution.AutoMode == nil || !created.Execution.AutoMode.Enabled {
+		t.Fatalf("AutoMode: expected enabled state")
+	}
+	if created.Execution.Planning == nil || created.Execution.Planning.Prompt != "plan this project" {
+		t.Fatalf("Planning prompt not persisted")
+	}
+}
+
+func TestUpdateWorkflowPlanning(t *testing.T) {
+	ms := newMemStore()
+	now := time.Now().UTC()
+	_ = ms.CreateTenant(context.Background(), &state.Tenant{ID: "t1", Slug: "t1", Name: "T1", CreatedAt: now, UpdatedAt: now})
+	_ = ms.CreateScope(context.Background(), &state.Scope{ID: "s1", TenantID: "t1", Kind: state.ScopeKindGlobal, Name: "G", Slug: "global", CreatedAt: now, UpdatedAt: now})
+
+	ws := state.NewWorkflowState("t1", "s1", "plan update test")
+	_ = ms.CreateWorkflow(context.Background(), ws)
+
+	r := newRouter(ms)
+	w := doRequest(r, http.MethodPatch, "/workflows/"+ws.ID+"/planning", map[string]any{
+		"prompt":    "updated prompt",
+		"plan":      "updated plan",
+		"decisions": []string{"use workflow studio", "persist plan to state"},
+		"questions": []string{"which delivery action should be default?"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH /workflows/:id/planning: got %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var updated state.WorkflowState
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if updated.Execution.Planning == nil {
+		t.Fatalf("planning state missing")
+	}
+	if updated.Execution.Planning.Plan != "updated plan" {
+		t.Fatalf("Plan: got %q, want %q", updated.Execution.Planning.Plan, "updated plan")
+	}
+	if len(updated.Execution.Planning.Decisions) != 2 {
+		t.Fatalf("Decisions: got %d, want 2", len(updated.Execution.Planning.Decisions))
 	}
 }
 

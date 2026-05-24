@@ -36,6 +36,7 @@ import (
 	"github.com/go-orca/go-orca/internal/persona/prompts"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
+	workflowstate "github.com/go-orca/go-orca/internal/workflow/state"
 	"go.uber.org/zap"
 )
 
@@ -158,6 +159,15 @@ type Options struct {
 	// improvement workflow.  When nil the engine falls back to speculative
 	// applied_path construction (backward-compatible with existing tests).
 	ImprovementDispatcher ImprovementDispatcher
+	// DynamicStateManager manages generated logical pod/workflow definitions
+	// used by auto mode convergence loops.
+	DynamicStateManager workflowstate.Manager
+	// EnableBuilderMode toggles builder-mode planning behavior.
+	EnableBuilderMode bool
+	// EnableAutoMode toggles auto mode orchestration behavior.
+	EnableAutoMode bool
+	// AutoModeMaxDefinitionAttempts bounds generated definition variations.
+	AutoModeMaxDefinitionAttempts int
 
 	// PersonaPromptRoot is the directory containing the base persona prompt
 	// markdown files (e.g. director.md, project_manager.md …).
@@ -249,6 +259,12 @@ func (o *Options) applyDefaults() {
 	}
 	if o.IngestionChunkSize <= 0 {
 		o.IngestionChunkSize = 4000
+	}
+	if o.DynamicStateManager == nil {
+		o.DynamicStateManager = workflowstate.NewMemoryManager()
+	}
+	if o.AutoModeMaxDefinitionAttempts <= 0 {
+		o.AutoModeMaxDefinitionAttempts = 5
 	}
 }
 
@@ -460,6 +476,11 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	if err := e.ensureWorkspaceAndToolchain(ctx, ws); err != nil {
 		return fmt.Errorf("workspace setup: %w", err)
 	}
+	if e.autoModeEnabled(ws) {
+		if err := e.ensureAutoModeDefinition(ctx, ws); err != nil {
+			return fmt.Errorf("auto mode setup: %w", err)
+		}
+	}
 
 	// Phase 2: Project Manager
 	if personaRequired(state.PersonaProjectMgr) && !phaseComplete(state.PersonaProjectMgr) {
@@ -558,10 +579,22 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				}
 
 				if len(ws.BlockingIssues) == 0 {
+					if err := e.markAutoModeSuccess(ctx, ws); err != nil {
+						return fmt.Errorf("auto mode promote: %w", err)
+					}
 					break // QA passed
 				}
 
 				if e.opts.MaxQARetries >= 0 && qaCycle > e.opts.MaxQARetries {
+					if e.autoModeEnabled(ws) {
+						advanced, advErr := e.tryAutoModeIteration(ctx, ws, snap, qaCycle)
+						if advErr != nil {
+							return fmt.Errorf("auto mode iteration (cycle %d): %w", qaCycle, advErr)
+						}
+						if advanced {
+							continue
+						}
+					}
 					// QA or validation remediation retries exhausted — emit the
 					// exhaustion event and fail before Finalizer. This keeps
 					// validation failures inside the remediation loop instead of
@@ -861,6 +894,8 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 }
 
 func (e *Engine) postProcessFinalizer(ctx context.Context, ws *state.WorkflowState) error {
+	e.appendAutoModePromotionImprovement(ws)
+
 	// Route each improvement through the dispatcher (when configured and not
 	// already inside an improvement workflow — recursion guard).
 	if ws.Finalization != nil && len(ws.Finalization.RefinerImprovements) > 0 {
@@ -1674,7 +1709,7 @@ func mentionsPrivateRepo(s string) bool {
 
 func workflowNeedsToolchain(mode state.WorkflowMode) bool {
 	switch mode {
-	case state.WorkflowModeSoftware, state.WorkflowModeMixed, state.WorkflowModeOps:
+	case state.WorkflowModeSoftware, state.WorkflowModeMixed, state.WorkflowModeOps, state.WorkflowModeAuto:
 		return true
 	default:
 		return false
@@ -2372,6 +2407,18 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 		ws.MatriarchBlocked = true
 		ws.MatriarchBlockedReason = out.MatriarchBlockedReason
 	}
+	if out.Persona == state.PersonaMatriarch && len(out.MatriarchDecisions)+len(out.MatriarchQuestions) > 0 {
+		if ws.Execution.Planning == nil {
+			ws.Execution.Planning = &state.PlanningState{Mode: "builder"}
+		}
+		ws.Execution.Planning.Decisions = append([]string(nil), out.MatriarchDecisions...)
+		ws.Execution.Planning.Questions = append([]string(nil), out.MatriarchQuestions...)
+		ws.Execution.Planning.Summary = out.Summary
+		if ws.Execution.Planning.Plan == "" {
+			ws.Execution.Planning.Plan = out.Summary
+		}
+		ws.Execution.Planning.UpdatedAt = time.Now().UTC()
+	}
 	e.appendReviewThreadEntries(ws, out, out.Summary)
 
 	// Update live execution progress after every persona phase.
@@ -2532,6 +2579,8 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		Toolchain:                  ws.Execution.Toolchain,
 		ValidationRuns:             ws.Execution.ValidationRuns,
 		Checkpoints:                ws.Execution.Checkpoints,
+		Planning:                   ws.Execution.Planning,
+		AutoMode:                   ws.Execution.AutoMode,
 	}
 
 	// Populate customization context from the workflow-start snapshot.
@@ -2589,6 +2638,200 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 	}
 
 	return packet
+}
+
+func (e *Engine) autoModeEnabled(ws *state.WorkflowState) bool {
+	if ws == nil || !e.opts.EnableAutoMode {
+		return false
+	}
+	if ws.Mode == state.WorkflowModeAuto {
+		return true
+	}
+	return ws.Execution.AutoMode != nil && ws.Execution.AutoMode.Enabled
+}
+
+func (e *Engine) ensureAutoModeDefinition(ctx context.Context, ws *state.WorkflowState) error {
+	if ws.Execution.AutoMode == nil {
+		ws.Execution.AutoMode = &state.AutoModeState{
+			Enabled:     true,
+			MaxAttempts: e.opts.AutoModeMaxDefinitionAttempts,
+		}
+	} else {
+		ws.Execution.AutoMode.Enabled = true
+		if ws.Execution.AutoMode.MaxAttempts <= 0 {
+			ws.Execution.AutoMode.MaxAttempts = e.opts.AutoModeMaxDefinitionAttempts
+		}
+	}
+	if ws.Execution.AutoMode.ActiveDefinition != nil {
+		return nil
+	}
+	manager := e.opts.DynamicStateManager
+	definitions, err := manager.ListDefinitions(ctx, ws)
+	if err != nil {
+		return err
+	}
+	if len(definitions) == 0 {
+		definitions, err = manager.GenerateCandidates(ctx, ws, 1)
+		if err != nil {
+			return err
+		}
+	}
+	if len(definitions) == 0 {
+		return fmt.Errorf("no auto-mode definitions available")
+	}
+	selected := definitions[0]
+	ws.Execution.AutoMode.ActiveDefinition = &selected
+	ws.Execution.AutoMode.DefinitionAttempts = 1
+	attempt := state.AutoDefinitionAttempt{
+		Attempt:      1,
+		DefinitionID: selected.ID,
+		Notes:        "selected initial auto-mode definition",
+		OccurredAt:   time.Now().UTC(),
+	}
+	ws.Execution.AutoMode.Attempts = append(ws.Execution.AutoMode.Attempts, attempt)
+	_ = manager.RecordAttempt(ctx, ws, attempt)
+	if ws.Execution.Planning == nil {
+		ws.Execution.Planning = &state.PlanningState{Mode: "builder"}
+	}
+	if strings.TrimSpace(ws.Execution.Planning.Plan) == "" {
+		ws.Execution.Planning.Plan = selected.Summary
+	}
+	ws.Execution.Planning.UpdatedAt = time.Now().UTC()
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) tryAutoModeIteration(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) (bool, error) {
+	if !e.autoModeEnabled(ws) || ws.Execution.AutoMode == nil {
+		return false, nil
+	}
+	auto := ws.Execution.AutoMode
+	maxAttempts := auto.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = e.opts.AutoModeMaxDefinitionAttempts
+	}
+	if auto.DefinitionAttempts >= maxAttempts {
+		return false, nil
+	}
+
+	nextAttempt := auto.DefinitionAttempts + 1
+	manager := e.opts.DynamicStateManager
+	candidates, err := manager.GenerateCandidates(ctx, ws, nextAttempt)
+	if err != nil {
+		return false, err
+	}
+	if len(candidates) == 0 {
+		return false, nil
+	}
+	selected := candidates[0]
+	auto.ActiveDefinition = &selected
+	auto.DefinitionAttempts = nextAttempt
+	attempt := state.AutoDefinitionAttempt{
+		Attempt:      nextAttempt,
+		DefinitionID: selected.ID,
+		Notes:        fmt.Sprintf("selected generated definition during QA cycle %d", qaCycle),
+		OccurredAt:   time.Now().UTC(),
+	}
+	auto.Attempts = append(auto.Attempts, attempt)
+	_ = manager.RecordAttempt(ctx, ws, attempt)
+	ws.AllSuggestions = append(ws.AllSuggestions,
+		fmt.Sprintf("[auto-mode] trying definition %q (attempt %d/%d)", selected.ID, nextAttempt, maxAttempts))
+
+	// Trigger a fresh remediation pass using the newly selected definition.
+	if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
+		return false, err
+	}
+	if err := e.runPodPhase(ctx, ws, snap); err != nil {
+		return false, err
+	}
+	validationIssues, err := e.runToolchainValidation(ctx, ws, fmt.Sprintf("auto-remediation-%d", qaCycle))
+	if err != nil {
+		return false, err
+	}
+	ws.BlockingIssues = validationIssues
+	ws.UpdatedAt = time.Now().UTC()
+	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (e *Engine) markAutoModeSuccess(ctx context.Context, ws *state.WorkflowState) error {
+	if !e.autoModeEnabled(ws) || ws.Execution.AutoMode == nil || ws.Execution.AutoMode.ActiveDefinition == nil {
+		return nil
+	}
+	auto := ws.Execution.AutoMode
+	if len(auto.Attempts) > 0 {
+		lastIdx := len(auto.Attempts) - 1
+		auto.Attempts[lastIdx].Succeeded = true
+		auto.Attempts[lastIdx].Notes = "workflow passed QA using this definition"
+		_ = e.opts.DynamicStateManager.RecordAttempt(ctx, ws, auto.Attempts[lastIdx])
+	}
+	def := *auto.ActiveDefinition
+	auto.PromotedDefinition = &def
+	if err := e.opts.DynamicStateManager.PromoteDefinition(ctx, ws, def); err != nil {
+		return err
+	}
+	if ws.Execution.Planning != nil {
+		ws.Execution.Planning.UpdatedAt = time.Now().UTC()
+	}
+	return e.store.SaveWorkflow(ctx, ws)
+}
+
+func (e *Engine) appendAutoModePromotionImprovement(ws *state.WorkflowState) {
+	if ws == nil || ws.Finalization == nil || ws.Execution.AutoMode == nil {
+		return
+	}
+	promoted := ws.Execution.AutoMode.PromotedDefinition
+	if promoted == nil {
+		return
+	}
+	for _, imp := range ws.Finalization.RefinerImprovements {
+		if imp.ComponentType == "prompt" && imp.ComponentName == "auto-mode-definition" {
+			return
+		}
+	}
+
+	blob, _ := json.MarshalIndent(promoted, "", "  ")
+	fileName := sanitizePromptName(promoted.ID)
+	if fileName == "" {
+		fileName = "auto-mode-definition"
+	}
+	ws.Finalization.RefinerImprovements = append(ws.Finalization.RefinerImprovements, state.RefinerImprovement{
+		ComponentType: "prompt",
+		ComponentName: "auto-mode-definition",
+		Problem:       "No reusable auto-mode pod/workflow definition existed for this workflow scope.",
+		ProposedFix:   "Persist the validated auto-mode definition so future runs can reuse it immediately.",
+		ChangeType:    "create",
+		ApplyMode:     "workflow",
+		Priority:      "medium",
+		Files: []state.ImprovementFile{
+			{
+				Path: filepath.Join("prompts", "personas", "auto", fileName+".md"),
+				Content: "## Auto Mode Definition\n\n```json\n" +
+					string(blob) +
+					"\n```\n",
+			},
+		},
+	})
+}
+
+func sanitizePromptName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		default:
+			return '-'
+		}
+	}, value)
+	value = strings.Trim(value, "-")
+	for strings.Contains(value, "--") {
+		value = strings.ReplaceAll(value, "--", "-")
+	}
+	return value
 }
 
 func latestArtifactsByLogicalFile(artifacts []state.Artifact) []state.Artifact {

@@ -30,6 +30,7 @@ const (
 	KeyDirector         = "director"
 	KeyProjectManager   = "project_manager"
 	KeyMatriarch        = "matriarch"
+	KeyMatriarchBuilder = "matriarch_builder"
 	KeyArchitect        = "architect"
 	KeyPod              = "pod"
 	KeyQA               = "qa"
@@ -53,6 +54,7 @@ var requiredFiles = map[string]string{
 	KeyDirector:         "director.md",
 	KeyProjectManager:   "project_manager.md",
 	KeyMatriarch:        "matriarch.md",
+	KeyMatriarchBuilder: "matriarch_builder.md",
 	KeyArchitect:        "architect.md",
 	KeyPod:              "pod.md",
 	KeyQA:               "qa.md",
@@ -155,6 +157,7 @@ func Keys() []string {
 		KeyDirector,
 		KeyProjectManager,
 		KeyMatriarch,
+		KeyMatriarchBuilder,
 		KeyArchitect,
 		KeyPod,
 		KeyQA,

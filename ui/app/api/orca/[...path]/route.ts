@@ -35,7 +35,7 @@ const allowedRoutes = {
     /^upload-sessions$/,
     /^upload-sessions\/[^/]+\/files$/,
   ],
-  PATCH: [/^tenants\/[^/]+$/, /^tenants\/[^/]+\/scopes\/[^/]+$/],
+  PATCH: [/^tenants\/[^/]+$/, /^tenants\/[^/]+\/scopes\/[^/]+$/, /^workflows\/[^/]+\/planning$/],
   DELETE: [/^tenants\/[^/]+$/, /^tenants\/[^/]+\/scopes\/[^/]+$/],
 } as const;
 

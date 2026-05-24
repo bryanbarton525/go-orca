@@ -83,6 +83,7 @@ func New(cfg Config) *gin.Engine {
 			wf.POST("/:id/cancel", handlers.CancelWorkflow(cfg.Store, cfg.Logger))
 			wf.POST("/:id/resume", handlers.ResumeWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
 			wf.GET("/:id/attachments", handlers.ListWorkflowAttachments(cfg.Store))
+			wf.PATCH("/:id/planning", handlers.UpdateWorkflowPlanning(cfg.Store, cfg.Logger))
 		}
 
 		// ── Upload Sessions ──────────────────────────────────────────────────

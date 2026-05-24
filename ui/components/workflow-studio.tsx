@@ -2089,6 +2089,7 @@ export function WorkflowStudio() {
           request,
           title: (formState.title ?? "").trim() || undefined,
           mode: formState.mode || undefined,
+          auto_mode: formState.mode === "auto",
           provider: (formState.provider ?? "").trim() || undefined,
           model: (formState.model ?? "").trim() || undefined,
           upload_session_id: uploadSessionId,
