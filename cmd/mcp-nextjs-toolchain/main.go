@@ -60,10 +60,10 @@ func main() {
 func register(srv *server.Server, root string, allow policy.Allowlist, auditor policy.Auditor) {
 	run := makeRunner(root, allow, auditor)
 
-	// Install — use frozen lockfile when pnpm-lock.yaml exists; greenfield
-	// workspaces only have package.json until the first successful install.
+	// Install — plain pnpm install so validation succeeds while Pod still
+	// edits package.json (no frozen lockfile during remediation loops).
 	server.AddCapability(srv, "next_install",
-		"Run `pnpm install` in the Next.js workspace (frozen lockfile when pnpm-lock.yaml exists).",
+		"Run `pnpm install` in the Next.js workspace.",
 		installHandler(root, allow, auditor))
 
 	// Build — invokes the project's build script which calls `next build`.

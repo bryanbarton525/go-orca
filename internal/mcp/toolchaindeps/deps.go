@@ -9,15 +9,13 @@ import (
 
 var pnpmLockfileNames = []string{"pnpm-lock.yaml", "pnpm-lock.yml"}
 
-// PnpmInstallArgv returns pnpm install arguments for workdir. Greenfield
-// workspaces often have package.json but no lockfile; frozen-lockfile fails
-// with ERR_PNPM_NO_LOCKFILE until a lockfile is committed.
+// PnpmInstallArgv returns pnpm install arguments for workdir. go-orca
+// implementation validation runs while Pod is still editing package.json, so
+// install must tolerate missing or stale lockfiles (frozen-lockfile fails with
+// ERR_PNPM_NO_LOCKFILE / ERR_PNPM_OUTDATED_LOCKFILE during remediation loops).
 func PnpmInstallArgv(workdir string) []string {
-	argv := []string{"pnpm", "install"}
-	if HasPnpmLockfile(workdir) {
-		argv = append(argv, "--frozen-lockfile")
-	}
-	return argv
+	_ = workdir // reserved for future lockfile-aware behavior
+	return []string{"pnpm", "install"}
 }
 
 // HasPnpmLockfile reports whether workdir contains a pnpm lockfile.
