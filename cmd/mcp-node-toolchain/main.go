@@ -17,6 +17,7 @@ import (
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
 	"github.com/go-orca/go-orca/internal/mcp/policy"
 	"github.com/go-orca/go-orca/internal/mcp/server"
+	"github.com/go-orca/go-orca/internal/mcp/toolchaindeps"
 )
 
 func main() {
@@ -56,10 +57,10 @@ func main() {
 func register(srv *server.Server, root string, allow policy.Allowlist, auditor policy.Auditor) {
 	run := makeRunner(root, allow, auditor)
 
-	server.AddCapability(srv, "npm_ci", "Run `npm ci` against the workspace lockfile.",
-		run(capabilities.InstallDependencies, []string{"npm", "ci"}, 10*time.Minute))
-	server.AddCapability(srv, "pnpm_install", "Run `pnpm install --frozen-lockfile`.",
-		run(capabilities.InstallDependencies, []string{"pnpm", "install", "--frozen-lockfile"}, 10*time.Minute))
+	server.AddCapability(srv, "npm_ci", "Run `npm ci` or `npm install` depending on lockfile presence.",
+		npmInstallHandler(root, allow, auditor))
+	server.AddCapability(srv, "pnpm_install", "Run `pnpm install` in the workspace.",
+		pnpmInstallHandler(root, allow, auditor))
 	server.AddCapability(srv, "prettier_format", "Run `npx prettier --write .`.",
 		run(capabilities.FormatCode, []string{"npx", "prettier", "--write", "."}, 5*time.Minute))
 	server.AddCapability(srv, "npm_test", "Run `npm test`.",
@@ -72,6 +73,44 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 		run(capabilities.Typecheck, []string{"npm", "run", "typecheck"}, 10*time.Minute))
 	server.AddCapability(srv, "tsc_check", "Run `npx tsc --noEmit`.",
 		run(capabilities.Typecheck, []string{"npx", "tsc", "--noEmit"}, 10*time.Minute))
+}
+
+func pnpmInstallHandler(root string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
+	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
+		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
+		if err != nil {
+			return capabilities.Result{Error: err.Error()}
+		}
+		return policy.Run(ctx, policy.RunOptions{
+			Argv:       toolchaindeps.PnpmInstallArgv(workdir),
+			WorkingDir: workdir,
+			Timeout:    10 * time.Minute,
+			Capability: capabilities.InstallDependencies,
+			WorkflowID: args.WorkflowID,
+			Allow:      allow,
+			Auditor:    auditor,
+			Env:        baseEnv(),
+		})
+	}
+}
+
+func npmInstallHandler(root string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
+	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
+		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
+		if err != nil {
+			return capabilities.Result{Error: err.Error()}
+		}
+		return policy.Run(ctx, policy.RunOptions{
+			Argv:       toolchaindeps.NpmInstallArgv(workdir),
+			WorkingDir: workdir,
+			Timeout:    10 * time.Minute,
+			Capability: capabilities.InstallDependencies,
+			WorkflowID: args.WorkflowID,
+			Allow:      allow,
+			Auditor:    auditor,
+			Env:        baseEnv(),
+		})
+	}
 }
 
 // makeRunner returns a capability-handler factory bound to the workspace
