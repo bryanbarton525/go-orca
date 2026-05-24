@@ -4,7 +4,9 @@ package pm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-orca/go-orca/internal/persona/base"
@@ -71,7 +73,13 @@ func (p *ProjectManager) Execute(ctx context.Context, packet state.HandoffPacket
 
 	var out pmOutput
 	if err := base.ParseJSON(raw, &out); err != nil {
-		return nil, fmt.Errorf("pm: parse error: %w", err)
+		normalized, nerr := normalizePMOutput(raw)
+		if nerr != nil {
+			return nil, fmt.Errorf("pm: parse error: %w", err)
+		}
+		if err := base.ParseJSON(normalized, &out); err != nil {
+			return nil, fmt.Errorf("pm: parse error: %w", err)
+		}
 	}
 
 	return &state.PersonaOutput{
@@ -82,4 +90,38 @@ func (p *ProjectManager) Execute(ctx context.Context, packet state.HandoffPacket
 		Requirements: &out.Requirements,
 		CompletedAt:  base.Timestamp(),
 	}, nil
+}
+
+// normalizePMOutput repairs common schema drifts from smaller models so PM
+// remediation can continue without manual intervention.
+func normalizePMOutput(raw string) (string, error) {
+	var obj map[string]any
+	if err := base.ParseJSON(raw, &obj); err != nil {
+		return "", err
+	}
+
+	constitution, ok := obj["constitution"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("constitution missing")
+	}
+
+	// Some models return out_of_scope as a single string instead of []string.
+	switch v := constitution["out_of_scope"].(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			constitution["out_of_scope"] = []string{}
+		} else {
+			constitution["out_of_scope"] = []string{trimmed}
+		}
+	case nil:
+		constitution["out_of_scope"] = []string{}
+	}
+	obj["constitution"] = constitution
+
+	fixed, err := json.Marshal(obj)
+	if err != nil {
+		return "", err
+	}
+	return string(fixed), nil
 }
