@@ -36,23 +36,28 @@ type serviceAccount struct {
 
 func main() {
 	saPath := flag.String("sa", "", "path to ZITADEL service account JSON (iam-admin.json)")
+	pat := flag.String("pat", "", "ZITADEL personal access token (skips JWT bearer exchange)")
 	issuer := flag.String("issuer", "https://id.iambarton.com", "ZITADEL issuer / audience")
 	eventsURL := flag.String("events", "https://events.iambarton.com/api/v1/events", "event ingest URL")
 	flag.Parse()
 
-	if *saPath == "" {
-		fmt.Fprintln(os.Stderr, "-sa is required")
+	var accessToken string
+	switch {
+	case strings.TrimSpace(*pat) != "":
+		accessToken = strings.TrimSpace(*pat)
+	case *saPath != "":
+		sa, err := loadServiceAccount(*saPath)
+		if err != nil {
+			fatal(err)
+		}
+		token, err := fetchAccessToken(sa, strings.TrimRight(*issuer, "/"))
+		if err != nil {
+			fatal(err)
+		}
+		accessToken = token
+	default:
+		fmt.Fprintln(os.Stderr, "one of -sa or -pat is required")
 		os.Exit(2)
-	}
-
-	sa, err := loadServiceAccount(*saPath)
-	if err != nil {
-		fatal(err)
-	}
-
-	accessToken, err := fetchAccessToken(sa, strings.TrimRight(*issuer, "/"))
-	if err != nil {
-		fatal(err)
 	}
 
 	marker := fmt.Sprintf("streaming-e2e-%d", time.Now().Unix())

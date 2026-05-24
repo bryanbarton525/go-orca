@@ -271,6 +271,7 @@ func main() {
 		StreamingReadiness:    streamReadiness,
 		StreamingHub:          streamHub,
 		StreamingTopic:        cfg.Streaming.Topic,
+		StreamingUserinfoURL:  cfg.Streaming.UserinfoURL,
 		MetricsHandler:        promhttp.Handler(),
 		GinMode:               cfg.Server.Mode,
 	})

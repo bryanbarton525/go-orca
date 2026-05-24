@@ -111,6 +111,7 @@ type StreamingConfig struct {
 	ReadinessProbeInterval time.Duration `mapstructure:"readiness_probe_interval"`
 	ReadinessPingTimeout   time.Duration `mapstructure:"readiness_ping_timeout"`
 	ConsumerGroup          string        `mapstructure:"consumer_group"`
+	UserinfoURL            string        `mapstructure:"userinfo_url"`
 }
 
 // ProvidersConfig holds per-provider settings.
