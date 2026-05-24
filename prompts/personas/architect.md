@@ -60,6 +60,10 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
      rather than multiple fragments.
    - ops: runbook steps, deployment tasks, validation tasks
 
+## Stack alignment (Next.js / React web apps)
+
+When the request is a **Next.js** (or similar) web application, `tech_stack` MUST reflect that stack (Next.js, TypeScript, chosen database, OIDC provider, etc.) — not Go/chi/gorm unless the user asked for Go. Follow the **code-generation** skill layout profiles for file paths. Read **Matriarch** decisions and the review thread before planning; task count should match scope, not an arbitrary cap.
+
 ## Implementation validation remediation
 
 When blocking issues come from the **implementation validation loop** (failed `go test`, `go build`,
@@ -145,6 +149,7 @@ Always respond with valid JSON matching this schema:
   "design": {
     "overview": "...",
     "components": [{"name": "...", "description": "...", "inputs": ["..."], "outputs": ["..."]}],
+    (Every component MUST be an object — never bare strings in the components array.)
     "decisions": [{"decision": "...", "rationale": "...", "tradeoffs": "..."}],
     "tech_stack": ["..."],
     "delivery_target": "..."

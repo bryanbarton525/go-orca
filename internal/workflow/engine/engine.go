@@ -28,7 +28,6 @@ import (
 	"github.com/go-orca/go-orca/internal/customization"
 	"github.com/go-orca/go-orca/internal/events"
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
-	"github.com/go-orca/go-orca/internal/logger"
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/persona"
@@ -37,7 +36,6 @@ import (
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
 	workflowstate "github.com/go-orca/go-orca/internal/workflow/state"
-	"go.uber.org/zap"
 )
 
 // ScopeResolver resolves a scope ID to its ancestor slug chain.
@@ -173,6 +171,17 @@ type Options struct {
 	EnableAutoMode bool
 	// AutoModeMaxDefinitionAttempts bounds generated definition variations.
 	AutoModeMaxDefinitionAttempts int
+
+	// MaxConcurrentTasks limits parallel Pod task execution within one workflow.
+	// Defaults to 1 (serial) when unset or ≤0.
+	MaxConcurrentTasks int
+
+	// MaxArchitectTasks caps the initial Architect task graph size (0 = unlimited).
+	MaxArchitectTasks int
+
+	// MinimalCheckpoints skips git checkpoints on remediation micro-phases
+	// (plan/bootstrap) to reduce MCP and git overhead.
+	MinimalCheckpoints bool
 
 	// PersonaPromptRoot is the directory containing the base persona prompt
 	// markdown files (e.g. director.md, project_manager.md …).
@@ -619,7 +628,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runRemediationTriage(ctx, ws, snap, qaCycle); err != nil {
 						return fmt.Errorf("remediation triage (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-triage-%d", qaCycle)); err != nil {
+					if err := e.runToolchainCheckpointUnlessMinimal(ctx, ws, fmt.Sprintf("remediation-triage-%d", qaCycle)); err != nil {
 						return fmt.Errorf("remediation triage checkpoint (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.checkControlState(ctx, ws); err != nil {
@@ -649,7 +658,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle, "qa_remediation"); err != nil {
 						return fmt.Errorf("remediation planning (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-plan-%d", qaCycle)); err != nil {
+					if err := e.runToolchainCheckpointUnlessMinimal(ctx, ws, fmt.Sprintf("remediation-plan-%d", qaCycle)); err != nil {
 						return fmt.Errorf("remediation plan checkpoint (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.checkControlState(ctx, ws); err != nil {
@@ -663,7 +672,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					if err := e.ensureToolchainBootstrap(ctx, ws, remediationPrefix+"-bootstrap"); err != nil {
 						return fmt.Errorf("remediation bootstrap (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.runToolchainCheckpoint(ctx, ws, remediationPrefix+"-bootstrap"); err != nil {
+					if err := e.runToolchainCheckpointUnlessMinimal(ctx, ws, remediationPrefix+"-bootstrap"); err != nil {
 						return fmt.Errorf("remediation bootstrap checkpoint (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.runImplementationValidationLoop(ctx, ws, snap, implementationLoopOpts{
@@ -1062,22 +1071,17 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	var podTasksSeen int
 	var blockedByDependencies int
 	var podTasksIncomplete bool
+	pass := 0
 	for {
+		if err := e.checkControlState(ctx, ws); err != nil {
+			return err
+		}
 		e.refreshPodTaskReadiness(ws)
-		ranTaskThisPass := false
 		podTasksSeen = 0
 		blockedByDependencies = 0
 		podTasksIncomplete = false
 		for i := range ws.Tasks {
-			if err := e.checkControlState(ctx, ws); err != nil {
-				return err
-			}
-
 			t := &ws.Tasks[i]
-
-			// Only process Pod-owned tasks that still need work.
-			// Normalise to lowercase before comparing so that model responses with
-			// "Pod" (capital I) or other case variants are not silently skipped.
 			if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
 				continue
 			}
@@ -1086,117 +1090,27 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 				podTasksIncomplete = true
 			}
 			if !e.taskDependenciesSatisfied(ws, t) {
-				if t.Status == state.TaskStatusReady {
-					t.Status = state.TaskStatusPending
-				}
 				blockedByDependencies++
-				continue
 			}
-			if t.Status != state.TaskStatusReady &&
-				t.Status != state.TaskStatusPending &&
-				t.Status != state.TaskStatusFailed {
-				continue
-			}
-
-			tasksAttempted++
-			ranTaskThisPass = true
-
-			// Update visible progress before calling LLM.
-			ws.Execution.CurrentPersona = state.PersonaPod
-			ws.Execution.ActiveTaskID = t.ID
-			ws.Execution.ActiveTaskTitle = t.Title
-
-			// Build a packet scoped to this single task.
-			packet := e.buildPacket(ws, state.PersonaPod, snap)
-			packet.Tasks = []state.Task{*t}
-
-			// Mark task running before LLM call so callers see the transition.
-			t.Status = state.TaskStatusRunning
-			if err := e.store.SaveWorkflow(ctx, ws); err != nil {
-				return fmt.Errorf("save before pod task %s: %w", t.ID[:8], err)
-			}
-
-			startEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventTaskStarted, state.PersonaPod,
-				events.TaskStartedPayload{TaskID: t.ID, Title: t.Title})
-			_ = e.store.AppendEvents(ctx, startEvt)
-
-			taskStart := time.Now()
-			taskCtx, taskCancel := context.WithTimeout(ctx, e.opts.HandoffTimeout)
-			out, err := p.Execute(taskCtx, packet)
-			taskElapsed := time.Since(taskStart)
-			taskCancel()
-			if controlErr := e.checkControlState(ctx, ws); controlErr != nil {
-				return controlErr
-			}
-			if err != nil {
-				t.Status = state.TaskStatusFailed
-				ws.Execution.ActiveTaskID = ""
-				ws.Execution.ActiveTaskTitle = ""
-				failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-					events.EventTaskFailed, state.PersonaPod,
-					events.TaskFailedPayload{TaskID: t.ID, Title: t.Title, Error: err.Error()})
-				_ = e.store.AppendEvents(ctx, failEvt)
-				_ = e.store.SaveWorkflow(ctx, ws)
-				implErr = fmt.Errorf("pod task %s: %w", t.ID[:8], err)
-				break
-			}
-
-			// Mark task complete and attach artifacts.
-			now := time.Now().UTC()
-			t.Status = state.TaskStatusCompleted
-			t.CompletedAt = &now
-			e.refreshPodTaskReadiness(ws)
-			for _, art := range out.Artifacts {
-				ws.Artifacts = mergeOrAppendArtifact(ws.Mode, ws.Artifacts, art)
-				artEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-					events.EventArtifactProduced, state.PersonaPod,
-					events.ArtifactProducedPayload{
-						TaskID:        t.ID,
-						ArtifactName:  art.Name,
-						Kind:          string(art.Kind),
-						ContentLength: len(art.Content),
-					})
-				_ = e.store.AppendEvents(ctx, artEvt)
-
-				// Persist the artifact to the on-disk workspace so that the
-				// go-toolchain MCP (and git checkpoint) can read the produced files.
-				// This is a safety net for models that produce the code in their
-				// Phase B JSON response but do not call write_file during Phase A.
-				if ws.Execution.Workspace != nil {
-					if writeErr := e.writeArtifactToWorkspace(ws, art); writeErr != nil {
-						logger.Warn("engine: failed to flush artifact to workspace",
-							zap.String("workflow_id", ws.ID),
-							zap.String("task_id", t.ID),
-							zap.String("artifact_name", art.Name),
-							zap.String("artifact_kind", string(art.Kind)),
-							zap.Error(writeErr),
-						)
-					}
-				}
-			}
-
-			if ws.Summaries == nil {
-				ws.Summaries = make(map[state.PersonaKind]string)
-			}
-			// Append per-task summary rather than overwrite.
-			shortID := t.ID
-			if len(shortID) > 8 {
-				shortID = shortID[:8]
-			}
-			ws.Summaries[state.PersonaPod] += fmt.Sprintf("[%s] %s\n", shortID, out.Summary)
-
-			doneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventTaskCompleted, state.PersonaPod,
-				events.TaskCompletedPayload{
-					TaskID:     t.ID,
-					Title:      t.Title,
-					Summary:    out.Summary,
-					DurationMs: taskElapsed.Milliseconds(),
-				})
-			_ = e.store.AppendEvents(ctx, doneEvt)
 		}
-		if implErr != nil || !ranTaskThisPass {
+		indices := e.readyPodTaskIndices(ws)
+		if len(indices) == 0 {
+			break
+		}
+		concurrency := e.podConcurrency()
+		if len(indices) > concurrency {
+			indices = indices[:concurrency]
+		}
+		pass++
+		if err := e.runPodManagerCheckin(ctx, ws, snap, pass, indices); err != nil {
+			implErr = fmt.Errorf("pod manager check-in (pass %d): %w", pass, err)
+			break
+		}
+		ws.Execution.CurrentPersona = state.PersonaPod
+		_ = e.store.SaveWorkflow(ctx, ws)
+		tasksAttempted += len(indices)
+		if err := e.runPodTaskBatch(ctx, ws, snap, p, implPacket, indices); err != nil {
+			implErr = err
 			break
 		}
 	}
@@ -1625,6 +1539,11 @@ func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.Work
 			return err
 		}
 	}
+	if ws.Execution.Toolchain != nil && !toolchainMatchesRequest(ws) {
+		ws.Execution.Toolchain = nil
+		ws.AllSuggestions = append(ws.AllSuggestions,
+			"[toolchain] re-selecting stack: previous toolchain did not match request")
+	}
 	if ws.Execution.Toolchain == nil {
 		if tc, language, ok := e.selectToolchain(ws); ok {
 			profile := "default"
@@ -1789,18 +1708,59 @@ func (e *Engine) selectToolchain(ws *state.WorkflowState) (ToolchainConfig, stri
 	if ws.Design != nil {
 		haystack += " " + strings.ToLower(strings.Join(ws.Design.TechStack, " "))
 	}
+	var (
+		best     ToolchainConfig
+		bestLang string
+		bestLen  int
+		found    bool
+	)
 	for _, tc := range e.opts.Toolchains {
 		for _, lang := range tc.Languages {
 			needle := strings.ToLower(strings.TrimSpace(lang))
-			if needle != "" && strings.Contains(haystack, needle) {
-				return tc, needle, true
+			if needle == "" || !toolchainLanguageMentioned(haystack, needle) {
+				continue
+			}
+			if !found || len(needle) > bestLen {
+				best, bestLang, bestLen, found = tc, needle, len(needle), true
 			}
 		}
+	}
+	if found {
+		return best, bestLang, true
 	}
 	if len(e.opts.Toolchains) > 0 {
 		return e.opts.Toolchains[0], "", true
 	}
 	return ToolchainConfig{}, "", false
+}
+
+// toolchainLanguageMentioned reports whether lang appears as an intentional stack
+// mention in haystack. Short tokens such as "go" must not match substrings inside
+// unrelated words (e.g. "configuration").
+func toolchainLanguageMentioned(haystack, lang string) bool {
+	if lang == "" {
+		return false
+	}
+	if strings.Contains(lang, ".") || len(lang) > 3 {
+		return strings.Contains(haystack, lang)
+	}
+	// Word-boundary match for short language aliases.
+	for i := 0; i <= len(haystack)-len(lang); i++ {
+		if haystack[i:i+len(lang)] != lang {
+			continue
+		}
+		beforeOK := i == 0 || !isLangTokenChar(haystack[i-1])
+		after := i + len(lang)
+		afterOK := after == len(haystack) || !isLangTokenChar(haystack[after])
+		if beforeOK && afterOK {
+			return true
+		}
+	}
+	return false
+}
+
+func isLangTokenChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_' || b == '.'
 }
 
 // writeArtifactToWorkspace persists a code or config artifact to the
@@ -3025,6 +2985,9 @@ func (e *Engine) transition(ctx context.Context, ws *state.WorkflowState, to sta
 	case state.WorkflowStatusRunning:
 		now := time.Now().UTC()
 		ws.StartedAt = &now
+		if from == state.WorkflowStatusFailed || from == state.WorkflowStatusPending {
+			ws.ErrorMessage = ""
+		}
 	case state.WorkflowStatusCompleted, state.WorkflowStatusFailed, state.WorkflowStatusCancelled:
 		now := time.Now().UTC()
 		ws.CompletedAt = &now

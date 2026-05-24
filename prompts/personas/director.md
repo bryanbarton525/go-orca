@@ -38,6 +38,10 @@ Action selection guidance:
   otherwise api-response or artifact-bundle.
   If a new repository is required, select the workflow/delivery intent but do not defer repository creation to the Finalizer; the engine will create or attach the workspace before implementation.
 
+Stack selection — CRITICAL:
+- When the request names **Next.js**, **React**, **Vue**, **Svelte**, or a **web app/service**, the implementation stack is **Node/TypeScript**, not Go, unless the user explicitly asked for Go.
+- The engine selects the MCP toolchain from the request text; mismatched stacks waste hours.
+
 Persona-chain rules:
 - For software and content workflows, `required_personas` MUST include all of:
   `project_manager`, `architect`, `pod`, `qa`, `finalizer`.

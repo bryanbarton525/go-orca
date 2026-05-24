@@ -221,6 +221,9 @@ func main() {
 	eng := engine.New(store, engine.Options{
 		MaxQARetries:                  qaRetries,
 		MaxImplementationRetries:      implRetries,
+		MaxConcurrentTasks:            cfg.Workflow.MaxConcurrentTasks,
+		MaxArchitectTasks:             cfg.Workflow.MaxArchitectTasks,
+		MinimalCheckpoints:            cfg.Workflow.MinimalCheckpoints,
 		DefaultProvider:               resolveDefaultProvider(cfg),
 		DefaultModel:                  resolveDefaultModel(cfg),
 		ProviderDefaults:              buildProviderDefaults(cfg),

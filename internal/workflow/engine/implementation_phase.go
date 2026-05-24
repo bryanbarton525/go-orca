@@ -127,7 +127,7 @@ func (e *Engine) runImplementationValidationLoop(
 			return fmt.Errorf("%s planning (cycle %d): %w", opts.remediationSource, cycle, err)
 		}
 		planPhase := fmt.Sprintf("%s-plan-%d", opts.phasePrefix, cycle)
-		if err := e.runToolchainCheckpoint(ctx, ws, planPhase); err != nil {
+		if err := e.runToolchainCheckpointUnlessMinimal(ctx, ws, planPhase); err != nil {
 			return fmt.Errorf("%s plan checkpoint (cycle %d): %w", opts.remediationSource, cycle, err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
@@ -141,7 +141,7 @@ func (e *Engine) runImplementationValidationLoop(
 		if err := e.ensureToolchainBootstrap(ctx, ws, bootstrapPhase); err != nil {
 			return fmt.Errorf("%s bootstrap (cycle %d): %w", opts.remediationSource, cycle, err)
 		}
-		if err := e.runToolchainCheckpoint(ctx, ws, bootstrapPhase); err != nil {
+		if err := e.runToolchainCheckpointUnlessMinimal(ctx, ws, bootstrapPhase); err != nil {
 			return fmt.Errorf("%s bootstrap checkpoint (cycle %d): %w", opts.remediationSource, cycle, err)
 		}
 		if err := e.runPodPhase(ctx, ws, snap); err != nil {

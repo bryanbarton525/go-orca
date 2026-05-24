@@ -66,6 +66,9 @@ func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 	if packet.IsRemediation {
 		instruction = "Act as the user's pragmatic matriarch during remediation. Review the QA blockers, the current review thread, and the Architect's direction; question weak remediation decisions, suggest safer defaults, and escalate any missing context that blocks a sound fix."
 	}
+	if isPodManagerPass(packet) {
+		instruction = "Act as the user's always-on pod manager. You are supervising active pod execution right now. Review the current task subset, prior review thread, and latest validation context. Provide concrete execution guidance and safety checks for pod members. Set blocked=true only for hard prerequisites that must stop pod execution."
+	}
 	userPrompt := fmt.Sprintf(
 		"%s\n\n%s",
 		handoffCtx, instruction,
@@ -104,4 +107,14 @@ func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 		MatriarchQuestions:     out.Questions,
 		CompletedAt:            base.Timestamp(),
 	}, nil
+}
+
+func isPodManagerPass(packet state.HandoffPacket) bool {
+	for i := len(packet.AllSuggestions) - 1; i >= 0; i-- {
+		msg := strings.TrimSpace(packet.AllSuggestions[i])
+		if strings.HasPrefix(msg, "[pod-manager-pass]") {
+			return true
+		}
+	}
+	return false
 }

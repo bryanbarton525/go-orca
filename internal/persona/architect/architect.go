@@ -110,10 +110,11 @@ func (a *Architect) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 		return nil, fmt.Errorf("architect: execution error: %w", err)
 	}
 
-	var out archOutput
-	if err := base.ParseJSON(raw, &out); err != nil {
+	out, err := parseArchitectOutput(raw, packet.IsRemediation)
+	if err != nil {
 		return nil, fmt.Errorf("architect: parse error: %w", err)
 	}
+	normalizeDesignComponents(&out.Design)
 
 	now := base.Timestamp()
 	tasks := make([]state.Task, 0, len(out.Tasks))
