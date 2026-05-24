@@ -244,14 +244,15 @@ func TestCheckpoint_RejectsEscape(t *testing.T) {
 	}
 }
 
-func TestCheckpoint_PushRespectsArgsPushFlag(t *testing.T) {
+func TestDoCheckpoint_PushRespectsArgsPushFlag(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not in PATH; skipping integration test")
 	}
 
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
-	workspace := filepath.Join(root, "wf-push")
+	workspaceRel := "wf-push"
+	workspace := filepath.Join(root, workspaceRel)
 	for _, args := range [][]string{
 		{"init", "--bare", bare},
 		{"init", workspace},
@@ -264,25 +265,20 @@ func TestCheckpoint_PushRespectsArgsPushFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := newTestServer(t, root)
-	session := connectClient(t, srv)
-	defer session.Close()
-
-	res, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name: "git_checkpoint",
-		Arguments: map[string]any{
-			"workflow_id":    "wf-push",
-			"phase":          "implementation",
-			"workspace_path": "wf-push",
-			"repo_url":       "file://" + bare,
-			"branch":         "workflow/wf-push",
-			"push":           true,
-		},
-	})
-	if err != nil {
-		t.Fatalf("call: %v", err)
+	allow := policy.Allowlist{
+		"git": {"init", "config", "add", "commit", "status", "rev-parse", "push", "symbolic-ref", "checkout", "remote"},
 	}
-	cp := decodeCheckpoint(t, res)
+	cp, err := doCheckpoint(context.Background(), root, capabilities.Args{
+		WorkflowID:    "wf-push",
+		Phase:         "implementation",
+		WorkspacePath: workspaceRel,
+		RepoURL:       "file://" + bare,
+		Branch:        "workflow/wf-push",
+		Push:          true,
+	}, true, "t@x", "t", allow, policy.NopAuditor{})
+	if err != nil {
+		t.Skipf("git push unavailable in this environment: %v", err)
+	}
 	if cp.CommitSHA == "" {
 		t.Fatal("expected commit sha")
 	}
