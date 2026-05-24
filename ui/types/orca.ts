@@ -14,6 +14,7 @@ export type WorkflowMode =
   | "research"
   | "ops"
   | "mixed"
+  | "auto"
   | (string & {});
 
 export type ScopeKind = "global" | "org" | "team" | (string & {});
@@ -158,6 +159,45 @@ export interface WorkflowExecution {
   toolchain?: ToolchainSelection | null;
   validation_runs?: ValidationRun[];
   checkpoints?: Checkpoint[];
+  planning?: WorkflowPlanningState | null;
+  auto_mode?: WorkflowAutoModeState | null;
+}
+
+export interface WorkflowPlanningState {
+  mode?: string;
+  prompt?: string;
+  plan?: string;
+  summary?: string;
+  decisions?: string[];
+  questions?: string[];
+  updated_at?: string;
+}
+
+export interface WorkflowAutoDefinition {
+  id: string;
+  name?: string;
+  summary?: string;
+  pod_specialties?: string[];
+  workflow_hints?: string[];
+  prompt?: string;
+  source?: string;
+}
+
+export interface WorkflowAutoDefinitionAttempt {
+  attempt?: number;
+  definition_id?: string;
+  succeeded?: boolean;
+  notes?: string;
+  occurred_at?: string;
+}
+
+export interface WorkflowAutoModeState {
+  enabled?: boolean;
+  max_attempts?: number;
+  definition_attempts?: number;
+  active_definition?: WorkflowAutoDefinition | null;
+  promoted_definition?: WorkflowAutoDefinition | null;
+  attempts?: WorkflowAutoDefinitionAttempt[];
 }
 
 export interface WorkflowState {
@@ -320,6 +360,15 @@ export interface CreateWorkflowRequest {
   provider?: string;
   model?: string;
   upload_session_id?: string;
+  auto_mode?: boolean;
+  planning?: {
+    mode?: string;
+    prompt?: string;
+    plan?: string;
+    summary?: string;
+    decisions?: string[];
+    questions?: string[];
+  };
   delivery?: {
     action?: string;
     config?: Record<string, unknown>;

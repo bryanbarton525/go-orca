@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Boxes, Cable, ChevronRight, House, Plug, ShieldEllipsis } from "lucide-react";
+import { Activity, Boxes, Cable, ChevronRight, House, Plug, ShieldEllipsis, WandSparkles } from "lucide-react";
 import { LogoutButton } from "./logout-button";
 import { ThemeToggle } from "./theme-toggle";
 import { Surface, textFieldClassName } from "./ui";
@@ -12,6 +12,7 @@ import { useOrcaWorkspace } from "./orca-workspace-provider";
 const navigation = [
   { href: "/overview", label: "Overview", icon: House },
   { href: "/workflows", label: "Workflows", icon: Cable },
+  { href: "/builder", label: "Builder", icon: WandSparkles },
   { href: "/providers", label: "Providers", icon: Boxes },
   { href: "/administration", label: "Admin", icon: ShieldEllipsis },
   { href: "/mcp", label: "MCP", icon: Plug },
@@ -147,7 +148,7 @@ export function AppShell({ children, userName }: { children: React.ReactNode; us
           <main>{children}</main>
 
           <Surface className="fixed inset-x-4 bottom-4 z-20 p-2 lg:hidden">
-            <nav className="grid grid-cols-5 gap-2">
+            <nav className="grid grid-cols-6 gap-2">
               {navigation.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.href;

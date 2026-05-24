@@ -271,6 +271,12 @@ type WorkflowConfig struct {
 	// run failed.  Default false; opt in to make toolchain validation a hard
 	// requirement for workflow completion.
 	EnforceValidationGate bool `mapstructure:"enforce_validation_gate"`
+	// EnableBuilderMode allows Builder planning state flows.
+	EnableBuilderMode bool `mapstructure:"enable_builder_mode"`
+	// EnableAutoMode allows auto-mode dynamic definition orchestration.
+	EnableAutoMode bool `mapstructure:"enable_auto_mode"`
+	// AutoModeMaxDefinitionAttempts caps generated definition variations.
+	AutoModeMaxDefinitionAttempts int `mapstructure:"auto_mode_max_definition_attempts"`
 
 	// Ingestion controls the pre-Director attachment processing stage.
 	Ingestion IngestionConfig `mapstructure:"ingestion"`
@@ -425,6 +431,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.run_until_success", false)
 	v.SetDefault("workflow.scheduler_retry_delay", 5*time.Second)
 	v.SetDefault("workflow.scheduler_max_retries", 0)
+	v.SetDefault("workflow.enable_builder_mode", true)
+	v.SetDefault("workflow.enable_auto_mode", true)
+	v.SetDefault("workflow.auto_mode_max_definition_attempts", 5)
 
 	// Attachment ingestion defaults
 	v.SetDefault("workflow.ingestion.max_workers", 4)
@@ -461,6 +470,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Workflow.SchedulerMaxRetries < -1 {
 		return fmt.Errorf("workflow: scheduler_max_retries must be >= -1")
+	}
+	if cfg.Workflow.AutoModeMaxDefinitionAttempts < 1 {
+		return fmt.Errorf("workflow: auto_mode_max_definition_attempts must be >= 1")
 	}
 	return nil
 }
