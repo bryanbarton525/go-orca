@@ -26,7 +26,7 @@ type Options struct {
 	RetryDelay time.Duration
 
 	// MaxRetries is the maximum number of automatic retries for a failed
-	// workflow.  Defaults to 0 (no retries).
+	// workflow.  Defaults to 0 (no retries). Set to -1 for unlimited retries.
 	MaxRetries int
 }
 
@@ -166,7 +166,7 @@ func (s *Scheduler) runJob(ctx context.Context, j job, log *zap.Logger) {
 		}
 		log.Error("scheduler: workflow failed", zap.Error(err))
 
-		if j.attempt < s.opts.MaxRetries {
+		if s.opts.MaxRetries < 0 || j.attempt < s.opts.MaxRetries {
 			next := job{workflowID: j.workflowID, attempt: j.attempt + 1}
 			go func() {
 				if s.opts.RetryDelay > 0 {

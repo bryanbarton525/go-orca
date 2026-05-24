@@ -208,9 +208,14 @@ func main() {
 		ScopeSlug:  "",  // applies to all scopes
 	})
 
+	qaRetries := cfg.Workflow.MaxQARetries
+	if cfg.Workflow.RunUntilSuccess && qaRetries >= 0 {
+		qaRetries = -1 // unbounded remediation loop
+	}
+
 	// Build the engine first (dispatcher is nil until after the scheduler exists).
 	eng := engine.New(store, engine.Options{
-		MaxQARetries:          cfg.Workflow.MaxQARetries,
+		MaxQARetries:          qaRetries,
 		DefaultProvider:       resolveDefaultProvider(cfg),
 		DefaultModel:          resolveDefaultModel(cfg),
 		ProviderDefaults:      buildProviderDefaults(cfg),
@@ -235,11 +240,16 @@ func main() {
 		IngestionChunkSize:    cfg.Workflow.Ingestion.ChunkSize,
 	})
 
+	schedulerMaxRetries := cfg.Workflow.SchedulerMaxRetries
+	if cfg.Workflow.RunUntilSuccess {
+		schedulerMaxRetries = -1
+	}
+
 	// Build the scheduler with the real engine.
 	sched := scheduler.New(eng, scheduler.Options{
 		Concurrency: cfg.Workflow.MaxConcurrentWorkflows,
-		RetryDelay:  5 * time.Second,
-		MaxRetries:  0,
+		RetryDelay:  cfg.Workflow.SchedulerRetryDelay,
+		MaxRetries:  schedulerMaxRetries,
 	}, log)
 
 	if recovered, err := reconcileInterruptedWorkflows(ctx, store, sched, log); err != nil {

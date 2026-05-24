@@ -232,6 +232,10 @@ Workflow engine and scheduler settings.
 | `workflow.event_retention_days` | integer | `90` | How long to keep journal events in the database |
 | `workflow.artifact_storage_path` | string | `"./artifacts"` | On-disk path for artifact files |
 | `workflow.handoff_timeout` | duration | `"5m"` | Per-persona handoff timeout (overrides `default_persona_timeout_ms` when set) |
+| `workflow.max_qa_retries` | integer | `2` | Max QA remediation cycles (`-1` = unlimited) |
+| `workflow.run_until_success` | bool | `false` | Enables continuous retries until completion/cancel |
+| `workflow.scheduler_retry_delay` | duration | `"5s"` | Delay between scheduler retry attempts |
+| `workflow.scheduler_max_retries` | integer | `0` | Scheduler retries for failed runs (`-1` = unlimited) |
 
 ---
 
@@ -241,6 +245,8 @@ The following rules are enforced at startup; violation is a fatal error:
 
 1. `database.driver` must be `sqlite` or `postgres`
 2. `scoping.allow_team: true` requires `scoping.allow_org: true`
+3. `workflow.max_qa_retries` must be `>= -1`
+4. `workflow.scheduler_max_retries` must be `>= -1`
 
 ---
 
@@ -315,4 +321,8 @@ workflow:
   event_retention_days: 90
   artifact_storage_path: "./artifacts"
   handoff_timeout: "5m"
+  max_qa_retries: 2
+  run_until_success: false
+  scheduler_retry_delay: "5s"
+  scheduler_max_retries: 0
 ```

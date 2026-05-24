@@ -545,7 +545,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	//   4. QA runs again.  Repeats up to MaxQARetries times.
 	if personaRequired(state.PersonaQA) {
 		if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
-			for qaCycle := 1; qaCycle <= e.opts.MaxQARetries+1; qaCycle++ {
+			for qaCycle := 1; ; qaCycle++ {
 				// Update visible progress before QA runs.
 				ws.Execution.CurrentPersona = state.PersonaQA
 				ws.Execution.QACycle = qaCycle
@@ -561,7 +561,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					break // QA passed
 				}
 
-				if qaCycle > e.opts.MaxQARetries {
+				if e.opts.MaxQARetries >= 0 && qaCycle > e.opts.MaxQARetries {
 					// QA or validation remediation retries exhausted — emit the
 					// exhaustion event and fail before Finalizer. This keeps
 					// validation failures inside the remediation loop instead of

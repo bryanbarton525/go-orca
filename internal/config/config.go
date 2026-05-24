@@ -254,7 +254,17 @@ type WorkflowConfig struct {
 	PersonaRetryBackoff time.Duration `mapstructure:"persona_retry_backoff"`
 	// MaxQARetries is the maximum number of times the Pod will be
 	// re-run after QA returns blocking issues.  Defaults to 2.
+	// Set to -1 for unlimited remediation loops.
 	MaxQARetries int `mapstructure:"max_qa_retries"`
+	// RunUntilSuccess enables continuous retries for failed workflows. When set,
+	// the scheduler retries indefinitely and QA remediation loops are unbounded
+	// (unless max_qa_retries is explicitly set to another value at runtime).
+	RunUntilSuccess bool `mapstructure:"run_until_success"`
+	// SchedulerRetryDelay is the wait between automatic scheduler retries.
+	SchedulerRetryDelay time.Duration `mapstructure:"scheduler_retry_delay"`
+	// SchedulerMaxRetries controls scheduler retries for failed workflows.
+	// Use -1 for unlimited retries.
+	SchedulerMaxRetries int `mapstructure:"scheduler_max_retries"`
 
 	// EnforceValidationGate prevents software/mixed/ops workflows from
 	// running the Finalizer phase when the most recent toolchain validation
@@ -412,6 +422,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.persona_max_retries", 3)
 	v.SetDefault("workflow.persona_retry_backoff", 10*time.Second)
 	v.SetDefault("workflow.max_qa_retries", 2)
+	v.SetDefault("workflow.run_until_success", false)
+	v.SetDefault("workflow.scheduler_retry_delay", 5*time.Second)
+	v.SetDefault("workflow.scheduler_max_retries", 0)
 
 	// Attachment ingestion defaults
 	v.SetDefault("workflow.ingestion.max_workers", 4)
@@ -442,6 +455,12 @@ func validate(cfg *Config) error {
 		if strings.TrimSpace(cfg.Streaming.UserIDHeader) == "" {
 			return fmt.Errorf("streaming: user_id_header must not be empty when enabled")
 		}
+	}
+	if cfg.Workflow.MaxQARetries < -1 {
+		return fmt.Errorf("workflow: max_qa_retries must be >= -1")
+	}
+	if cfg.Workflow.SchedulerMaxRetries < -1 {
+		return fmt.Errorf("workflow: scheduler_max_retries must be >= -1")
 	}
 	return nil
 }
