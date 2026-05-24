@@ -44,6 +44,19 @@ scoping:
   default_tenant: "default"
   default_scope: "global"
 
+streaming:
+  enabled: false
+  brokers:
+    - "redpanda.redpanda.svc.cluster.local:9092"
+  topic: "orca.events"
+  client_id: "go-orca-api"
+  produce_timeout: "5s"
+  required_acks: "all"
+  user_id_header: "X-User-Id"
+  readiness_probe_interval: "10s"
+  readiness_ping_timeout: "2s"
+  consumer_group: "go-orca-workflow-stream"
+
 # ─── Providers ────────────────────────────────────────────────────────────────
 providers:
   openai:

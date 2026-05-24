@@ -20,7 +20,10 @@ info:
     ## SSE Streaming
     `GET /workflows/{id}/stream` returns a `text/event-stream` response.
     Set `proxy_buffering off` in your reverse proxy to receive events in
-    real time.
+    real time. When Redpanda is enabled (`streaming.enabled`), live events
+    are delivered from the workflow topic via an in-process hub after a
+    database snapshot; use query `source=auto|redpanda|database` and
+    `GET /streaming` for capabilities. See docs/streaming.md.
   version: "0.1.0"
   license:
     name: MIT
@@ -42,6 +45,8 @@ tags:
     description: Tenant and scope management
   - name: customizations
     description: Customization resolution
+  - name: streaming-events
+    description: Edge-authenticated event ingestion
 
 # ─── Common parameters ────────────────────────────────────────────────────────
 components:
@@ -67,6 +72,16 @@ components:
       description: >
         Scope context for the request. Falls back to the server default
         scope when omitted.
+
+    UserID:
+      name: X-User-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      description: >
+        Mesh-injected user identity header derived from a validated JWT `sub`
+        claim. Clients should not set this directly.
 
     WorkflowID:
       name: id
@@ -1181,6 +1196,51 @@ paths:
                 status: unavailable
                 error: "dial tcp: connection refused"
 
+  /api/v1/events:
+    post:
+      summary: Ingest an event (async)
+      description: >
+        Accepts an event payload and enqueues it asynchronously to the
+        configured Redpanda/Kafka topic using the JWT-derived user identity as
+        the message key.
+
+        Requests require the mesh-injected `X-User-Id` header.
+      operationId: ingestEvent
+      tags:
+        - streaming-events
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Event accepted for asynchronous delivery.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "503":
+          description: Producer unavailable or unable to enqueue event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # ── Workflows ───────────────────────────────────────────────────────────────
 
   /api/v1/workflows:
@@ -1341,13 +1401,17 @@ paths:
       summary: Stream workflow events (SSE)
       description: |
         Opens a Server-Sent Events stream that delivers workflow events in
-        real time. The stream:
+        real time.
 
-        - Polls the event journal every second
-        - Sends new events as `data: <json>` lines
-        - Sends `: keepalive` comments periodically to prevent proxy timeouts
-        - Closes automatically when the workflow reaches a terminal state
-          (`completed`, `failed`, `cancelled`) or the timeout elapses
+        When Redpanda streaming is enabled, the handler sends an initial
+        journal snapshot from the database, then fans out live events from the
+        workflow topic via an in-process hub (`X-Stream-Transport: redpanda`).
+        Otherwise it polls the event journal every second
+        (`X-Stream-Transport: database`).
+
+        In both modes the stream sends new events as `data: <json>` lines,
+        `: keepalive` comments to prevent proxy timeouts, and closes when the
+        workflow reaches a terminal state or the timeout elapses.
 
         **Reverse proxy configuration:** Set `proxy_buffering off` (nginx) or
         equivalent to receive events without buffering delay.
@@ -1365,9 +1429,25 @@ paths:
             default: 300
             minimum: 1
           description: Maximum stream duration in seconds.
+        - name: source
+          in: query
+          schema:
+            type: string
+            enum: [auto, redpanda, database]
+            default: auto
+          description: |
+            Transport selection. `auto` uses Redpanda when streaming is enabled,
+            otherwise database polling. `database` forces polling; `redpanda`
+            requires a configured hub.
       responses:
         "200":
           description: SSE event stream.
+          headers:
+            X-Stream-Transport:
+              schema:
+                type: string
+                enum: [redpanda, database]
+              description: Active delivery transport for this connection.
           content:
             text/event-stream:
               schema:
@@ -1382,6 +1462,32 @@ paths:
                 data: {"type":"persona.completed","persona":"director","payload":{"duration_ms":3200,"summary":"..."}}
         "404":
           $ref: '#/components/responses/NotFound'
+
+  /api/v1/streaming:
+    get:
+      summary: Streaming capabilities
+      description: |
+        Returns whether workflow live streams can use Redpanda and which
+        transport `source=auto` selects in the UI.
+      operationId: getStreamingCapabilities
+      tags:
+        - workflows
+      responses:
+        "200":
+          description: Streaming capability metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, workflow_stream]
+                properties:
+                  enabled:
+                    type: boolean
+                  workflow_stream:
+                    type: string
+                    enum: [database, redpanda]
+                  workflow_topic:
+                    type: string
 
   /api/v1/workflows/{id}/cancel:
     post:

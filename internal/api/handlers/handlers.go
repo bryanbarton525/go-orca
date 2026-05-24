@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -66,6 +67,11 @@ func checkWorkflowOwnership(c *gin.Context, store storage.Store) (*state.Workflo
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 
+// ReadinessProbe allows optional subsystem readiness checks.
+type ReadinessProbe interface {
+	Ready(context.Context) error
+}
+
 // Healthz returns 200 OK unconditionally (liveness probe).
 func Healthz() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -74,7 +80,7 @@ func Healthz() gin.HandlerFunc {
 }
 
 // Readyz checks the store connection and all registered providers (readiness probe).
-func Readyz(store storage.Store) gin.HandlerFunc {
+func Readyz(store storage.Store, probes ...ReadinessProbe) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := store.Ping(c.Request.Context()); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
@@ -86,6 +92,18 @@ func Readyz(store storage.Store) gin.HandlerFunc {
 					"status":   "not ready",
 					"provider": p.Name(),
 					"error":    err.Error(),
+				})
+				return
+			}
+		}
+		for _, probe := range probes {
+			if probe == nil {
+				continue
+			}
+			if err := probe.Ready(c.Request.Context()); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"status": "not ready",
+					"error":  err.Error(),
 				})
 				return
 			}
@@ -642,139 +660,6 @@ func isHierarchyError(err error) bool {
 	}
 	msg := err.Error()
 	return len(msg) > 6 && msg[:6] == "scope:"
-}
-
-// ─── SSE streaming ────────────────────────────────────────────────────────────
-
-// StreamWorkflowEvents handles GET /workflows/:id/stream.
-//
-// It streams workflow events to the client as Server-Sent Events (SSE).
-// The handler polls the event store on a 1-second ticker, sending only events
-// that occurred after the last one delivered.  The stream closes automatically
-// when:
-//   - the workflow reaches a terminal state (completed, failed, cancelled), or
-//   - the client disconnects, or
-//   - the optional ?timeout query parameter (seconds) expires (default 300s).
-//
-// Each SSE event has the form:
-//
-//	data: <json-encoded events.Event>\n\n
-//
-// A special keepalive comment ": keepalive\n\n" is sent every tick if no new
-// events were available, to prevent proxy timeouts.
-//
-// The server-level write_timeout is disabled for SSE connections immediately
-// after the response headers are written.  The handler's own ?timeout
-// parameter is the authoritative deadline for live streams.
-func StreamWorkflowEvents(store storage.Store) gin.HandlerFunc {
-	const defaultTimeoutSec = 300
-	const pollInterval = time.Second
-
-	return func(c *gin.Context) {
-		id := c.Param("id")
-
-		// Verify the workflow exists and belongs to this tenant before opening the stream.
-		ws, ok := checkWorkflowOwnership(c, store)
-		if !ok {
-			return
-		}
-
-		// Parse optional timeout query parameter.
-		timeoutSec := defaultTimeoutSec
-		if raw := c.Query("timeout"); raw != "" {
-			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-				timeoutSec = v
-			}
-		}
-
-		// If the workflow is already in a terminal state, return snapshot events
-		// synchronously (no streaming needed).
-		terminal := func(s state.WorkflowStatus) bool {
-			return s == state.WorkflowStatusCompleted ||
-				s == state.WorkflowStatusFailed ||
-				s == state.WorkflowStatusCancelled
-		}
-		if terminal(ws.Status) {
-			evts, err := store.ListEvents(c.Request.Context(), id)
-			if err != nil {
-				respondError(c, http.StatusInternalServerError, "failed to list events")
-				return
-			}
-			c.Header("Content-Type", "text/event-stream")
-			c.Header("Cache-Control", "no-cache")
-			c.Header("Connection", "keep-alive")
-			for _, evt := range evts {
-				writeSSEEvent(c, evt)
-			}
-			writeSSEData(c, `{"type":"stream.closed","reason":"workflow_terminal"}`)
-			return
-		}
-
-		// Set SSE headers.
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no") // disable nginx buffering
-
-		// Disable the server write deadline for this connection.  The
-		// http.Server.WriteTimeout fires from the first response byte, so a
-		// short timeout (e.g. 120s default for local-dev) would kill long-
-		// running streams even while keepalives are flowing.  We manage our
-		// own deadline via the ?timeout parameter below.
-		//
-		// SetWriteDeadline is a no-op on ResponseWriters that don't support
-		// it; we log but never fail on that condition.
-		rc := http.NewResponseController(c.Writer)
-		_ = rc.SetWriteDeadline(time.Time{}) // zero time = no deadline
-
-		ctx := c.Request.Context()
-		deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-
-		var lastEventTime time.Time // track cursor
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case now := <-ticker.C:
-				if now.After(deadline) {
-					writeSSEData(c, `{"type":"stream.closed","reason":"timeout"}`)
-					return
-				}
-
-				evts, err := store.ListEvents(ctx, id)
-				if err != nil {
-					continue // transient error — keep polling
-				}
-
-				newCount := 0
-				for _, evt := range evts {
-					if evt.OccurredAt.After(lastEventTime) {
-						writeSSEEvent(c, evt)
-						lastEventTime = evt.OccurredAt
-						newCount++
-					}
-				}
-
-				if newCount == 0 {
-					// Send keepalive to prevent proxy timeouts.
-					if _, err := c.Writer.WriteString(": keepalive\n\n"); err != nil {
-						return
-					}
-					c.Writer.Flush()
-				}
-
-				// Refresh workflow status to detect terminal state.
-				current, err := store.GetWorkflow(ctx, id)
-				if err == nil && terminal(current.Status) {
-					writeSSEData(c, `{"type":"stream.closed","reason":"workflow_terminal"}`)
-					return
-				}
-			}
-		}
-	}
 }
 
 // writeSSEEvent serialises a single events.Event as an SSE data line.

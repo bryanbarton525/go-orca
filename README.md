@@ -31,7 +31,7 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **Role contract enforcement** — engine discards and warns on any output that violates persona ownership rules (Artifacts from non-Implementer, Tasks from non-Architect, etc.)
 - **Seven delivery actions** — GitHub PR, direct repo commit, artifact bundle, markdown export, blog draft, doc draft, webhook dispatch; caller-provided `delivery.action` overrides LLM choice
 - **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE; repeated `current_persona` values across polls are normal while a persona call is still running
-- **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.)
+- **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.); optional [Redpanda-backed live transport](docs/streaming.md) for the Workflow Studio
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
 - **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), GitHub Copilot
 - **Per-persona model routing** — the Director selects both a workflow-level model and an optional per-persona override for every downstream phase; the engine validates all selections against a live catalog snapshot, normalizes either `model` or `provider/model` override forms, and silently falls back to the configured default for excluded or unavailable models; override `model` on `POST /workflows` to pin a specific model
@@ -116,6 +116,7 @@ curl -N http://localhost:8080/workflows/<id>/stream \
 | Document | Description |
 |---|---|
 | [Architecture](docs/architecture.md) | System overview, component map, trust boundaries, data flow |
+| [Event Streaming](docs/streaming.md) | Redpanda workflow journal, SSE transports, edge ingest, UI and config |
 | [Workflow Engine](docs/workflow-engine.md) | Persona pipeline, model routing, QA remediation loop, role enforcement, execution progress, pause/resume |
 | [API Reference](docs/api.md) | All HTTP endpoints, request/response schemas, headers, event types |
 | [Configuration](docs/configuration.md) | Every config key, default, env var override |

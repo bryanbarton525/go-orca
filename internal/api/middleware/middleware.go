@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,28 @@ func ScopeFromHeader(defaultScopeID string) gin.HandlerFunc {
 			scopeID = defaultScopeID
 		}
 		c.Set("scope_id", scopeID)
+		c.Next()
+	}
+}
+
+// RequireMeshUserID ensures Istio injected a user identity header.
+//
+// Go canonicalizes incoming headers (x-user-id -> X-User-Id), and GetHeader is
+// case-insensitive, so we always read through Gin instead of raw map lookups.
+func RequireMeshUserID(headerName string) gin.HandlerFunc {
+	hdr := strings.TrimSpace(headerName)
+	if hdr == "" {
+		hdr = "X-User-Id"
+	}
+	return func(c *gin.Context) {
+		userID := strings.TrimSpace(c.GetHeader(hdr))
+		if userID == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "missing required user identity header",
+			})
+			return
+		}
+		c.Set("mesh_user_id", userID)
 		c.Next()
 	}
 }

@@ -197,6 +197,29 @@ See [Customization](customization.md) for a full description of how sources are 
 
 ---
 
+## streaming
+
+Optional Redpanda/Kafka integration for workflow journal fan-out and edge event ingest. See [Event Streaming](streaming.md) for architecture diagrams and UI behaviour.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `streaming.enabled` | bool | `false` | Enable producer, consumer, hub, ingest, and `/metrics` streaming counters |
+| `streaming.brokers` | []string | `["redpanda.redpanda.svc.cluster.local:9092"]` | Broker addresses |
+| `streaming.topic` | string | `"orca.events"` | Topic for journal mirrors and edge ingest |
+| `streaming.client_id` | string | `"go-orca-api"` | Kafka client id |
+| `streaming.produce_timeout` | duration | `"5s"` | Record delivery timeout |
+| `streaming.required_acks` | string | `"all"` | Producer acks: `all` \| `leader` \| `none` |
+| `streaming.user_id_header` | string | `"X-User-Id"` | Header read by ingest middleware (Gin is case-insensitive) |
+| `streaming.readiness_probe_interval` | duration | `"10s"` | Interval for background broker ping |
+| `streaming.readiness_ping_timeout` | duration | `"2s"` | Timeout for a single ping |
+| `streaming.consumer_group` | string | `"go-orca-workflow-stream"` | Consumer group for SSE hub fan-out |
+
+Environment examples: `GOORCA_STREAMING_ENABLED=true`, `GOORCA_STREAMING_TOPIC=orca.events`.
+
+When `enabled` is true, `brokers`, `topic`, and `user_id_header` must be non-empty or startup fails.
+
+---
+
 ## workflow
 
 Workflow engine and scheduler settings.
@@ -253,6 +276,13 @@ scoping:
   require_team_parent_org: true
   default_tenant: "default"
   default_scope: "global"
+
+streaming:
+  enabled: false
+  brokers:
+    - "redpanda.redpanda.svc.cluster.local:9092"
+  topic: "orca.events"
+  consumer_group: "go-orca-workflow-stream"
 
 providers:
   openai:

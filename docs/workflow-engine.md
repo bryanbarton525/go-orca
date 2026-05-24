@@ -181,7 +181,7 @@ type Execution struct {
 }
 ```
 
-Poll `GET /workflows/:id` to read in-flight progress without subscribing to the SSE stream.
+Poll `GET /workflows/:id` to read in-flight progress without subscribing to the SSE stream. For Redpanda-backed live delivery and transport selection, see [Event Streaming](streaming.md).
 
 `CurrentPersona` is persisted before the persona call begins and remains unchanged until that call completes. Polling the workflow endpoint multiple times during a long-running persona invocation therefore returns the same persona name repeatedly; this reflects a single in-flight execution, not duplicated runs.
 

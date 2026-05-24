@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"github.com/go-orca/go-orca/internal/api/routes"
@@ -43,6 +44,7 @@ import (
 	"github.com/go-orca/go-orca/internal/storage"
 	pgStore "github.com/go-orca/go-orca/internal/storage/postgres"
 	sqStore "github.com/go-orca/go-orca/internal/storage/sqlite"
+	"github.com/go-orca/go-orca/internal/streaming"
 	"github.com/go-orca/go-orca/internal/tenant"
 	"github.com/go-orca/go-orca/internal/tools"
 	"github.com/go-orca/go-orca/internal/tools/builtin"
@@ -86,6 +88,46 @@ func main() {
 		log.Fatal("storage init failed", zap.Error(err))
 	}
 	defer store.Close() //nolint:errcheck
+
+	var (
+		streamProducer   *streaming.Producer
+		streamReadiness  *streaming.BrokerReadiness
+		streamMetrics    *streaming.Metrics
+		streamHub        *streaming.Hub
+		streamConsumer   *streaming.Consumer
+		consumerCancel   context.CancelFunc
+		streamingEnabled = cfg.Streaming.Enabled
+	)
+
+	if streamingEnabled {
+		streamMetrics = streaming.NewMetrics(nil)
+		streamProducer, err = streaming.NewProducer(cfg.Streaming, log, streamMetrics)
+		if err != nil {
+			log.Fatal("streaming producer init failed", zap.Error(err))
+		}
+		streamReadiness = streaming.NewBrokerReadiness(
+			streamProducer,
+			cfg.Streaming.ReadinessProbeInterval,
+			cfg.Streaming.ReadinessPingTimeout,
+		)
+		streamReadiness.Start()
+
+		streamHub = streaming.NewHub()
+		streamConsumer, err = streaming.NewConsumer(cfg.Streaming, streamHub, log)
+		if err != nil {
+			log.Fatal("streaming consumer init failed", zap.Error(err))
+		}
+		consumerCtx, cancel := context.WithCancel(context.Background())
+		consumerCancel = cancel
+		go streamConsumer.Run(consumerCtx)
+
+		store = storage.WithWorkflowEventPublisher(store, streamProducer)
+		log.Info("streaming enabled",
+			zap.String("topic", cfg.Streaming.Topic),
+			zap.Strings("brokers", cfg.Streaming.Brokers),
+			zap.String("workflow_stream", "redpanda"),
+		)
+	}
 
 	if err := store.Ping(ctx); err != nil {
 		log.Fatal("storage ping failed", zap.Error(err))
@@ -222,6 +264,14 @@ func main() {
 		MCPRegistry:           mcpReg,
 		IngestionCfg:          cfg.Workflow.Ingestion,
 		ArtifactStoragePath:   cfg.Workflow.ArtifactStoragePath,
+		StreamingEnabled:      streamingEnabled,
+		StreamingUserIDHeader: cfg.Streaming.UserIDHeader,
+		StreamingProducer:     streamProducer,
+		StreamingMetrics:      streamMetrics,
+		StreamingReadiness:    streamReadiness,
+		StreamingHub:          streamHub,
+		StreamingTopic:        cfg.Streaming.Topic,
+		MetricsHandler:        promhttp.Handler(),
 		GinMode:               cfg.Server.Mode,
 	})
 
@@ -244,6 +294,21 @@ func main() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer cancel()
 
+		if consumerCancel != nil {
+			consumerCancel()
+		}
+		if streamConsumer != nil {
+			streamConsumer.Close()
+		}
+		if streamReadiness != nil {
+			streamReadiness.Stop()
+		}
+		if streamProducer != nil {
+			if err := streamProducer.Flush(shutCtx); err != nil {
+				log.Error("streaming producer flush error", zap.Error(err))
+			}
+			streamProducer.Close()
+		}
 		if err := srv.Shutdown(shutCtx); err != nil {
 			log.Error("http server shutdown error", zap.Error(err))
 		}

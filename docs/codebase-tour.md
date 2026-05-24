@@ -24,6 +24,9 @@ This document is a **step-by-step walkthrough** of how the repository is organiz
 | **Self-improvement** | `internal/improvements` | Dispatches refiner proposals to files or child workflows |
 | **Delivery** | `internal/finalizer/actions` | GitHub PR, webhook, bundles, etc. |
 | **Config** | `internal/config`, `go-orca.yaml` | Viper + `GOORCA_*` env overrides |
+| **Event streaming** | `internal/streaming`, `internal/storage/streaming_store.go` | Redpanda producer/consumer, SSE hub (optional) |
+
+For Redpanda wiring, SSE `source=` query param, and edge ingest, see [streaming.md](./streaming.md).
 
 ---
 

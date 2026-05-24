@@ -36,7 +36,8 @@ go-orca is a **multi-tenant AI orchestration engine** — a single Go binary tha
 | `cmd/go-orca-api` | Binary entry point: config loading, bootstrap, HTTP server lifecycle |
 | `internal/config` | Viper-backed config loading; `GOORCA_*` env var overrides |
 | `internal/api/routes` | Gin router wiring |
-| `internal/api/handlers` | HTTP handler functions, SSE streaming |
+| `internal/api/handlers` | HTTP handler functions, SSE streaming, edge ingest |
+| `internal/streaming` | Redpanda producer/consumer, workflow hub, readiness, metrics |
 | `internal/api/middleware` | Recovery, structured logging, request ID, tenant/scope extraction |
 | `internal/workflow/engine` | Persona pipeline state machine |
 | `internal/workflow/scheduler` | Bounded worker pool; enqueue/retry/shutdown |
@@ -111,6 +112,10 @@ Every state change and persona transition appends an immutable event to the jour
 - `refiner.suggestion` — the inline Refiner produced an improvement recommendation
 
 Clients can retrieve the full event list via `GET /workflows/:id/events`, or subscribe to the live SSE feed via `GET /workflows/:id/stream`.
+
+When [Redpanda streaming](streaming.md) is enabled, the engine still writes the journal to the database first; each append is also published to the shared topic. A consumer inside `go-orca-api` fans records into an in-process hub so SSE can deliver live events without polling. The UI discovers the active transport via `GET /api/v1/streaming` and can force `?source=database` or `?source=redpanda` on the stream URL.
+
+A separate **edge ingest** path (`POST /api/v1/events`) accepts JWT-authenticated client payloads keyed by user ID on the same topic. See [Event Streaming](streaming.md) for diagrams and configuration.
 
 ## Multi-Tenancy and Scope Hierarchy
 

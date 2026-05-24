@@ -141,10 +141,42 @@ function normalizeCustomizationItems(items: unknown): CustomizationItem[] {
     }));
 }
 
-export function buildWorkflowStreamUrl(workflowId: string, context?: OrcaContext, timeout = 300) {
-  const params = new URLSearchParams({ timeout: String(timeout) });
+export type WorkflowStreamSource = "auto" | "redpanda" | "database";
+
+export interface StreamingCapabilities {
+  enabled: boolean;
+  workflow_stream: "database" | "redpanda" | (string & {});
+  workflow_topic?: string;
+}
+
+export function buildWorkflowStreamUrl(
+  workflowId: string,
+  context?: OrcaContext,
+  timeout = 300,
+  source: WorkflowStreamSource = "auto"
+) {
+  const params = new URLSearchParams({ timeout: String(timeout), source });
   appendContext(params, context);
   return `/api/orca/workflows/${workflowId}/stream?${params.toString()}`;
+}
+
+const defaultStreamingCapabilities: StreamingCapabilities = {
+  enabled: false,
+  workflow_stream: "database",
+};
+
+export async function getStreamingCapabilities() {
+  const params = new URLSearchParams();
+  const url = `/api/orca/streaming${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, { method: "GET", cache: "no-store" });
+  if (response.status === 404) {
+    return defaultStreamingCapabilities;
+  }
+  const payload = await parsePayload(response);
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `go-orca request failed with status ${response.status}`));
+  }
+  return payload as StreamingCapabilities;
 }
 
 export function getHealthz() {

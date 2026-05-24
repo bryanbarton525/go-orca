@@ -2,6 +2,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/go-orca/go-orca/internal/customization"
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/storage"
+	"github.com/go-orca/go-orca/internal/streaming"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
 )
 
@@ -26,6 +29,14 @@ type Config struct {
 	MCPRegistry           *mcpregistry.Registry
 	IngestionCfg          config.IngestionConfig
 	ArtifactStoragePath   string
+	StreamingEnabled      bool
+	StreamingUserIDHeader string
+	StreamingProducer     handlers.EventProducer
+	StreamingMetrics      handlers.HTTPResponseObserver
+	StreamingReadiness    handlers.ReadinessProbe
+	StreamingHub          *streaming.Hub
+	StreamingTopic        string
+	MetricsHandler        http.Handler
 	// GinMode sets gin.SetMode; defaults to "release".
 	GinMode string
 }
@@ -48,14 +59,17 @@ func New(cfg Config) *gin.Engine {
 
 	// ── Health probes at root (Kubernetes liveness/readiness) ───────────────
 	r.GET("/healthz", handlers.Healthz())
-	r.GET("/readyz", handlers.Readyz(cfg.Store))
+	r.GET("/readyz", handlers.Readyz(cfg.Store, cfg.StreamingReadiness))
+	if cfg.MetricsHandler != nil {
+		r.GET("/metrics", gin.WrapH(cfg.MetricsHandler))
+	}
 
 	// ── API v1 ───────────────────────────────────────────────────────────────
 	v1 := r.Group("/api/v1")
 	{
 		// Health (also accessible under the versioned prefix)
 		v1.GET("/healthz", handlers.Healthz())
-		v1.GET("/readyz", handlers.Readyz(cfg.Store))
+		v1.GET("/readyz", handlers.Readyz(cfg.Store, cfg.StreamingReadiness))
 
 		// ── Workflows ────────────────────────────────────────────────────────
 		wf := v1.Group("/workflows")
@@ -64,7 +78,7 @@ func New(cfg Config) *gin.Engine {
 			wf.POST("", handlers.CreateWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
 			wf.GET("/:id", handlers.GetWorkflow(cfg.Store))
 			wf.GET("/:id/events", handlers.GetWorkflowEvents(cfg.Store))
-			wf.GET("/:id/stream", handlers.StreamWorkflowEvents(cfg.Store))
+			wf.GET("/:id/stream", handlers.StreamWorkflowEvents(cfg.Store, cfg.StreamingHub))
 			wf.POST("/:id/cancel", handlers.CancelWorkflow(cfg.Store, cfg.Logger))
 			wf.POST("/:id/resume", handlers.ResumeWorkflow(cfg.Store, cfg.Scheduler, cfg.Logger))
 			wf.GET("/:id/attachments", handlers.ListWorkflowAttachments(cfg.Store))
@@ -112,6 +126,13 @@ func New(cfg Config) *gin.Engine {
 
 		// ── MCP registry ─────────────────────────────────────────────────────
 		v1.GET("/mcp/registry", handlers.GetMCPRegistry(cfg.MCPRegistry))
+
+		v1.GET("/streaming", handlers.GetStreamingCapabilities(cfg.StreamingEnabled, cfg.StreamingTopic))
+
+		if cfg.StreamingEnabled {
+			events := v1.Group("/events", middleware.RequireMeshUserID(cfg.StreamingUserIDHeader))
+			events.POST("", handlers.IngestEvent(cfg.StreamingProducer, cfg.StreamingMetrics, cfg.Logger))
+		}
 	}
 
 	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────

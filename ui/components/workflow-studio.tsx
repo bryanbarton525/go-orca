@@ -25,6 +25,8 @@ import {
 import { useOrcaWorkspace } from "./orca-workspace-provider";
 import {
   buildWorkflowStreamUrl,
+  getStreamingCapabilities,
+  type WorkflowStreamSource,
   cancelWorkflow,
   createUploadSession,
   createWorkflow,
@@ -1751,6 +1753,7 @@ export function WorkflowStudio() {
   const [streamConnected, setStreamConnected] = useState(false);
   const [streamEvents, setStreamEvents] = useState<EventRecord[]>([]);
   const [streamReconnectToken, setStreamReconnectToken] = useState(0);
+  const [streamSource, setStreamSource] = useState<WorkflowStreamSource>("auto");
   const [launchLocked, setLaunchLocked] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState<string | null>(null);
   const [explorerSelection, setExplorerSelection] = useState<WorkflowExplorerSelection>({
@@ -1772,6 +1775,12 @@ export function WorkflowStudio() {
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const streamingQuery = useQuery({
+    queryKey: ["streaming-capabilities"],
+    queryFn: getStreamingCapabilities,
+    staleTime: 60_000,
+  });
 
   const workflowsQuery = useQuery({
     queryKey: ["workflows", workspace.tenantId, workspace.scopeId, page],
@@ -1954,7 +1963,7 @@ export function WorkflowStudio() {
       ]);
     };
 
-    source = new EventSource(buildWorkflowStreamUrl(selectedWorkflowId, workspace));
+    source = new EventSource(buildWorkflowStreamUrl(selectedWorkflowId, workspace, 300, streamSource));
     source.onopen = () => {
       setStreamConnected(true);
       setStreamEvents((current) => [
@@ -2032,7 +2041,16 @@ export function WorkflowStudio() {
       setStreamConnected(false);
       source?.close();
     };
-  }, [queryClient, selectedWorkflowId, streaming, streamReconnectToken, workspace]);
+  }, [queryClient, selectedWorkflowId, streamSource, streaming, streamReconnectToken, workspace]);
+
+  const streamTransportLabel =
+    streamSource === "database"
+      ? "database"
+      : streamSource === "redpanda"
+        ? "redpanda"
+        : streamingQuery.data?.workflow_stream === "redpanda"
+          ? "redpanda"
+          : "database";
 
   const createWorkflowMutation = useMutation({
     mutationFn: async () => {
@@ -2728,7 +2746,7 @@ export function WorkflowStudio() {
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lagoon/60" />
                               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lagoon" />
                             </span>
-                            Live stream connected
+                            Live stream connected ({streamTransportLabel})
                           </span>
                         ) : null}
                       </div>
@@ -2897,11 +2915,25 @@ export function WorkflowStudio() {
                         <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Live feed</h2>
                         <p className="mt-2 text-sm leading-6 text-shell-muted">
                           {streamConnected
-                            ? "Connected. Incoming persona and task events land here immediately."
+                            ? `Connected via ${streamTransportLabel}. Incoming persona and task events land here immediately.`
                             : selectedWorkflow && !isWorkflowTerminal(selectedWorkflow.status)
-                              ? "Auto-connects to active workflows. Toggle the stream below."
+                              ? `Auto-connects to active workflows using ${streamTransportLabel}. Toggle the stream below.`
                               : "Select a running workflow to attach a live event feed."}
                         </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="text-xs font-semibold uppercase tracking-[0.16em] text-shell-soft">
+                          Transport
+                          <select
+                            value={streamSource}
+                            onChange={(event) => setStreamSource(event.target.value as WorkflowStreamSource)}
+                            className="mt-2 block rounded-2xl border border-shell-border/40 bg-shell-subtle px-3 py-2 text-sm font-medium normal-case tracking-normal text-ink"
+                          >
+                            <option value="auto">Auto ({streamingQuery.data?.workflow_stream ?? "database"})</option>
+                            {streamingQuery.data?.enabled ? <option value="redpanda">Redpanda</option> : null}
+                            <option value="database">Database poll</option>
+                          </select>
+                        </label>
                       </div>
                       <div className="flex flex-wrap gap-3">
                         <button

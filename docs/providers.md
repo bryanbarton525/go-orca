@@ -106,6 +106,18 @@ ollama pull codellama
 ollama serve
 ```
 
+### Tool calling and Qwen3
+
+Ollama exposes native tool calling for many models, but **Qwen3** (`qwen3:*`, `qwen3.5:*`) often fails with HTTP 500 when the server’s XML tool parser receives truncated or malformed tool output ([ollama#14570](https://github.com/ollama/ollama/issues/14570), [ollama#14834](https://github.com/ollama/ollama/issues/14834)).
+
+go-orca mitigates this by:
+
+- Marking unstable Qwen3 models as `tools=no` in the provider catalog (Director will not assign them to Implementer/QA).
+- Auto-swapping Implementer/QA to the first stable tool-capable model (for example `qwen2.5-coder:*`).
+- Disabling Qwen3 “thinking” during tool rounds, tightening tool-result context, and continuing with partial context if Ollama still returns a recoverable tool-parse error.
+
+For Implementer/QA workloads on Ollama, prefer **`qwen2.5-coder`** or upgrade Ollama to a release that treats unparseable tool calls as plain content instead of aborting with 500.
+
 ### Recommended Models
 
 | Use Case | Model |
