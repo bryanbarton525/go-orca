@@ -59,6 +59,15 @@ const (
 	// continues to the Finalizer rather than failing.
 	EventQAExhausted EventType = "qa.exhausted"
 
+	// EventImplementationExhausted is emitted when implementation toolchain
+	// validation still fails after MaxImplementationRetries. The workflow
+	// fails before QA runs.
+	EventImplementationExhausted EventType = "implementation.exhausted"
+
+	// EventImplementationReady is emitted when implementation validation,
+	// documentation, and git checkpoint requirements pass before QA.
+	EventImplementationReady EventType = "implementation.ready"
+
 	// Attachment ingestion lifecycle events.
 	EventAttachmentProcessingStarted   EventType = "attachment.processing.started"
 	EventAttachmentProcessed           EventType = "attachment.processed"
@@ -210,6 +219,20 @@ type RefinerSuggestionPayload struct {
 type QAExhaustedPayload struct {
 	RetriesAllowed int      `json:"retries_allowed"`
 	BlockingIssues []string `json:"blocking_issues"`
+}
+
+// ImplementationExhaustedPayload is the payload for EventImplementationExhausted.
+type ImplementationExhaustedPayload struct {
+	RetriesAllowed int      `json:"retries_allowed"`
+	BlockingIssues []string `json:"blocking_issues"`
+	Cycle          int      `json:"cycle"`
+}
+
+// ImplementationReadyPayload is the payload for EventImplementationReady.
+type ImplementationReadyPayload struct {
+	ValidationPhase string `json:"validation_phase,omitempty"`
+	CheckpointSHA   string `json:"checkpoint_sha,omitempty"`
+	DocumentationOK bool   `json:"documentation_ok"`
 }
 
 // ValidationRunPayload is the payload for EventValidationRun.

@@ -94,6 +94,11 @@ type Options struct {
 	// re-run after QA returns blocking issues.  Defaults to 2.
 	MaxQARetries int
 
+	// MaxImplementationRetries is the maximum number of Architect→Pod remediation
+	// cycles after toolchain validation fails during implementation, before QA runs.
+	// Defaults to MaxQARetries when unset (≤0).  Set to -1 for unlimited.
+	MaxImplementationRetries int
+
 	// DefaultProvider is used when the Director does not select one.
 	DefaultProvider string
 	// DefaultModel is used when the Director does not select one.
@@ -532,39 +537,30 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		}
 	}
 
-	// Phase 4: Pod — runs once per ready/pending task.
+	// Phase 4: Pod — execute tasks, then iterate on toolchain validation failures
+	// (build/test/tidy) via Architect→Pod remediation before QA verification.
 	if personaRequired(state.PersonaPod) {
-		if err := e.ensureToolchainBootstrap(ctx, ws, "implementation-bootstrap"); err != nil {
-			return fmt.Errorf("implementation bootstrap: %w", err)
-		}
-		if err := e.runToolchainCheckpoint(ctx, ws, "implementation-bootstrap"); err != nil {
-			return fmt.Errorf("implementation bootstrap checkpoint: %w", err)
-		}
-		if err := e.runPodPhase(ctx, ws, snap); err != nil {
-			return fmt.Errorf("pod phase: %w", err)
-		}
-		validationIssues, err := e.runToolchainValidation(ctx, ws, "implementation")
-		if err != nil {
-			return fmt.Errorf("implementation validation: %w", err)
-		}
-		ws.BlockingIssues = append(ws.BlockingIssues, validationIssues...)
-		if err := e.runToolchainCheckpoint(ctx, ws, "implementation"); err != nil {
-			return fmt.Errorf("implementation checkpoint: %w", err)
+		if err := e.runImplementationPhase(ctx, ws, snap); err != nil {
+			return fmt.Errorf("implementation phase: %w", err)
 		}
 		if err := e.checkControlState(ctx, ws); err != nil {
 			return err
 		}
 	}
 
-	// Phase 5: QA — architect-led remediation loop.
+	// Phase 5: QA — verification after implementation gate (build/test/docs/git).
 	//
 	// On each QA pass:
-	//   1. QA validates; if no blocking issues, advance to Finalizer.
-	//   2. On blockers, Architect is called with the issues to produce
-	//      a targeted remediation task set assigned to Pod only.
-	//   3. Pod runs those new tasks.
+	//   1. QA validates charter, design conformance, docs, and delivery evidence.
+	//   2. On blockers, PM/Matriarch/Architect produce Pod remediation tasks.
+	//   3. Pod runs those tasks through the same implementation validation loop.
 	//   4. QA runs again.  Repeats up to MaxQARetries times.
 	if personaRequired(state.PersonaQA) {
+		if personaRequired(state.PersonaPod) {
+			if err := e.assertImplementationReadyForQA(ws); err != nil {
+				return fmt.Errorf("qa gate: %w", err)
+			}
+		}
 		if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
 			for qaCycle := 1; ; qaCycle++ {
 				// Update visible progress before QA runs.
@@ -650,7 +646,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					ws.Execution.RemediationAttempt = qaCycle
 					_ = e.store.SaveWorkflow(ctx, ws)
 
-					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
+					if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle, "qa_remediation"); err != nil {
 						return fmt.Errorf("remediation planning (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-plan-%d", qaCycle)); err != nil {
@@ -663,28 +659,26 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					ws.Execution.CurrentPersona = state.PersonaPod
 					_ = e.store.SaveWorkflow(ctx, ws)
 
-					if err := e.ensureToolchainBootstrap(ctx, ws, fmt.Sprintf("remediation-%d-bootstrap", qaCycle)); err != nil {
+					remediationPrefix := fmt.Sprintf("remediation-%d", qaCycle)
+					if err := e.ensureToolchainBootstrap(ctx, ws, remediationPrefix+"-bootstrap"); err != nil {
 						return fmt.Errorf("remediation bootstrap (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-%d-bootstrap", qaCycle)); err != nil {
+					if err := e.runToolchainCheckpoint(ctx, ws, remediationPrefix+"-bootstrap"); err != nil {
 						return fmt.Errorf("remediation bootstrap checkpoint (cycle %d): %w", qaCycle, err)
 					}
-					if err := e.runPodPhase(ctx, ws, snap); err != nil {
+					if err := e.runImplementationValidationLoop(ctx, ws, snap, implementationLoopOpts{
+						runInitialPod:     true,
+						phasePrefix:       remediationPrefix,
+						remediationSource: "qa_remediation",
+						maxRetries:        e.maxImplementationRetries(),
+					}); err != nil {
 						return fmt.Errorf("pod remediation (cycle %d): %w", qaCycle, err)
-					}
-					validationIssues, err := e.runToolchainValidation(ctx, ws, fmt.Sprintf("remediation-%d", qaCycle))
-					if err != nil {
-						return fmt.Errorf("remediation validation (cycle %d): %w", qaCycle, err)
-					}
-					if err := e.runToolchainCheckpoint(ctx, ws, fmt.Sprintf("remediation-%d", qaCycle)); err != nil {
-						return fmt.Errorf("remediation checkpoint (cycle %d): %w", qaCycle, err)
 					}
 					if err := e.checkControlState(ctx, ws); err != nil {
 						return err
 					}
-					// Clear previous QA findings after remediation, but preserve fresh
-					// engine validation failures so QA reviews the current repo state.
-					ws.BlockingIssues = validationIssues
+					// Implementation loop clears blockers on success; preserve any
+					// remaining issues for the next QA pass.
 				}
 				if !personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaPod) {
 					// Clear blocking issues accumulated in this pass so QA evaluates
@@ -699,47 +693,8 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 	}
 
 	// Phase 6: Finalizer (includes inline Refiner retrospective)
-	//
-	// Hard validation gate: if EnforceValidationGate is set and the most
-	// recent validation run for a software-class workflow failed, refuse to
-	// finalize.  This stops workflows where QA gave a visual-only pass but
-	// the toolchain reported real failures.
-	if e.opts.EnforceValidationGate && workflowNeedsToolchain(ws.Mode) {
-		if blocked, run := lastValidationFailed(ws); blocked {
-			issues := []string{}
-			if run != nil {
-				issues = append(issues, run.Summary)
-				for _, step := range run.Steps {
-					if !step.Passed {
-						issues = append(issues, fmt.Sprintf("%s: %s", step.Capability, firstNonEmpty(step.Error, step.Output)))
-					}
-				}
-			}
-			toolchainID := ""
-			if run != nil {
-				toolchainID = run.ToolchainID
-			}
-			profile := ""
-			if run != nil {
-				profile = run.Profile
-			}
-			evt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-				events.EventValidationGateBlocked, "",
-				events.ValidationGateBlockedPayload{
-					ToolchainID: toolchainID,
-					Profile:     profile,
-					Phase:       "finalizer-gate",
-					Issues:      issues,
-				})
-			_ = e.store.AppendEvents(ctx, evt)
-			ws.Status = state.WorkflowStatusFailed
-			ws.AllSuggestions = append(ws.AllSuggestions,
-				"[validation-gate] finalizer blocked: most recent toolchain validation failed")
-			if err := e.store.SaveWorkflow(ctx, ws); err != nil {
-				return err
-			}
-			return fmt.Errorf("validation gate: most recent toolchain validation failed (%s)", toolchainID)
-		}
+	if err := e.enforceFinalizerValidationGate(ctx, ws); err != nil {
+		return err
 	}
 
 	if personaRequired(state.PersonaFinalizer) && !phaseComplete(state.PersonaFinalizer) {
@@ -1451,7 +1406,22 @@ func (e *Engine) buildTaskGraphDiagnostics(ws *state.WorkflowState) *state.TaskG
 // so it can produce a targeted set of pod-only remediation tasks.
 // The new tasks are appended to the task graph (existing completed tasks are
 // preserved for audit) with Attempt and RemediationSource set.
-func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
+func personaRequiredForWorkflow(ws *state.WorkflowState, kind state.PersonaKind) bool {
+	if kind == state.PersonaDirector {
+		return true
+	}
+	if ws == nil || len(ws.RequiredPersonas) == 0 {
+		return true
+	}
+	for _, k := range ws.RequiredPersonas {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, cycle int, remediationSource string) error {
 	if err := e.checkControlState(ctx, ws); err != nil {
 		return err
 	}
@@ -1492,13 +1462,16 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		} else {
 			t.AssignedTo = normAssigned // store normalised lowercase form
 		}
-		t.Attempt = qaCycle
-		t.RemediationSource = "qa_remediation"
+		t.Attempt = cycle
+		if remediationSource == "" {
+			remediationSource = "qa_remediation"
+		}
+		t.RemediationSource = remediationSource
 		validTasks = append(validTasks, t)
 	}
 
 	if len(validTasks) == 0 {
-		return fmt.Errorf("architect produced no valid pod tasks for remediation cycle %d (blocking issues: %v)", qaCycle, ws.BlockingIssues)
+		return fmt.Errorf("architect produced no valid pod tasks for remediation cycle %d (blocking issues: %v)", cycle, ws.BlockingIssues)
 	}
 
 	// Append new tasks; existing tasks (including completed ones) are retained.
@@ -1506,7 +1479,7 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		ws.Tasks = append(ws.Tasks, t)
 		createdEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 			events.EventTaskCreated, state.PersonaArchitect,
-			map[string]string{"task_id": t.ID, "title": t.Title, "attempt": fmt.Sprint(qaCycle)})
+			map[string]string{"task_id": t.ID, "title": t.Title, "attempt": fmt.Sprint(cycle), "source": remediationSource})
 		_ = e.store.AppendEvents(ctx, createdEvt)
 	}
 
@@ -1514,15 +1487,15 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	if ws.Summaries == nil {
 		ws.Summaries = make(map[state.PersonaKind]string)
 	}
-	ws.Summaries[state.PersonaArchitect] += fmt.Sprintf("[remediation cycle %d] %s\n", qaCycle, out.Summary)
+	ws.Summaries[state.PersonaArchitect] += fmt.Sprintf("[%s cycle %d] %s\n", remediationSource, cycle, out.Summary)
 	if summary := strings.TrimSpace(out.Summary); summary != "" {
-		e.appendReviewThreadEntries(ws, out, fmt.Sprintf("[remediation cycle %d] %s", qaCycle, summary))
+		e.appendReviewThreadEntries(ws, out, fmt.Sprintf("[%s cycle %d] %s", remediationSource, cycle, summary))
 	}
 
 	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 		return err
 	}
-	return e.appendPlanRemediation(ctx, ws, qaCycle)
+	return e.appendPlanRemediation(ctx, ws, cycle)
 }
 
 func (e *Engine) runRemediationMatriarch(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot, qaCycle int) error {
@@ -1686,6 +1659,10 @@ func (e *Engine) ensureWorkspaceAndToolchain(ctx context.Context, ws *state.Work
 					"# Dependency vendor directory\n" +
 					"vendor/\n"
 				_ = os.WriteFile(gitignorePath, []byte(goGitignore), 0o644)
+			}
+			readmePath := filepath.Join(ws.Execution.Workspace.Path, "README.md")
+			if _, statErr := os.Stat(readmePath); os.IsNotExist(statErr) {
+				_ = os.WriteFile(readmePath, []byte("# Workflow workspace\n\nImplementation artifacts for this workflow run.\n"), 0o644)
 			}
 		}
 	}
@@ -2488,7 +2465,16 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	if out.Finalization != nil {
 		ws.Finalization = out.Finalization
 	}
-	if len(out.BlockingIssues) > 0 {
+	if out.Persona == state.PersonaQA {
+		if len(out.BlockingIssues) > 0 {
+			ws.BlockingIssues = append(ws.BlockingIssues, out.BlockingIssues...)
+		} else {
+			// QA passed this cycle: clear engine-populated validation failures
+			// so the loop can exit. Finalizer still enforces ValidationRuns when
+			// EnforceValidationGate is enabled.
+			ws.BlockingIssues = nil
+		}
+	} else if len(out.BlockingIssues) > 0 {
 		ws.BlockingIssues = append(ws.BlockingIssues, out.BlockingIssues...)
 	}
 	if len(out.Suggestions) > 0 {
@@ -2663,6 +2649,8 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		DeliveryAction:             ws.DeliveryAction,
 		DeliveryConfig:             ws.DeliveryConfig,
 		QACycle:                    ws.Execution.QACycle,
+		ImplementationCycle:        ws.Execution.ImplementationCycle,
+		ImplementationGate:         ws.Execution.ImplementationGate,
 		RemediationAttempt:         ws.Execution.RemediationAttempt,
 		InputDocuments:             ws.InputDocuments,
 		InputDocumentCorpusSummary: ws.InputDocumentCorpusSummary,
@@ -2680,6 +2668,12 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		packet.SkillsContext = snap.SkillsContext()
 		packet.CustomAgentMD = snap.AgentsContext()
 		packet.PromptsContext = snap.PromptsContext()
+	}
+
+	if kind == state.PersonaQA {
+		if gateCtx := formatImplementationGateForQA(ws); gateCtx != "" {
+			packet.AllSuggestions = append([]string{gateCtx}, packet.AllSuggestions...)
+		}
 	}
 
 	// Populate tool context from the registry.
@@ -2829,17 +2823,24 @@ func (e *Engine) tryAutoModeIteration(ctx context.Context, ws *state.WorkflowSta
 		fmt.Sprintf("[auto-mode] trying definition %q (attempt %d/%d)", selected.ID, nextAttempt, maxAttempts))
 
 	// Trigger a fresh remediation pass using the newly selected definition.
-	if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle); err != nil {
+	if err := e.runRemediationPlanning(ctx, ws, snap, qaCycle, "qa_remediation"); err != nil {
 		return false, err
 	}
-	if err := e.runPodPhase(ctx, ws, snap); err != nil {
+	prefix := fmt.Sprintf("auto-remediation-%d", qaCycle)
+	if err := e.ensureToolchainBootstrap(ctx, ws, prefix+"-bootstrap"); err != nil {
 		return false, err
 	}
-	validationIssues, err := e.runToolchainValidation(ctx, ws, fmt.Sprintf("auto-remediation-%d", qaCycle))
-	if err != nil {
+	if err := e.runToolchainCheckpoint(ctx, ws, prefix+"-bootstrap"); err != nil {
 		return false, err
 	}
-	ws.BlockingIssues = validationIssues
+	if err := e.runImplementationValidationLoop(ctx, ws, snap, implementationLoopOpts{
+		runInitialPod:     true,
+		phasePrefix:       prefix,
+		remediationSource: "qa_remediation",
+		maxRetries:        e.maxImplementationRetries(),
+	}); err != nil {
+		return false, err
+	}
 	ws.UpdatedAt = time.Now().UTC()
 	if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 		return false, err

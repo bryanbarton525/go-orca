@@ -146,11 +146,23 @@ export interface Checkpoint {
   created_at?: string;
 }
 
+export interface ImplementationGate {
+  ready?: boolean;
+  validation_passed?: boolean;
+  latest_validation_phase?: string;
+  checkpoint_sha?: string;
+  checkpoint_phase?: string;
+  documentation_ok?: boolean;
+  verified_at?: string;
+}
+
 export interface WorkflowExecution {
   current_persona?: string;
   active_task_id?: string;
   active_task_title?: string;
   qa_cycle?: number;
+  implementation_cycle?: number;
+  implementation_gate?: ImplementationGate | null;
   remediation_attempt?: number;
   workflow_kind?: string;
   parent_workflow_id?: string;
