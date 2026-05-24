@@ -1726,6 +1726,24 @@ func (e *Engine) selectToolchain(ws *state.WorkflowState) (ToolchainConfig, stri
 		}
 	}
 	if found {
+		// Prefer the Next.js toolchain over generic Node/TypeScript when both are
+		// mentioned — a Next.js App Router request should use next_* MCP tools.
+		if best.ID == "node" {
+			for _, tc := range e.opts.Toolchains {
+				if tc.ID != "nextjs" {
+					continue
+				}
+				for _, lang := range tc.Languages {
+					needle := strings.ToLower(strings.TrimSpace(lang))
+					if needle == "next" || needle == "" {
+						continue
+					}
+					if toolchainLanguageMentioned(haystack, needle) {
+						return tc, needle, true
+					}
+				}
+			}
+		}
 		return best, bestLang, true
 	}
 	if len(e.opts.Toolchains) > 0 {
@@ -1753,10 +1771,18 @@ func toolchainLanguageMentioned(haystack, lang string) bool {
 		after := i + len(lang)
 		afterOK := after == len(haystack) || !isLangTokenChar(haystack[after])
 		if beforeOK && afterOK {
+			if lang == "go" && negatedGoMention(haystack, i) {
+				continue
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// negatedGoMention reports "no go" / "no golang" style exclusions in the request.
+func negatedGoMention(haystack string, goIndex int) bool {
+	return goIndex >= 3 && haystack[goIndex-3:goIndex] == "no "
 }
 
 func isLangTokenChar(b byte) bool {
