@@ -550,6 +550,47 @@ func TestRunPodPhase_DropsUnknownDependencyAndRuns(t *testing.T) {
 	}
 }
 
+func TestRunPodPhase_AllCompletedPodTasksSucceeds(t *testing.T) {
+	order := []string{}
+	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&noopPersona{kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a go app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{state.PersonaDirector: "done"}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	now := time.Now().UTC()
+	ws.Tasks = []state.Task{{
+		ID:          "task-already-done",
+		WorkflowID:  ws.ID,
+		Title:       "already done",
+		Status:      state.TaskStatusCompleted,
+		AssignedTo:  state.PersonaPod,
+		CreatedAt:   now.Add(-5 * time.Minute),
+		CompletedAt: &now,
+	}}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-model",
+		WorkspaceRoot:   t.TempDir(),
+	})
+
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("expected no pod task execution, got order %v", order)
+	}
+}
+
 func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyIncomplete(t *testing.T) {
 	order := []string{}
 	persona.Register(&orderingArtifactPersona{kind: state.PersonaPod, order: &order})

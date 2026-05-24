@@ -1070,11 +1070,13 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	var tasksAttempted int
 	var podTasksSeen int
 	var blockedByDependencies int
+	var podTasksIncomplete bool
 	for {
 		e.refreshPodTaskReadiness(ws)
 		ranTaskThisPass := false
 		podTasksSeen = 0
 		blockedByDependencies = 0
+		podTasksIncomplete = false
 		for i := range ws.Tasks {
 			if err := e.checkControlState(ctx, ws); err != nil {
 				return err
@@ -1089,6 +1091,9 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 				continue
 			}
 			podTasksSeen++
+			if t.Status != state.TaskStatusCompleted {
+				podTasksIncomplete = true
+			}
 			if !e.taskDependenciesSatisfied(ws, t) {
 				if t.Status == state.TaskStatusReady {
 					t.Status = state.TaskStatusPending
@@ -1226,6 +1231,17 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	// empty artifact list, which would trigger the confusing "No artifact
 	// provided" → remediation → "no valid pod tasks" death spiral.
 	if tasksAttempted == 0 {
+		if podTasksSeen > 0 && !podTasksIncomplete {
+			implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventPersonaCompleted, state.PersonaPod,
+				events.PersonaCompletedPayload{
+					Persona:    state.PersonaPod,
+					DurationMs: implElapsed.Milliseconds(),
+					Summary:    ws.Summaries[state.PersonaPod],
+				})
+			_ = e.store.AppendEvents(ctx, implDoneEvt)
+			return e.store.SaveWorkflow(ctx, ws)
+		}
 		noTaskErr := fmt.Errorf("architect produced no runnable pod tasks — "+
 			"the workflow request may be empty, the architect may have misunderstood it, "+
 			"or task dependencies remain unsatisfied (pod tasks=%d blocked_by_dependencies=%d)",
