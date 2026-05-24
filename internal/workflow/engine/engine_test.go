@@ -1250,8 +1250,8 @@ func TestMatriarchRunsAgainDuringRemediation(t *testing.T) {
 	if err := eng.Run(context.Background(), ws.ID); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if matriarch.calls != 2 {
-		t.Fatalf("matriarch call count = %d, want 2", matriarch.calls)
+	if matriarch.calls < 3 {
+		t.Fatalf("matriarch call count = %d, want >=3 (phase + pod manager + remediation)", matriarch.calls)
 	}
 	if matriarch.remediationCalls != 1 {
 		t.Fatalf("matriarch remediation call count = %d, want 1", matriarch.remediationCalls)

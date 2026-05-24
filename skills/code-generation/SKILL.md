@@ -94,6 +94,32 @@ Rules:
 - Source only in `src/`; never mix generated output into source paths.
 - Keep runtime config/env parsing in a dedicated module (for example `src/infra/config.ts`).
 
+### Next.js (App Router web app)
+
+Use when the workflow request targets Next.js, React Server Components, or a full-stack TypeScript web UI.
+
+```
+.
+├── package.json
+├── tsconfig.json
+├── next.config.ts
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx
+│   └── <route>/page.tsx
+├── components/
+├── lib/                # db clients, auth, shared utilities
+├── prisma/             # optional, when using Postgres + Prisma
+└── README.md
+```
+
+Rules:
+- Prefer App Router (`app/`) over `pages/` unless the repo already uses Pages Router.
+- API routes and server actions live under `app/api/` or colocated with routes as appropriate.
+- Do not emit Go files or `go.mod` for a Next.js-only stack.
+- Scaffold (`package.json`, base `app/layout.tsx`) must be an early task with no code-task dependencies on it.
+- Cap MVP task graphs to roughly a dozen tasks; batch related files per task instead of one file per task.
+
 ### Rust (service/CLI)
 
 ```

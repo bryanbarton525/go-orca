@@ -133,6 +133,8 @@ workflow:
     timeout: "10m"
   max_concurrent_workflows: 10
   max_concurrent_tasks: 50
+  max_architect_tasks: 0
+  minimal_checkpoints: true
   default_persona_timeout_ms: 120000
   event_retention_days: 90
   artifact_storage_path: "./artifacts"

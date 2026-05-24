@@ -282,6 +282,12 @@ type WorkflowConfig struct {
 	// AutoModeMaxDefinitionAttempts caps generated definition variations.
 	AutoModeMaxDefinitionAttempts int `mapstructure:"auto_mode_max_definition_attempts"`
 
+	// MaxArchitectTasks caps the number of tasks in the initial Architect graph (0 = unlimited).
+	MaxArchitectTasks int `mapstructure:"max_architect_tasks"`
+
+	// MinimalCheckpoints skips git checkpoints on remediation micro-phases.
+	MinimalCheckpoints bool `mapstructure:"minimal_checkpoints"`
+
 	// Ingestion controls the pre-Director attachment processing stage.
 	Ingestion IngestionConfig `mapstructure:"ingestion"`
 
@@ -439,6 +445,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("workflow.enable_builder_mode", true)
 	v.SetDefault("workflow.enable_auto_mode", true)
 	v.SetDefault("workflow.auto_mode_max_definition_attempts", 5)
+	v.SetDefault("workflow.max_architect_tasks", 0) // 0 = unlimited; set explicitly to cap
+	v.SetDefault("workflow.minimal_checkpoints", true)
 
 	// Attachment ingestion defaults
 	v.SetDefault("workflow.ingestion.max_workers", 4)
