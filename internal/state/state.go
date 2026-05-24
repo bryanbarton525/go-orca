@@ -153,6 +153,9 @@ type Execution struct {
 	// Checkpoints records repo checkpoint commits created after implementation
 	// phases or remediation cycles.
 	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	// TaskGraphDiagnostics stores latest dependency graph sanitizer output
+	// and deadlock analysis for remediation handoff.
+	TaskGraphDiagnostics *TaskGraphDiagnostics `json:"task_graph_diagnostics,omitempty"`
 	// Planning stores interactive planning context (Builder UI + Matriarch).
 	Planning *PlanningState `json:"planning,omitempty"`
 	// AutoMode tracks dynamic workflow/pod definition selection attempts.
@@ -208,6 +211,15 @@ type Checkpoint struct {
 	Message     string    `json:"message,omitempty"`
 	Pushed      bool      `json:"pushed,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// TaskGraphDiagnostics captures task graph sanitization and deadlock details.
+type TaskGraphDiagnostics struct {
+	UpdatedAt            time.Time           `json:"updated_at"`
+	SanitizerWarnings    []string            `json:"sanitizer_warnings,omitempty"`
+	BlockedTaskIDs       []string            `json:"blocked_task_ids,omitempty"`
+	BlockedByTask        map[string][]string `json:"blocked_by_task,omitempty"` // task_id -> unmet dependency IDs
+	HotUnmetDependencies map[string]int      `json:"hot_unmet_dependencies,omitempty"`
 }
 
 // PlanningState captures interactive planning session state from the Builder UI.
@@ -684,6 +696,8 @@ type HandoffPacket struct {
 	ValidationRuns []ValidationRun `json:"validation_runs,omitempty"`
 	// Checkpoints are source-control snapshots created after implementation.
 	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	// TaskGraphDiagnostics carries latest graph sanitizer/deadlock analysis.
+	TaskGraphDiagnostics *TaskGraphDiagnostics `json:"task_graph_diagnostics,omitempty"`
 	// Planning carries interactive planning state.
 	Planning *PlanningState `json:"planning,omitempty"`
 	// AutoMode carries dynamic definition state for auto workflows.

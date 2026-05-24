@@ -11,6 +11,15 @@ import (
 func TestExecutionPlanningAndAutoModeJSONRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	exec := state.Execution{
+		TaskGraphDiagnostics: &state.TaskGraphDiagnostics{
+			UpdatedAt:         now,
+			SanitizerWarnings: []string{"cycle removed"},
+			BlockedTaskIDs:    []string{"task-a"},
+			BlockedByTask: map[string][]string{
+				"task-a": {"task-b"},
+			},
+			HotUnmetDependencies: map[string]int{"task-b": 1},
+		},
 		Planning: &state.PlanningState{
 			Mode:      "builder",
 			Prompt:    "plan a builder workflow",
@@ -54,5 +63,8 @@ func TestExecutionPlanningAndAutoModeJSONRoundTrip(t *testing.T) {
 	}
 	if decoded.AutoMode.ActiveDefinition.ID != "builder-v2" {
 		t.Fatalf("active definition id: got %q, want %q", decoded.AutoMode.ActiveDefinition.ID, "builder-v2")
+	}
+	if decoded.TaskGraphDiagnostics == nil || len(decoded.TaskGraphDiagnostics.BlockedTaskIDs) != 1 {
+		t.Fatalf("task graph diagnostics round-trip failed: %+v", decoded.TaskGraphDiagnostics)
 	}
 }

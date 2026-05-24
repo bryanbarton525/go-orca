@@ -1097,6 +1097,7 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 	_ = e.store.AppendEvents(ctx, implStartEvt)
 	if warnings := e.sanitizePodTaskGraph(ws); len(warnings) > 0 {
 		ws.AllSuggestions = append(ws.AllSuggestions, warnings...)
+		e.recordTaskGraphSanitizerWarnings(ws, warnings)
 		_ = e.store.SaveWorkflow(ctx, ws)
 	}
 	e.refreshPodTaskReadiness(ws)
@@ -1261,10 +1262,9 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 		return implErr
 	}
 
-	// If 0 tasks were attempted the architect produced nothing for the
-	// pod.  Fail loudly here rather than letting QA run against an
-	// empty artifact list, which would trigger the confusing "No artifact
-	// provided" → remediation → "no valid pod tasks" death spiral.
+	// If 0 tasks were attempted, emit dependency diagnostics and convert this
+	// into a blocking issue so QA/PM/Matriarch/Architect can iterate in-run.
+	// This keeps the workflow in the remediation loop instead of hard-failing.
 	if tasksAttempted == 0 {
 		if podTasksSeen > 0 && !podTasksIncomplete {
 			implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
@@ -1277,16 +1277,42 @@ func (e *Engine) runPodPhase(ctx context.Context, ws *state.WorkflowState, snap 
 			_ = e.store.AppendEvents(ctx, implDoneEvt)
 			return e.store.SaveWorkflow(ctx, ws)
 		}
+		diag := e.buildTaskGraphDiagnostics(ws)
+		ws.Execution.TaskGraphDiagnostics = diag
+		if diag != nil {
+			diagEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+				events.EventTaskGraphBlocked, state.PersonaPod,
+				events.TaskGraphBlockedPayload{
+					PodTasksSeen:          podTasksSeen,
+					BlockedByDependencies: blockedByDependencies,
+					BlockedTaskIDs:        diag.BlockedTaskIDs,
+					BlockedByTask:         diag.BlockedByTask,
+					HotUnmetDependencies:  diag.HotUnmetDependencies,
+				})
+			_ = e.store.AppendEvents(ctx, diagEvt)
+		}
 		noTaskErr := fmt.Errorf("architect produced no runnable pod tasks — "+
 			"the workflow request may be empty, the architect may have misunderstood it, "+
 			"or task dependencies remain unsatisfied (pod tasks=%d blocked_by_dependencies=%d)",
 			podTasksSeen, blockedByDependencies)
-		implFailEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
-			events.EventPersonaFailed, state.PersonaPod,
-			events.PersonaFailedPayload{Persona: state.PersonaPod, Error: noTaskErr.Error()})
-		_ = e.store.AppendEvents(ctx, implFailEvt)
+		ws.BlockingIssues = append(ws.BlockingIssues, noTaskErr.Error())
+		ws.AllSuggestions = append(ws.AllSuggestions,
+			"[pod][dependency-deadlock] no runnable pod tasks detected; queued for remediation")
+		if ws.Summaries == nil {
+			ws.Summaries = make(map[state.PersonaKind]string)
+		}
+		ws.Summaries[state.PersonaPod] += fmt.Sprintf("[deadlock] %s\n", noTaskErr.Error())
+		implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+			events.EventPersonaCompleted, state.PersonaPod,
+			events.PersonaCompletedPayload{
+				Persona:        state.PersonaPod,
+				DurationMs:     implElapsed.Milliseconds(),
+				Summary:        ws.Summaries[state.PersonaPod],
+				BlockingIssues: []string{noTaskErr.Error()},
+			})
+		_ = e.store.AppendEvents(ctx, implDoneEvt)
 		_ = e.store.SaveWorkflow(ctx, ws)
-		return noTaskErr
+		return nil
 	}
 
 	implDoneEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
@@ -1354,6 +1380,71 @@ func (e *Engine) taskDependenciesSatisfied(ws *state.WorkflowState, task *state.
 		}
 	}
 	return true
+}
+
+func (e *Engine) recordTaskGraphSanitizerWarnings(ws *state.WorkflowState, warnings []string) {
+	if ws == nil || len(warnings) == 0 {
+		return
+	}
+	if ws.Execution.TaskGraphDiagnostics == nil {
+		ws.Execution.TaskGraphDiagnostics = &state.TaskGraphDiagnostics{}
+	}
+	diag := ws.Execution.TaskGraphDiagnostics
+	diag.UpdatedAt = time.Now().UTC()
+	diag.SanitizerWarnings = append(diag.SanitizerWarnings[:0], warnings...)
+}
+
+func (e *Engine) buildTaskGraphDiagnostics(ws *state.WorkflowState) *state.TaskGraphDiagnostics {
+	if ws == nil {
+		return nil
+	}
+	byID := make(map[string]state.Task, len(ws.Tasks))
+	for _, t := range ws.Tasks {
+		byID[t.ID] = t
+	}
+	blockedTaskIDs := make([]string, 0)
+	blockedByTask := make(map[string][]string)
+	hotUnmet := make(map[string]int)
+	for _, t := range ws.Tasks {
+		if state.PersonaKind(strings.ToLower(strings.TrimSpace(string(t.AssignedTo)))) != state.PersonaPod {
+			continue
+		}
+		if t.Status == state.TaskStatusCompleted {
+			continue
+		}
+		unmet := make([]string, 0)
+		for _, depID := range t.DependsOn {
+			depID = strings.TrimSpace(depID)
+			if depID == "" {
+				continue
+			}
+			dep, ok := byID[depID]
+			if !ok || dep.Status != state.TaskStatusCompleted {
+				unmet = append(unmet, depID)
+				hotUnmet[depID]++
+			}
+		}
+		if len(unmet) == 0 {
+			continue
+		}
+		blockedTaskIDs = append(blockedTaskIDs, t.ID)
+		blockedByTask[t.ID] = unmet
+	}
+
+	if len(blockedTaskIDs) == 0 {
+		return nil
+	}
+	diag := &state.TaskGraphDiagnostics{
+		UpdatedAt:            time.Now().UTC(),
+		BlockedTaskIDs:       blockedTaskIDs,
+		BlockedByTask:        blockedByTask,
+		HotUnmetDependencies: hotUnmet,
+	}
+	if ws.Execution.TaskGraphDiagnostics != nil && len(ws.Execution.TaskGraphDiagnostics.SanitizerWarnings) > 0 {
+		diag.SanitizerWarnings = append(diag.SanitizerWarnings,
+			ws.Execution.TaskGraphDiagnostics.SanitizerWarnings...)
+	}
+	return diag
 }
 
 // runRemediationPlanning invokes the Architect with the current blocking issues
@@ -2579,6 +2670,7 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		Toolchain:                  ws.Execution.Toolchain,
 		ValidationRuns:             ws.Execution.ValidationRuns,
 		Checkpoints:                ws.Execution.Checkpoints,
+		TaskGraphDiagnostics:       ws.Execution.TaskGraphDiagnostics,
 		Planning:                   ws.Execution.Planning,
 		AutoMode:                   ws.Execution.AutoMode,
 	}

@@ -61,6 +61,11 @@ func ResolveAndSanitizeTaskDependencies(tasks []Task) ([]Task, []string) {
 		out[i].DependsOn = dedupeStrings(resolved)
 	}
 
+	cycleWarnings := breakDependencyCycles(out)
+	if len(cycleWarnings) > 0 {
+		warnings = append(warnings, cycleWarnings...)
+	}
+
 	return out, warnings
 }
 
@@ -124,4 +129,108 @@ func dedupeStrings(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// breakDependencyCycles removes one edge at a time from discovered cycles
+// until the dependency graph is acyclic. Edge removals are deterministic.
+func breakDependencyCycles(tasks []Task) []string {
+	if len(tasks) == 0 {
+		return nil
+	}
+	idToIndex := make(map[string]int, len(tasks))
+	for i := range tasks {
+		idToIndex[tasks[i].ID] = i
+	}
+
+	var warnings []string
+	for {
+		cycle := firstDependencyCycle(tasks, idToIndex)
+		if len(cycle) < 2 {
+			break
+		}
+		fromID := cycle[0]
+		toID := cycle[1]
+		idx, ok := idToIndex[fromID]
+		if !ok {
+			break
+		}
+		before := len(tasks[idx].DependsOn)
+		filtered := make([]string, 0, before)
+		removed := false
+		for _, dep := range tasks[idx].DependsOn {
+			if !removed && dep == toID {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, dep)
+		}
+		if !removed {
+			break
+		}
+		tasks[idx].DependsOn = filtered
+		warnings = append(warnings, fmt.Sprintf(
+			"[task-graph] removed cyclic dependency %q -> %q to break cycle",
+			taskTitle(tasks, fromID), taskTitle(tasks, toID),
+		))
+	}
+	return warnings
+}
+
+// firstDependencyCycle returns a single cycle as an ordered ID path where
+// cycle[0] depends on cycle[1]. Returns nil when acyclic.
+func firstDependencyCycle(tasks []Task, idToIndex map[string]int) []string {
+	const (
+		white = iota
+		gray
+		black
+	)
+	color := make(map[string]int, len(tasks))
+	stack := make([]string, 0, len(tasks))
+	stackPos := make(map[string]int, len(tasks))
+
+	var visit func(id string) []string
+	visit = func(id string) []string {
+		color[id] = gray
+		stackPos[id] = len(stack)
+		stack = append(stack, id)
+
+		idx, ok := idToIndex[id]
+		if ok {
+			for _, dep := range tasks[idx].DependsOn {
+				if _, depKnown := idToIndex[dep]; !depKnown {
+					continue
+				}
+				switch color[dep] {
+				case white:
+					if cycle := visit(dep); len(cycle) > 0 {
+						return cycle
+					}
+				case gray:
+					start := stackPos[dep]
+					if start >= 0 && start < len(stack) {
+						cycle := append([]string(nil), stack[start:]...)
+						cycle = append(cycle, dep)
+						if len(cycle) >= 2 {
+							return cycle
+						}
+					}
+				}
+			}
+		}
+
+		stack = stack[:len(stack)-1]
+		delete(stackPos, id)
+		color[id] = black
+		return nil
+	}
+
+	for _, t := range tasks {
+		if color[t.ID] != white {
+			continue
+		}
+		if cycle := visit(t.ID); len(cycle) > 1 {
+			return cycle
+		}
+	}
+	return nil
 }

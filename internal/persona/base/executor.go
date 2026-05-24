@@ -479,6 +479,29 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 		}
 	}
 
+	if packet.TaskGraphDiagnostics != nil {
+		diag := packet.TaskGraphDiagnostics
+		sb.WriteString("\n## Task Graph Diagnostics\n")
+		if len(diag.SanitizerWarnings) > 0 {
+			sb.WriteString("Sanitizer warnings:\n")
+			for _, w := range diag.SanitizerWarnings {
+				sb.WriteString(fmt.Sprintf("- %s\n", w))
+			}
+		}
+		if len(diag.BlockedTaskIDs) > 0 {
+			sb.WriteString("Blocked pod tasks:\n")
+			for _, id := range diag.BlockedTaskIDs {
+				sb.WriteString(fmt.Sprintf("- %s\n", id))
+			}
+		}
+		if len(diag.HotUnmetDependencies) > 0 {
+			sb.WriteString("Hot unmet dependencies:\n")
+			for depID, count := range diag.HotUnmetDependencies {
+				sb.WriteString(fmt.Sprintf("- %s (%d blocked tasks)\n", depID, count))
+			}
+		}
+	}
+
 	if packet.IsRemediation {
 		sb.WriteString(fmt.Sprintf("\n## Remediation Context\nThis is a targeted remediation pass (QA cycle %d). ", packet.QACycle))
 		sb.WriteString("The blocking issues listed above were found in the previous QA review. ")

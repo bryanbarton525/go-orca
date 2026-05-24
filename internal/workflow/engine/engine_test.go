@@ -633,15 +633,21 @@ func TestRunPodPhase_LeavesBlockedTaskPendingWhenDependencyIncomplete(t *testing
 		WorkspaceRoot:   t.TempDir(),
 	})
 
-	err := eng.Run(context.Background(), ws.ID)
-	if err == nil {
-		t.Fatal("expected incomplete dependency chain to fail pod phase")
-	}
-	if !strings.Contains(err.Error(), "no runnable pod tasks") {
-		t.Fatalf("unexpected error: %v", err)
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("expected dependency deadlock to enter remediation path, got error: %v", err)
 	}
 	if len(order) != 0 {
 		t.Fatalf("expected blocked task not to execute, got order %v", order)
+	}
+	foundBlockedEvt := false
+	for _, evt := range ms.events {
+		if evt.Type == events.EventTaskGraphBlocked {
+			foundBlockedEvt = true
+			break
+		}
+	}
+	if !foundBlockedEvt {
+		t.Fatal("expected task.graph.blocked event to be emitted")
 	}
 }
 
