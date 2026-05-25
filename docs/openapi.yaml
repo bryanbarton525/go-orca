@@ -1241,6 +1241,66 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/persona-runs:
+    post:
+      summary: Run a single persona ad-hoc
+      operationId: createPersonaRun
+      tags:
+        - workflows
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/ScopeID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [persona]
+              properties:
+                persona: { type: string }
+                request: { type: string }
+                mode: { type: string }
+                provider: { type: string }
+                model: { type: string }
+                workflow_id: { type: string, format: uuid }
+                persist: { type: boolean }
+                tools_scope: { type: string, enum: [full, mcp_agent, none] }
+                timeout_sec: { type: integer }
+                workspace_path: { type: string }
+      responses:
+        "200":
+          description: Persona run result
+        "400":
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/workflow-templates:
+    get:
+      summary: List workflow templates
+      operationId: listWorkflowTemplates
+      tags:
+        - workflows
+      responses:
+        "200":
+          description: Template catalog
+
+  /api/v1/workflow-templates/{id}:
+    get:
+      summary: Get workflow template by id
+      operationId: getWorkflowTemplate
+      tags:
+        - workflows
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Template definition
+        "404":
+          $ref: '#/components/responses/NotFound'
+
   # ── Workflows ───────────────────────────────────────────────────────────────
 
   /api/v1/workflows:

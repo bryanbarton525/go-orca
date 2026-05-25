@@ -275,6 +275,93 @@ workflow:
 
 ---
 
+## API authentication (OIDC)
+
+For homelab clusters with **Zitadel** or **Authentik**, enable API Bearer auth via userinfo:
+
+```yaml
+server:
+  oidc:
+    userinfo_url: "https://auth.example.com/oidc/v1/userinfo"   # Zitadel
+    required: true
+    user_id_header: "X-User-Id"
+```
+
+Authentik example:
+
+```yaml
+server:
+  oidc:
+    userinfo_url: "https://authentik.example.com/application/o/go-orca/userinfo/"
+    required: true
+```
+
+Or via environment:
+
+```bash
+export GOORCA_SERVER_OIDC_USERINFO_URL="https://auth.example.com/oidc/v1/userinfo"
+export GOORCA_SERVER_OIDC_REQUIRED=true
+```
+
+Unauthenticated probes remain on `GET /healthz`, `GET /readyz`, and `GET /metrics` (root and `/api/v1/healthz`).
+
+Event ingest (`POST /api/v1/events`) can use the same global OIDC middleware when `required: true`. Otherwise configure `streaming.userinfo_url` for ingest-only validation (see [Event Streaming](streaming.md)).
+
+## MCP bridge (mcp-orca)
+
+Deploy **mcp-orca** alongside `go-orca-api` so external agents can offload work:
+
+```bash
+go build -o mcp-orca ./cmd/mcp-orca
+```
+
+Environment:
+
+| Variable | Description |
+|----------|-------------|
+| `ORCA_API_BASE_URL` | e.g. `http://go-orca-api:8080` |
+| `GOORCA_MCP_API_KEY` | Bearer token forwarded to the API (`Authorization: Bearer`) — use a Zitadel/Authentik access token or PAT when OIDC is enabled |
+| `GOORCA_TENANT_ID` / `GOORCA_SCOPE_ID` | Default headers for tool calls |
+
+Cursor MCP client example (token from your IdP):
+
+```json
+{
+  "mcpServers": {
+    "go-orca": {
+      "url": "http://mcp-orca:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <zitadel-or-authentik-token>"
+      }
+    }
+  }
+}
+```
+
+Homelab: add a `mcp-orca` Deployment/Service (port 3000, path `/mcp`) mirroring other `mcp-*` pods.
+
+## Dual Ollama providers (GPU + CPU)
+
+```yaml
+providers:
+  ollama:
+    enabled: true
+    host: http://ollama-gpu:11434
+    instance_name: ollama-gpu
+    role: primary
+  instances:
+    - name: ollama-cpu
+      type: ollama
+      enabled: true
+      host: http://ollama-cpu:11434
+      role: auxiliary
+      default_model: llama3.2:3b
+```
+
+Workflow templates (e.g. `software-default`) can set `persona_providers` per persona. MCP agents use the auxiliary provider when `workflow.mcp_agents` is enabled.
+
+---
+
 ## Production Checklist
 
 - [ ] Set `server.mode: "release"` (default)

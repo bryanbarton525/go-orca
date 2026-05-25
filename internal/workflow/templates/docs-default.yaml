@@ -1,0 +1,15 @@
+id: docs-default
+mode: docs
+required_personas:
+  - project_manager
+  - architect
+  - pod
+  - finalizer
+persona_models:
+  project_manager: qwen3.5:9b
+  architect: qwen3.5:9b
+  pod: qwen3.5:9b
+pod_specialties:
+  - writer
+workflow_hints:
+  - documentation

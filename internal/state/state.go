@@ -96,6 +96,17 @@ const (
 // PersonaModelAssignments stores the resolved model per persona.
 type PersonaModelAssignments map[PersonaKind]string
 
+// PersonaProviderAssignments stores the provider instance name per persona.
+type PersonaProviderAssignments map[PersonaKind]string
+
+// TaskTier classifies pod task execution cost.
+type TaskTier string
+
+const (
+	TaskTierLight TaskTier = "light"
+	TaskTierHeavy TaskTier = "heavy"
+)
+
 // ProviderModelInfo is a provider-advertised model that was allowed by policy
 // at workflow start.
 type ProviderModelInfo struct {
@@ -165,6 +176,32 @@ type Execution struct {
 	Planning *PlanningState `json:"planning,omitempty"`
 	// AutoMode tracks dynamic workflow/pod definition selection attempts.
 	AutoMode *AutoModeState `json:"auto_mode,omitempty"`
+	// ResourceSnapshot captures provider load at routing time.
+	ResourceSnapshot *ResourceSnapshot `json:"resource_snapshot,omitempty"`
+	// PersonaRunToolsScope overrides tools for ephemeral runs: full | mcp_agent | none.
+	PersonaRunToolsScope string `json:"persona_run_tools_scope,omitempty"`
+	// PreferMCPAgents forces Pod to use invoke_mcp_agent when enabled.
+	PreferMCPAgents bool `json:"prefer_mcp_agents,omitempty"`
+	// TemplateID is the workflow template applied at create time.
+	TemplateID string `json:"template_id,omitempty"`
+	// PersonaProviderAssignments maps persona → provider instance (ollama-gpu, ollama-cpu).
+	PersonaProviderAssignments PersonaProviderAssignments `json:"persona_providers,omitempty"`
+}
+
+// ResourceSnapshot records cluster/provider load for routing.
+type ResourceSnapshot struct {
+	ProbedAt            time.Time                `json:"probed_at"`
+	OllamaInstances     []OllamaInstanceSnapshot `json:"ollama_instances,omitempty"`
+	SchedulerQueueDepth int                      `json:"scheduler_queue_depth,omitempty"`
+	GPUSaturated        bool                     `json:"gpu_saturated,omitempty"`
+}
+
+// OllamaInstanceSnapshot is load data from one Ollama host.
+type OllamaInstanceSnapshot struct {
+	ProviderName    string  `json:"provider_name"`
+	Host            string  `json:"host,omitempty"`
+	LoadedModels    int     `json:"loaded_models"`
+	EstimatedVRAMGB float64 `json:"estimated_vram_gb,omitempty"`
 }
 
 // WorkspaceInfo describes the materialized repo/worktree used by toolchain
@@ -560,8 +597,9 @@ type Task struct {
 	// aliases (bull, scout, scribe, engineer, tracker).  When empty or
 	// unrecognised the generic pod prompt is used.  See
 	// internal/persona/prompts/specialty.go for the full alias table.
-	Specialty string `json:"specialty,omitempty"`
-	Output    string `json:"output,omitempty"`
+	Specialty string   `json:"specialty,omitempty"`
+	Tier      TaskTier `json:"tier,omitempty"`
+	Output    string   `json:"output,omitempty"`
 	// Attempt is the QA/remediation cycle that created this task (0 = initial).
 	Attempt int `json:"attempt,omitempty"`
 	// RemediationSource is "qa_remediation" when the task was created by the

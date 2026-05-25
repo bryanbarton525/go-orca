@@ -69,6 +69,18 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 	TrustedProxies  []string      `mapstructure:"trusted_proxies"`
 	Mode            string        `mapstructure:"mode"` // debug | release | test
+	OIDC            OIDCConfig    `mapstructure:"oidc"`
+}
+
+// OIDCConfig validates API requests via OIDC userinfo (Zitadel, Authentik, etc.).
+type OIDCConfig struct {
+	// UserinfoURL is the OIDC userinfo endpoint. When set with Required=true, all
+	// /api/v1 routes except health probes require Authorization: Bearer.
+	UserinfoURL string `mapstructure:"userinfo_url"`
+	Required    bool   `mapstructure:"required"`
+	// UserIDHeader receives the token sub after validation (default X-User-Id).
+	UserIDHeader string        `mapstructure:"user_id_header"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // DatabaseConfig holds persistence settings.
@@ -381,6 +393,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.write_timeout", 60*time.Second)
 	v.SetDefault("server.shutdown_timeout", 15*time.Second)
 	v.SetDefault("server.mode", "release")
+	v.SetDefault("server.oidc.required", false)
+	v.SetDefault("server.oidc.user_id_header", "X-User-Id")
+	v.SetDefault("server.oidc.timeout", 5*time.Second)
 
 	// Database
 	v.SetDefault("database.driver", string(DriverSQLite))
@@ -490,5 +505,32 @@ func validate(cfg *Config) error {
 	if cfg.Workflow.AutoModeMaxDefinitionAttempts < 1 {
 		return fmt.Errorf("workflow: auto_mode_max_definition_attempts must be >= 1")
 	}
+	if cfg.Server.OIDC.Required && strings.TrimSpace(cfg.Server.OIDC.UserinfoURL) == "" {
+		return fmt.Errorf("server: oidc.userinfo_url is required when oidc.required is true")
+	}
 	return nil
+}
+
+// EffectiveOIDCUserinfo returns the userinfo URL and auth options for API middleware.
+// server.oidc takes precedence; streaming.userinfo_url is a legacy fallback when
+// server OIDC URL is unset (homelab event ingest compatibility).
+func (cfg *Config) EffectiveOIDCUserinfo() (url string, required bool, userIDHeader string, timeout time.Duration) {
+	url = strings.TrimSpace(cfg.Server.OIDC.UserinfoURL)
+	required = cfg.Server.OIDC.Required
+	userIDHeader = strings.TrimSpace(cfg.Server.OIDC.UserIDHeader)
+	timeout = cfg.Server.OIDC.Timeout
+	if userIDHeader == "" {
+		userIDHeader = strings.TrimSpace(cfg.Streaming.UserIDHeader)
+	}
+	if userIDHeader == "" {
+		userIDHeader = "X-User-Id"
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if url == "" {
+		url = strings.TrimSpace(cfg.Streaming.UserinfoURL)
+		required = false
+	}
+	return url, required, userIDHeader, timeout
 }

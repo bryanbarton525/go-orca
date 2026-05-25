@@ -1,0 +1,19 @@
+id: content-default
+mode: content
+required_personas:
+  - project_manager
+  - architect
+  - pod
+  - qa
+  - finalizer
+persona_models:
+  project_manager: qwen3.5:9b
+  architect: qwen3.5:9b
+  pod: qwen3.5:9b
+  qa: qwen3.5:9b
+toolchain_id: node
+pod_specialties:
+  - writer
+mcp_agents: false
+workflow_hints:
+  - content-pipeline

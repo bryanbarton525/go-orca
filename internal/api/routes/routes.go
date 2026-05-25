@@ -3,6 +3,7 @@ package routes
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -15,12 +16,14 @@ import (
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
 	"github.com/go-orca/go-orca/internal/storage"
 	"github.com/go-orca/go-orca/internal/streaming"
+	"github.com/go-orca/go-orca/internal/workflow/engine"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
 )
 
 // Config holds the dependencies required to wire all routes.
 type Config struct {
 	Store                 storage.Store
+	Engine                *engine.Engine
 	Scheduler             *scheduler.Scheduler
 	Logger                *zap.Logger
 	DefaultTenantID       string
@@ -37,6 +40,10 @@ type Config struct {
 	StreamingHub          *streaming.Hub
 	StreamingTopic        string
 	StreamingUserinfoURL  string
+	OIDCUserinfoURL       string
+	OIDCRequired          bool
+	OIDCUserIDHeader      string
+	OIDCTimeout           time.Duration
 	MetricsHandler        http.Handler
 	// GinMode sets gin.SetMode; defaults to "release".
 	GinMode string
@@ -67,10 +74,38 @@ func New(cfg Config) *gin.Engine {
 
 	// ── API v1 ───────────────────────────────────────────────────────────────
 	v1 := r.Group("/api/v1")
+	v1.GET("/healthz", handlers.Healthz())
+	v1.GET("/readyz", handlers.Readyz(cfg.Store, cfg.StreamingReadiness))
+
+	api := v1.Group("")
+	if url := cfg.OIDCUserinfoURL; url != "" {
+		api.Use(middleware.OIDCBearerAuth(middleware.OIDCAuthConfig{
+			UserinfoURL:  url,
+			Required:     cfg.OIDCRequired,
+			UserIDHeader: cfg.OIDCUserIDHeader,
+			Timeout:      cfg.OIDCTimeout,
+		}))
+	}
+	mountV1API(api, cfg)
+
+	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────
+	r.GET("/docs/openapi.yaml", func(c *gin.Context) {
+		c.Data(200, "application/yaml; charset=utf-8", docs.OpenAPISpec)
+	})
+	r.GET("/docs", func(c *gin.Context) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, swaggerHTML)
+	})
+
+	return r
+}
+
+// mountV1API registers versioned API routes on group (OIDC middleware may already be applied).
+func mountV1API(v1 *gin.RouterGroup, cfg Config) {
 	{
-		// Health (also accessible under the versioned prefix)
-		v1.GET("/healthz", handlers.Healthz())
-		v1.GET("/readyz", handlers.Readyz(cfg.Store, cfg.StreamingReadiness))
+		v1.GET("/workflow-templates", handlers.ListWorkflowTemplates())
+		v1.GET("/workflow-templates/:id", handlers.GetWorkflowTemplate())
+		v1.POST("/persona-runs", handlers.CreatePersonaRun(cfg.Engine, cfg.Logger))
 
 		// ── Workflows ────────────────────────────────────────────────────────
 		wf := v1.Group("/workflows")
@@ -132,25 +167,18 @@ func New(cfg Config) *gin.Engine {
 		v1.GET("/streaming", handlers.GetStreamingCapabilities(cfg.StreamingEnabled, cfg.StreamingTopic))
 
 		if cfg.StreamingEnabled {
-			eventMiddleware := []gin.HandlerFunc{
-				middleware.StreamingBearerUserinfo(cfg.StreamingUserinfoURL, cfg.StreamingUserIDHeader),
-				middleware.RequireMeshUserID(cfg.StreamingUserIDHeader),
+			eventMiddleware := []gin.HandlerFunc{}
+			// When global OIDC auth is not required, keep legacy per-route userinfo for events.
+			if cfg.OIDCUserinfoURL == "" || !cfg.OIDCRequired {
+				eventMiddleware = append(eventMiddleware,
+					middleware.StreamingBearerUserinfo(cfg.StreamingUserinfoURL, cfg.StreamingUserIDHeader))
 			}
+			eventMiddleware = append(eventMiddleware,
+				middleware.RequireMeshUserID(cfg.StreamingUserIDHeader))
 			events := v1.Group("/events", eventMiddleware...)
 			events.POST("", handlers.IngestEvent(cfg.StreamingProducer, cfg.StreamingMetrics, cfg.Logger))
 		}
 	}
-
-	// ── API Docs (Swagger UI) ─────────────────────────────────────────────────
-	r.GET("/docs/openapi.yaml", func(c *gin.Context) {
-		c.Data(200, "application/yaml; charset=utf-8", docs.OpenAPISpec)
-	})
-	r.GET("/docs", func(c *gin.Context) {
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, swaggerHTML)
-	})
-
-	return r
 }
 
 // swaggerHTML is a minimal Swagger UI page that loads the spec from the API.

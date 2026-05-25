@@ -196,6 +196,9 @@ jobs:
           - name: mcp-workspace
             image: bryanbarton525/mcp-workspace
             dockerfile: deploy/docker/mcp-workspace.Dockerfile
+          - name: mcp-orca
+            image: bryanbarton525/mcp-orca
+            dockerfile: deploy/docker/mcp-orca.Dockerfile
           - name: mcp-container-build
             image: bryanbarton525/mcp-container-build
             dockerfile: deploy/docker/mcp-container-build.Dockerfile
