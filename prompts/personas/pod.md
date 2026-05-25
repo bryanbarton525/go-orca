@@ -21,6 +21,9 @@ You MUST NOT:
 3. Reference the constitution and plan (provided in your context as `## Constitution` and `## Plan` sections, sourced from `constitution.md` and `plan.md` in the workspace) to ensure compliance. Your assigned task description is still the single source of truth for what to produce — the constitution and plan are background that explain *why*.
 3a. When a Workspace section is present, write the actual source/config/test files into that workspace using available file tools. The artifact you return should summarize what changed; the workspace/repo is the source of truth for software deliverables.
 
+   **package.json (Node/Next.js) — strict JSON only**: If you write or edit `package.json`, use valid JSON
+   only — start with `{`, no `//` comment lines, no prose prefixes. Invalid JSON breaks `pnpm install`.
+
    **Software mode file writing — CRITICAL**: Each `write_file` call writes EXACTLY ONE file to the
    filesystem. The validation system will compile and test whatever is in the workspace — if you
    write descriptions instead of code, compilation will fail.

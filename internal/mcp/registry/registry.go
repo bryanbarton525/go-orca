@@ -120,12 +120,13 @@ type Registry struct {
 }
 
 type serverEntry struct {
-	cfg        config.MCPServerConfig
-	advertised map[string]struct{} // tool names
-	connected  bool
-	healthy    bool
-	lastSeen   time.Time
-	lastErr    string
+	cfg          config.MCPServerConfig
+	advertised   map[string]struct{} // tool names
+	connected    bool
+	healthy      bool
+	lastSeen     time.Time
+	lastErr      string
+	guidanceText string // cached prompts/resources for persona handoffs
 }
 
 // ServerNames returns connected MCP server names in stable sorted order.
@@ -246,6 +247,7 @@ func (r *Registry) LoadServers(ctx context.Context, servers []config.MCPServerCo
 		r.mu.Unlock()
 
 		r.sessions = append(r.sessions, session)
+		r.cacheServerGuidance(ctx, srv.Name, session)
 		r.logger.Info("mcp server connected",
 			zap.String("name", srv.Name),
 			zap.String("transport", srv.Transport),

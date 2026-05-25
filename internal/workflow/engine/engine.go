@@ -30,6 +30,7 @@ import (
 	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
 	mcpregistry "github.com/go-orca/go-orca/internal/mcp/registry"
+	"github.com/go-orca/go-orca/internal/mcp/toolchaindeps"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/persona/director"
 	"github.com/go-orca/go-orca/internal/persona/prompts"
@@ -1384,6 +1385,11 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 		validTasks = append(validTasks, t)
 	}
 
+	validTasks = filterDuplicateRemediationTasks(ws, validTasks, remediationSource, cycle)
+	if inject := packageJSONRemediationTask(ws, remediationSource, cycle); inject != nil {
+		validTasks = append([]state.Task{*inject}, validTasks...)
+	}
+
 	if len(validTasks) == 0 {
 		return fmt.Errorf("architect produced no valid pod tasks for remediation cycle %d (blocking issues: %v)", cycle, ws.BlockingIssues)
 	}
@@ -2013,6 +2019,11 @@ func validationPreflightIssue(ws *state.WorkflowState, tc ToolchainConfig) strin
 	if ws == nil || ws.Execution.Workspace == nil {
 		return ""
 	}
+	if toolchainTargetsNodeManifest(tc) {
+		if issue := packageJSONPreflight(ws.Execution.Workspace.Path); issue != "" {
+			return issue
+		}
+	}
 	if !toolchainTargetsLanguage(tc, "go") {
 		return ""
 	}
@@ -2024,6 +2035,19 @@ func validationPreflightIssue(ws *state.WorkflowState, tc ToolchainConfig) strin
 		return ""
 	}
 	return fmt.Sprintf("[Source Files] Workspace validation found no Go source files in %s. Pod must write the source files before Go validation can run.", ws.Execution.Workspace.Path)
+}
+
+func toolchainTargetsNodeManifest(tc ToolchainConfig) bool {
+	for _, lang := range []string{"javascript", "typescript", "node", "nextjs"} {
+		if toolchainTargetsLanguage(tc, lang) || strings.EqualFold(strings.TrimSpace(tc.ID), lang) {
+			return true
+		}
+	}
+	return false
+}
+
+func packageJSONPreflight(workspacePath string) string {
+	return toolchaindeps.PackageJSONPreflightIssue(workspacePath)
 }
 
 func toolchainTargetsLanguage(tc ToolchainConfig, language string) bool {
@@ -2717,6 +2741,11 @@ func (e *Engine) buildPacket(ws *state.WorkflowState, kind state.PersonaKind, sn
 		packet.SkillsContext = snap.SkillsContext()
 		packet.CustomAgentMD = snap.AgentsContext()
 		packet.PromptsContext = snap.PromptsContext()
+	}
+	if ws.Execution.Toolchain != nil {
+		if g := e.toolchainGuidanceContext(ws.Execution.Toolchain.ID); g != "" {
+			packet.PromptsContext = strings.TrimSpace(packet.PromptsContext + "\n\n---\n" + g)
+		}
 	}
 
 	if kind == state.PersonaQA {

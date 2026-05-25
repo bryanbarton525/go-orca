@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
+	"github.com/go-orca/go-orca/internal/mcp/guidance"
 	"github.com/go-orca/go-orca/internal/mcp/policy"
 	"github.com/go-orca/go-orca/internal/mcp/server"
 	"github.com/go-orca/go-orca/internal/mcp/toolchaindeps"
@@ -58,12 +59,13 @@ func main() {
 }
 
 func register(srv *server.Server, root string, allow policy.Allowlist, auditor policy.Auditor) {
+	guidance.RegisterNextJS(srv)
 	run := makeRunner(root, allow, auditor)
 
 	// Install — plain pnpm install so validation succeeds while Pod still
 	// edits package.json (no frozen lockfile during remediation loops).
 	server.AddCapability(srv, "next_install",
-		"Run `pnpm install` in the Next.js workspace.",
+		"Run `pnpm install` in the Next.js workspace. Requires strict JSON package.json (see MCP resource orca://schemas/package.json).",
 		installHandler(root, allow, auditor))
 
 	// Build — invokes the project's build script which calls `next build`.
@@ -101,6 +103,15 @@ func installHandler(root string, allow policy.Allowlist, auditor policy.Auditor)
 		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
 		if err != nil {
 			return capabilities.Result{Error: err.Error()}
+		}
+		if ok, issue := toolchaindeps.CheckPackageJSON(workdir); !ok {
+			return capabilities.Result{
+				Success: false,
+				Passed:  false,
+				Error:   issue,
+				Stderr:  issue,
+				Output:  issue,
+			}
 		}
 		return policy.Run(ctx, policy.RunOptions{
 			Argv:       toolchaindeps.PnpmInstallArgv(workdir),

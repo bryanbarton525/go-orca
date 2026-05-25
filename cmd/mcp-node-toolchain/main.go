@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/go-orca/go-orca/internal/mcp/capabilities"
+	"github.com/go-orca/go-orca/internal/mcp/guidance"
 	"github.com/go-orca/go-orca/internal/mcp/policy"
 	"github.com/go-orca/go-orca/internal/mcp/server"
 	"github.com/go-orca/go-orca/internal/mcp/toolchaindeps"
@@ -55,6 +56,7 @@ func main() {
 }
 
 func register(srv *server.Server, root string, allow policy.Allowlist, auditor policy.Auditor) {
+	guidance.RegisterNode(srv)
 	run := makeRunner(root, allow, auditor)
 
 	server.AddCapability(srv, "npm_ci", "Run `npm ci` or `npm install` depending on lockfile presence.",
@@ -76,32 +78,32 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 }
 
 func pnpmInstallHandler(root string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
-	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
-		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
-		if err != nil {
-			return capabilities.Result{Error: err.Error()}
-		}
-		return policy.Run(ctx, policy.RunOptions{
-			Argv:       toolchaindeps.PnpmInstallArgv(workdir),
-			WorkingDir: workdir,
-			Timeout:    10 * time.Minute,
-			Capability: capabilities.InstallDependencies,
-			WorkflowID: args.WorkflowID,
-			Allow:      allow,
-			Auditor:    auditor,
-			Env:        baseEnv(),
-		})
-	}
+	return installGuard(root, func(workdir string) []string {
+		return toolchaindeps.PnpmInstallArgv(workdir)
+	}, allow, auditor)
 }
 
 func npmInstallHandler(root string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
+	return installGuard(root, toolchaindeps.NpmInstallArgv, allow, auditor)
+}
+
+func installGuard(root string, argvFn func(string) []string, allow policy.Allowlist, auditor policy.Auditor) server.CapabilityHandler {
 	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
 		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
 		if err != nil {
 			return capabilities.Result{Error: err.Error()}
 		}
+		if ok, issue := toolchaindeps.CheckPackageJSON(workdir); !ok {
+			return capabilities.Result{
+				Success: false,
+				Passed:  false,
+				Error:   issue,
+				Stderr:  issue,
+				Output:  issue,
+			}
+		}
 		return policy.Run(ctx, policy.RunOptions{
-			Argv:       toolchaindeps.NpmInstallArgv(workdir),
+			Argv:       argvFn(workdir),
 			WorkingDir: workdir,
 			Timeout:    10 * time.Minute,
 			Capability: capabilities.InstallDependencies,
