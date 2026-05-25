@@ -6,6 +6,13 @@ description: Use this skill when implementing code for any module in this reposi
 
 Use this skill when implementing code for any module in this repository.
 
+## Workflow personas (Director / PM / Architect)
+
+Software workflows are orchestrated by go-orca personas before any code is written. When changing persona behavior or debugging “stuck” workflows:
+
+- **Model routing** and **PM JSON schema** rules live in the **`workflow-orchestration`** skill and `prompts/personas/director.md` / `project_manager.md` — do not rely on per-request prompt hacks.
+- The **Architect** must align task paths with the layout profiles below; the **Pod** implements those tasks.
+
 ## Language Layout Profiles — CRITICAL
 
 When creating a new project or major module, select the matching profile below and keep file paths consistent with it. Do not invent ad-hoc directory trees.
