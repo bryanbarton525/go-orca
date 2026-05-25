@@ -166,9 +166,12 @@ func main() {
 
 	// ── Build MCP registry (servers + toolchains) ────────────────────────────
 	mcpReg := mcpregistry.New(toolReg, log)
+	mcpProbeCtx, mcpProbeCancel := context.WithCancel(ctx)
+	defer mcpProbeCancel()
 	mcpReg.LoadServers(ctx, cfg.Tools.MCP)
 	mcpReg.LoadToolchains(buildRegistryToolchains(cfg))
 	mcpReg.Probe(ctx)
+	mcpReg.StartProbeLoop(mcpProbeCtx, 15*time.Second)
 
 	var podToolReg *tools.Registry
 	if cfg.Workflow.MCPAgents.Enabled {
@@ -316,6 +319,7 @@ func main() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer cancel()
 
+		mcpProbeCancel()
 		if consumerCancel != nil {
 			consumerCancel()
 		}

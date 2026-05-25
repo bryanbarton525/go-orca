@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +32,6 @@ import (
 
 	"github.com/go-orca/go-orca/internal/config"
 	"github.com/go-orca/go-orca/internal/tools"
-	mcpclient "github.com/go-orca/go-orca/internal/tools/mcp"
 )
 
 // ServerStatus describes one entry in the server layer of the registry.
@@ -112,6 +110,7 @@ type Registry struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	tools      *tools.Registry
+	connect    ConnectOptions
 
 	mu         sync.RWMutex
 	servers    map[string]*serverEntry
@@ -122,6 +121,7 @@ type Registry struct {
 type serverEntry struct {
 	cfg          config.MCPServerConfig
 	advertised   map[string]struct{} // tool names
+	session      *sdkmcp.ClientSession
 	connected    bool
 	healthy      bool
 	lastSeen     time.Time
@@ -192,7 +192,8 @@ func New(toolReg *tools.Registry, logger *zap.Logger) *Registry {
 // into the underlying tool registry, and stores connection state.  Connection
 // failures are logged and do not prevent startup; the affected servers are
 // marked unhealthy and any toolchain that depends on them will fail to
-// resolve at workflow start.
+// resolve at workflow start.  Each server is retried with backoff so a cold
+// MCP pod at API startup does not stay disconnected permanently.
 func (r *Registry) LoadServers(ctx context.Context, servers []config.MCPServerConfig) {
 	for _, srv := range servers {
 		entry := &serverEntry{cfg: srv, advertised: make(map[string]struct{})}
@@ -200,58 +201,25 @@ func (r *Registry) LoadServers(ctx context.Context, servers []config.MCPServerCo
 		r.servers[srv.Name] = entry
 		r.mu.Unlock()
 
-		opts := mcpclient.LoaderOptions{
-			HTTPTimeout:   srv.HTTPTimeout,
-			TLSSkipVerify: srv.TLSSkipVerify,
-		}
-		var (
-			session *sdkmcp.ClientSession
-			err     error
-		)
-		switch srv.Transport {
-		case "sse":
-			opts.HTTPTransport = mcpclient.TransportSSE
-			session, err = mcpclient.Load(ctx, r.tools, srv.Endpoint, opts)
-		case "command", "stdio":
-			session, err = mcpclient.LoadCommand(ctx, r.tools, srv.Command, srv.Args, opts)
-		default:
-			session, err = mcpclient.Load(ctx, r.tools, srv.Endpoint, opts)
-		}
+		session, advertised, err := r.connectServerWithRetry(ctx, srv, r.connect)
 		if err != nil {
 			r.logger.Warn("mcp server load failed",
 				zap.String("name", srv.Name),
 				zap.Error(err),
 			)
+			r.markServerDisconnected(entry, err)
 			r.mu.Lock()
-			entry.lastErr = err.Error()
-			entry.connected = false
 			entry.healthy = false
 			r.mu.Unlock()
 			continue
 		}
 
-		// Discover advertised tools for the registry's schema cache.  The
-		// underlying client adapter has already registered each tool into
-		// r.tools, so we just record names here.
-		listed, listErr := session.ListTools(ctx, nil)
-		r.mu.Lock()
-		entry.connected = true
-		entry.lastSeen = time.Now().UTC()
-		if listErr != nil {
-			entry.lastErr = listErr.Error()
-		} else {
-			for _, t := range listed.Tools {
-				entry.advertised[t.Name] = struct{}{}
-			}
-		}
-		r.mu.Unlock()
-
-		r.sessions = append(r.sessions, session)
+		r.applyConnectedSession(entry, session, advertised)
 		r.cacheServerGuidance(ctx, srv.Name, session)
 		r.logger.Info("mcp server connected",
 			zap.String("name", srv.Name),
 			zap.String("transport", srv.Transport),
-			zap.Int("tools", len(entry.advertised)),
+			zap.Int("tools", len(advertised)),
 		)
 	}
 }
@@ -291,42 +259,35 @@ func (r *Registry) LoadToolchains(toolchains []Toolchain) {
 }
 
 // Probe pings each server's health_path (defaulting to /healthz) and updates
-// per-server health.  Servers with no HTTP endpoint (command transport) are
-// marked healthy whenever connected.
+// per-server health.  When the HTTP endpoint is healthy but the MCP session
+// is disconnected (common after a rolling deploy), Probe attempts reconnect
+// with the same backoff policy as [Registry.LoadServers].
 func (r *Registry) Probe(ctx context.Context) {
 	r.mu.RLock()
-	entries := make([]*serverEntry, 0, len(r.servers))
-	for _, e := range r.servers {
-		entries = append(entries, e)
+	names := make([]string, 0, len(r.servers))
+	for name := range r.servers {
+		names = append(names, name)
 	}
 	r.mu.RUnlock()
+	sortStrings(names)
 
-	for _, e := range entries {
+	for _, name := range names {
+		r.mu.RLock()
+		e := r.servers[name]
+		r.mu.RUnlock()
+		if e == nil {
+			continue
+		}
+
 		healthy := e.connected
 		errStr := ""
 
 		if e.cfg.Endpoint != "" {
-			u, err := url.Parse(e.cfg.Endpoint)
-			if err == nil {
-				path := e.cfg.HealthPath
-				if path == "" {
-					path = "/healthz"
-				}
-				u.Path = path
-				probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-				req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, u.String(), nil)
-				resp, perr := r.httpClient.Do(req)
-				cancel()
-				if perr != nil {
-					healthy = false
-					errStr = perr.Error()
-				} else {
-					_ = resp.Body.Close()
-					healthy = resp.StatusCode >= 200 && resp.StatusCode < 300
-					if !healthy {
-						errStr = fmt.Sprintf("health probe returned %d", resp.StatusCode)
-					}
-				}
+			if r.serverHTTPEndpointHealthy(ctx, e) {
+				healthy = true
+			} else {
+				healthy = false
+				errStr = "health probe failed"
 			}
 		}
 
@@ -338,7 +299,12 @@ func (r *Registry) Probe(ctx context.Context) {
 		if errStr != "" {
 			e.lastErr = errStr
 		}
+		needsReconnect := !e.connected
 		r.mu.Unlock()
+
+		if needsReconnect {
+			r.maybeReconnectServer(ctx, name, r.connect)
+		}
 	}
 }
 
@@ -365,10 +331,23 @@ func (r *Registry) Toolchain(id string) (Toolchain, bool) {
 // is not bound, the target server is unreachable, or the tool is not
 // advertised.
 func (r *Registry) Resolve(toolchainID, capability string) (string, error) {
+	return r.ResolveContext(context.Background(), toolchainID, capability)
+}
+
+// ResolveContext resolves a capability, attempting MCP reconnect when the
+// backing server is down but its HTTP health endpoint responds.
+func (r *Registry) ResolveContext(ctx context.Context, toolchainID, capability string) (string, error) {
 	capability = strings.TrimSpace(capability)
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	tc, ok := r.toolchains[toolchainID]
+	r.mu.RUnlock()
+	if ok {
+		r.maybeReconnectServer(ctx, tc.MCPServer, r.connect)
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tc, ok = r.toolchains[toolchainID]
 	if !ok {
 		return "", &ResolveError{ToolchainID: toolchainID, Capability: capability, Reason: "toolchain not configured"}
 	}
@@ -396,7 +375,7 @@ func (r *Registry) Resolve(toolchainID, capability string) (string, error) {
 // [CallResult].  args is the JSON-encoded argument payload as produced by the
 // engine's toolchainArgs helper.
 func (r *Registry) CallCapability(ctx context.Context, toolchainID, capability string, args json.RawMessage) (CallResult, error) {
-	toolName, err := r.Resolve(toolchainID, capability)
+	toolName, err := r.ResolveContext(ctx, toolchainID, capability)
 	if err != nil {
 		return CallResult{}, err
 	}
