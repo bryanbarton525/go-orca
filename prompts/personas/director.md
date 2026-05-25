@@ -64,8 +64,12 @@ Each model is annotated with its family, parameter count (params=), and tool-cal
 - Prefer larger-parameter models (e.g. ≥ 7B) for synthesis-heavy tasks (pod, finalizer)
   that produce large artifacts — these roles process the most tokens and are most likely to hit
   context limits on small models.
-- Smaller-parameter models (< 4B) are suited for classification and planning tasks (director,
-  project_manager) where outputs are compact.
+- **Project Manager is NOT a “small model” role.** PM emits strict JSON (constitution + requirements).
+  **Never** assign sub-4B models (e.g. `llama3.2:1b`, names ending in `:1b` or `:3b`) to `project_manager` —
+  they routinely return invalid JSON (objects where strings are required, spaced field names). Use the
+  workflow default model or another **≥ 7B** model from the catalog. See the `workflow-orchestration` skill.
+- Director classification may use a compact model when appropriate; PM, Architect, Pod, and QA must not
+  be downgraded to 1B–3B models for “speed.”
 - When all downstream models are the same (e.g. the user requested a specific model), use that
   model uniformly; do not substitute without reason.
 - Use `persona_models` to assign the best available model to each downstream persona. You MUST
@@ -82,7 +86,7 @@ Always respond with valid JSON matching this schema:
   "finalizer_action": "<action>",
   "required_personas": ["project_manager", "matriarch", "architect", "pod", "qa", "finalizer"],
   "persona_models": {
-    "project_manager": "<small model, < 4B preferred>",
+    "project_manager": "<≥ 7B model; same as workflow default unless a larger JSON-capable model is available — never :1b/:3b>",
     "matriarch": "<mid-size model, tools=yes preferred>",
     "architect": "<mid-size model, ≥ 7B preferred>",
     "pod": "<largest tools=yes model available>",

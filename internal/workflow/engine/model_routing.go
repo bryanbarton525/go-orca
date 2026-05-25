@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +12,16 @@ import (
 	"github.com/go-orca/go-orca/internal/provider/common"
 	ollamaprovider "github.com/go-orca/go-orca/internal/provider/ollama"
 	"github.com/go-orca/go-orca/internal/state"
+)
+
+// minStructuredOutputModelB is the minimum parameter size (billions) for personas
+// that emit strict JSON (project_manager). Smaller models are swapped in
+// normalizePersonaModels.
+const minStructuredOutputModelB = 4.0
+
+var (
+	modelTagSmallPattern = regexp.MustCompile(`:[13]b\b`)
+	paramSizeBPattern    = regexp.MustCompile(`(?i)^([\d.]+)\s*b$`)
 )
 
 const defaultModelDiscoveryTimeout = 10 * time.Second
@@ -314,6 +326,87 @@ func ollamaNativeToolCallingUnstable(provider, model string) bool {
 	return ollamaprovider.NativeToolCallingUnstable(model)
 }
 
+func catalogModelInfo(provider, model string, catalogs map[string]state.ProviderModelCatalog) (state.ProviderModelInfo, bool) {
+	provider = canonicalProviderName(provider)
+	catalog, ok := catalogs[provider]
+	if !ok {
+		return state.ProviderModelInfo{}, false
+	}
+	model = strings.TrimSpace(model)
+	for _, item := range catalog.Models {
+		if canonicalModelID(item.ID) == canonicalModelID(model) {
+			return item, true
+		}
+	}
+	return state.ProviderModelInfo{}, false
+}
+
+func modelParameterBillions(info state.ProviderModelInfo) float64 {
+	raw := strings.TrimSpace(info.Metadata["parameter_size"])
+	if raw == "" {
+		return 0
+	}
+	m := paramSizeBPattern.FindStringSubmatch(raw)
+	if len(m) < 2 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+func modelTooSmallForStructuredOutput(info state.ProviderModelInfo) bool {
+	if b := modelParameterBillions(info); b > 0 && b < minStructuredOutputModelB {
+		return true
+	}
+	id := canonicalModelID(info.ID)
+	return modelTagSmallPattern.MatchString(id)
+}
+
+// firstStructuredOutputCapableModel prefers the workflow fallback when it is
+// large enough, otherwise the first catalog model that is not sub-4B.
+func firstStructuredOutputCapableModel(provider string, fallback string, catalogs map[string]state.ProviderModelCatalog) string {
+	provider = canonicalProviderName(provider)
+	fallback = strings.TrimSpace(fallback)
+	if fallback != "" {
+		if info, ok := catalogModelInfo(provider, fallback, catalogs); ok && !modelTooSmallForStructuredOutput(info) {
+			return fallback
+		}
+	}
+	catalog, ok := catalogs[provider]
+	if !ok {
+		return fallback
+	}
+	var best string
+	var bestB float64
+	for _, item := range catalog.Models {
+		if modelTooSmallForStructuredOutput(item) {
+			continue
+		}
+		b := modelParameterBillions(item)
+		if b >= 7 {
+			return item.ID
+		}
+		if b > bestB {
+			bestB = b
+			best = item.ID
+		}
+		if best == "" {
+			best = item.ID
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return fallback
+}
+
+func personaRequiresStructuredJSON(kind state.PersonaKind) bool {
+	return kind == state.PersonaProjectMgr
+}
+
 func (e *Engine) normalizePersonaModels(provider string, requested state.PersonaModelAssignments, fallback string, catalogs map[string]state.ProviderModelCatalog) state.PersonaModelAssignments {
 	provider = canonicalProviderName(provider)
 	resolvedFallback := e.normalizeModelSelection(provider, "", fallback, catalogs)
@@ -350,6 +443,14 @@ func (e *Engine) normalizePersonaModels(provider string, requested state.Persona
 		if model != "" && personaRequiresTools(kind) && ollamaNativeToolCallingUnstable(provider, model) {
 			if stable := firstToolCapableModel(provider, catalogs); stable != "" {
 				model = stable
+			}
+		}
+		// PM constitution JSON must not be assigned to 1B–3B models (llama3.2:1b, etc.).
+		if model != "" && personaRequiresStructuredJSON(kind) {
+			if info, ok := catalogModelInfo(provider, model, catalogs); ok && modelTooSmallForStructuredOutput(info) {
+				if better := firstStructuredOutputCapableModel(provider, resolvedFallback, catalogs); better != "" {
+					model = better
+				}
 			}
 		}
 

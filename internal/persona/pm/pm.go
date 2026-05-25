@@ -105,6 +105,8 @@ func normalizePMOutput(raw string) (string, error) {
 		return "", fmt.Errorf("constitution missing")
 	}
 
+	aliasConstitutionKeys(constitution)
+
 	// Some models return out_of_scope as a single string instead of []string.
 	switch v := constitution["out_of_scope"].(type) {
 	case string:
@@ -117,6 +119,15 @@ func normalizePMOutput(raw string) (string, error) {
 	case nil:
 		constitution["out_of_scope"] = []string{}
 	}
+
+	// audience must be a string; small models often return {"type":"general"}.
+	switch v := constitution["audience"].(type) {
+	case map[string]any:
+		constitution["audience"] = audienceStringFromMap(v)
+	case nil:
+		constitution["audience"] = ""
+	}
+
 	obj["constitution"] = constitution
 
 	fixed, err := json.Marshal(obj)
@@ -124,4 +135,31 @@ func normalizePMOutput(raw string) (string, error) {
 		return "", err
 	}
 	return string(fixed), nil
+}
+
+var constitutionKeyAliases = map[string]string{
+	"acceptance criteria": "acceptance_criteria",
+	"output medium":       "output_medium",
+}
+
+func aliasConstitutionKeys(constitution map[string]any) {
+	for oldKey, newKey := range constitutionKeyAliases {
+		v, ok := constitution[oldKey]
+		if !ok {
+			continue
+		}
+		if _, exists := constitution[newKey]; !exists {
+			constitution[newKey] = v
+		}
+		delete(constitution, oldKey)
+	}
+}
+
+func audienceStringFromMap(m map[string]any) string {
+	for _, key := range []string{"description", "name", "type", "label"} {
+		if s, ok := m[key].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return "general"
 }

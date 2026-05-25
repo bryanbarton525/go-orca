@@ -346,6 +346,37 @@ func TestNormalizePersonaModelsSwapsNonToolModel(t *testing.T) {
 	}
 }
 
+func TestNormalizePersonaModelsSwapsSmallModelFromProjectManager(t *testing.T) {
+	ensureCatalogMockProviderRegistered()
+
+	eng := New(routingStore{}, Options{
+		DefaultProvider:  "ollama",
+		DefaultModel:     "qwen3.5:9b",
+		ProviderDefaults: map[string]string{"ollama": "qwen3.5:9b"},
+	})
+
+	catalogs := map[string]state.ProviderModelCatalog{
+		"ollama": {
+			ProviderName: "ollama",
+			DefaultModel: "qwen3.5:9b",
+			Models: []state.ProviderModelInfo{
+				{ID: "llama3.2:1b", Metadata: map[string]string{"parameter_size": "1.2B"}},
+				{ID: "qwen3.5:9b", Metadata: map[string]string{"parameter_size": "9B", "tools": "yes"}},
+			},
+		},
+	}
+
+	requested := state.PersonaModelAssignments{
+		state.PersonaProjectMgr: "llama3.2:1b",
+		state.PersonaPod:        "qwen3.5:9b",
+	}
+
+	out := eng.normalizePersonaModels("ollama", requested, "qwen3.5:9b", catalogs)
+	if got := out[state.PersonaProjectMgr]; got != "qwen3.5:9b" {
+		t.Fatalf("project_manager: want qwen3.5:9b, got %q", got)
+	}
+}
+
 func TestNormalizePersonaModelsSwapsUnstableOllamaQwen3(t *testing.T) {
 	ensureCatalogMockProviderRegistered()
 
