@@ -3,6 +3,9 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-orca/go-orca/internal/state"
@@ -65,5 +68,42 @@ func TestRunToolchainValidation_FailsFastWhenGoWorkspaceHasNoSourceFiles(t *test
 	}
 	if len(run.Steps) != 1 || run.Steps[0].Capability != "workspace_preflight" {
 		t.Fatalf("validation steps = %+v, want single workspace_preflight step", run.Steps)
+	}
+}
+
+func TestRunToolchainValidation_FailsFastOnInvalidPackageJSON(t *testing.T) {
+	reg := tools.NewRegistry()
+	install := &countingTool{name: "next_install"}
+	reg.Register(install)
+
+	eng := New(noopStore{}, Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock",
+		ToolRegistry:    reg,
+		Toolchains: []ToolchainConfig{{
+			ID:                 "nextjs",
+			Languages:          []string{"javascript", "typescript"},
+			Capabilities:       []string{"install_dependencies"},
+			CapabilityTools:    map[string]string{"install_dependencies": "next_install"},
+			ValidationProfiles: map[string][]string{"default": {"install_dependencies"}},
+		}},
+	})
+
+	ws, _ := newWSWithWorkspace(t)
+	if err := os.WriteFile(filepath.Join(ws.Execution.Workspace.Path, "package.json"),
+		[]byte("// Contents of updated package.json\n{\"name\":\"x\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws.Execution.Toolchain = &state.ToolchainSelection{ID: "nextjs", Language: "next.js", Profile: "default"}
+
+	issues, err := eng.runToolchainValidation(context.Background(), ws, "implementation")
+	if err != nil {
+		t.Fatalf("runToolchainValidation() error = %v", err)
+	}
+	if install.calls != 0 {
+		t.Fatalf("next_install calls = %d, want 0", install.calls)
+	}
+	if len(issues) != 1 || !strings.Contains(issues[0], "[package.json]") {
+		t.Fatalf("issues = %v", issues)
 	}
 }

@@ -66,16 +66,27 @@ When the request is a **Next.js** (or similar) web application, `tech_stack` MUS
 
 ## Implementation validation remediation
 
-When blocking issues come from the **implementation validation loop** (failed `go test`, `go build`,
-`go mod tidy`, `go fmt`, missing git checkpoint, or empty README/plan), produce **minimal Pod tasks**
-that fix only those toolchain failures. Do not redesign the system. Typical tasks:
+When blocking issues come from the **implementation validation loop** (failed `install_dependencies`,
+`run_tests`, `run_build`, `go test`, missing git checkpoint, or empty README/plan), produce **minimal Pod tasks**
+that fix only those toolchain failures. Do not redesign the system.
+
+### Node / Next.js — package.json — CRITICAL
+
+pnpm and npm parse `package.json` as **strict JSON**. If validation stderr mentions `Unexpected token '/'`,
+`not valid JSON`, or `package.json`:
+
+- Assign **one** pod task to rewrite `package.json` in the workspace: remove all `//` and `/* */` comment lines and prose prefixes (e.g. `// Contents of updated package.json`).
+- Do **not** assign another "Install Dependencies" or "Re-run Scaffolding" task until the manifest is valid JSON.
+- Read MCP resource `orca://schemas/package.json` when toolchain guidance is present in context.
+
+### Go and other stacks
 
 - Repair syntax/compile errors called out in validation output
 - Run `go mod tidy` prerequisites (correct `go.mod` / imports)
 - Update README or inline docs when documentation gate failed
 - Fix test files separately from production code (Test Separation Rule)
 
-QA has **not** run yet — this is pre-QA implementation iteration.
+QA has **not** run yet — this is pre-QA implementation iteration. Do not duplicate task titles from prior remediation cycles.
 
 ## Remediation mode
 

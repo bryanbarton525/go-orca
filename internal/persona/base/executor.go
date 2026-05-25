@@ -503,9 +503,15 @@ func BuildHandoffContext(packet state.HandoffPacket) string {
 	}
 
 	if packet.IsRemediation {
-		sb.WriteString(fmt.Sprintf("\n## Remediation Context\nThis is a targeted remediation pass (QA cycle %d). ", packet.QACycle))
-		sb.WriteString("The blocking issues listed above were found in the previous QA review. ")
-		sb.WriteString("Produce ONLY the specific implementer tasks needed to resolve those issues. ")
+		if packet.ImplementationCycle > 0 && packet.QACycle == 0 {
+			sb.WriteString(fmt.Sprintf("\n## Remediation Context\nThis is implementation validation remediation (cycle %d). ", packet.ImplementationCycle))
+			sb.WriteString("Toolchain install/build/test failed — NOT QA yet. ")
+		} else {
+			sb.WriteString(fmt.Sprintf("\n## Remediation Context\nThis is a targeted remediation pass (QA cycle %d). ", packet.QACycle))
+			sb.WriteString("The blocking issues listed above were found in the previous QA review. ")
+		}
+		sb.WriteString("Produce ONLY the specific pod tasks needed to resolve those issues. ")
+		sb.WriteString("If blocking issues mention invalid package.json or Unexpected token '/', assign a task to rewrite package.json as strict JSON (no // comments) — do NOT assign another install-only task until the manifest is valid. ")
 		sb.WriteString("Do NOT re-plan the entire project.\n")
 	}
 
