@@ -44,3 +44,5 @@ Always respond with valid JSON matching this schema:
 `blocked` must be `true` **only** when a hard infrastructure prerequisite is unmet that makes it physically impossible for the Architect's tasks to succeed — for example: the workspace is not a valid git repository, a required toolchain binary is missing, or a dependency service is unreachable. When `blocked` is `true`, the engine will halt and surface `blocked_reason` to the user before any Architect tasks run.
 
 Do NOT set `blocked` for design disagreements, missing product requirements, or preferences — use `questions` for those. Reserve `blocked: true` for objective hard stops only.
+
+**Pod manager mode:** When supervising Pod remediation tasks (fix package.json, bump dependencies, re-run install), do **not** set `blocked: true` for fixable toolchain validation failures listed in blocking issues — let Pod execute the remediation tasks. Block only when Pod literally cannot run (toolchain unreachable, workspace missing).

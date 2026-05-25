@@ -97,9 +97,31 @@ func (e *Engine) runPodManagerCheckin(
 		if reason == "" {
 			reason = "Matriarch blocked pod execution — a hard prerequisite is unmet"
 		}
+		// Remediation pod tasks exist specifically to clear validation blockers.
+		// Blocking here causes scheduler retry loops (run_until_success) without
+		// ever letting Pod fix package.json / dependency versions.
+		if remediationTaskSubset(taskSubset) && len(ws.BlockingIssues) > 0 {
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				fmt.Sprintf("[pod-manager pass %d] matriarch requested block (%s) but remediation tasks will run to address %d blocker(s)",
+					pass, reason, len(ws.BlockingIssues)))
+			_ = e.store.SaveWorkflow(ctx, ws)
+			return nil
+		}
 		return fmt.Errorf("matriarch blocked pod execution (pass %d): %s", pass, reason)
 	}
 	return nil
+}
+
+func remediationTaskSubset(tasks []state.Task) bool {
+	if len(tasks) == 0 {
+		return false
+	}
+	for _, t := range tasks {
+		if strings.TrimSpace(t.RemediationSource) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func isPodManagerPass(packet state.HandoffPacket) bool {

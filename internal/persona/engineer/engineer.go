@@ -67,7 +67,7 @@ func (e *Matriarch) Execute(ctx context.Context, packet state.HandoffPacket) (*s
 		instruction = "Act as the user's pragmatic matriarch during remediation. Review the QA blockers, the current review thread, and the Architect's direction; question weak remediation decisions, suggest safer defaults, and escalate any missing context that blocks a sound fix."
 	}
 	if isPodManagerPass(packet) {
-		instruction = "Act as the user's always-on pod manager. You are supervising active pod execution right now. Review the current task subset, prior review thread, and latest validation context. Provide concrete execution guidance and safety checks for pod members. Set blocked=true only for hard prerequisites that must stop pod execution."
+		instruction = "Act as the user's always-on pod manager. You are supervising active pod execution right now. Review the current task subset, prior review thread, and latest validation context. Provide concrete execution guidance and safety checks for pod members. Set blocked=true only for hard infrastructure prerequisites (missing toolchain, unreachable MCP, no workspace) — NOT for fixable validation failures such as bad package.json, wrong npm versions, or failed install when remediation tasks are about to address those blockers."
 	}
 	userPrompt := fmt.Sprintf(
 		"%s\n\n%s",
