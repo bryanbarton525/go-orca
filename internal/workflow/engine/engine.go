@@ -251,7 +251,8 @@ type ToolchainConfig struct {
 }
 
 func (o *Options) applyDefaults() {
-	if o.MaxQARetries <= 0 {
+	// Preserve -1 (unlimited) from run_until_success; only default unset (0).
+	if o.MaxQARetries == 0 {
 		o.MaxQARetries = 2
 	}
 	if o.HandoffTimeout <= 0 {
@@ -571,7 +572,17 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 				return fmt.Errorf("qa gate: %w", err)
 			}
 		}
-		if !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 {
+		validationStillFailing, _ := lastValidationFailed(ws)
+		needsQA := !phaseComplete(state.PersonaQA) || len(ws.BlockingIssues) > 0 || validationStillFailing
+		if needsQA {
+			// Scheduler retries (run_until_success) used to skip QA when the persona
+			// summary was set but toolchain validation still failed, then fail only at
+			// the finalizer gate in a tight retry loop. Re-open QA remediation instead.
+			if validationStillFailing && phaseComplete(state.PersonaQA) && len(ws.BlockingIssues) == 0 {
+				ws.BlockingIssues = validationFailureBlockers(ws)
+				delete(ws.Summaries, state.PersonaQA)
+				_ = e.store.SaveWorkflow(ctx, ws)
+			}
 			for qaCycle := 1; ; qaCycle++ {
 				// Update visible progress before QA runs.
 				ws.Execution.CurrentPersona = state.PersonaQA
@@ -690,9 +701,11 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 					// Implementation loop clears blockers on success; preserve any
 					// remaining issues for the next QA pass.
 				}
-				if !personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaPod) {
+				if (!personaRequired(state.PersonaArchitect) || !personaRequired(state.PersonaPod)) && len(validationFailureBlockers(ws)) == 0 {
 					// Clear blocking issues accumulated in this pass so QA evaluates
 					// any non-implementation remediation fresh. Retain suggestions.
+					// Do not clear when toolchain validation is still failing — that
+					// would exit the QA loop and spin on the finalizer gate.
 					ws.BlockingIssues = nil
 				}
 			}
@@ -2454,6 +2467,27 @@ func lastValidationFailed(ws *state.WorkflowState) (bool, *state.ValidationRun) 
 	return !last.Passed, last
 }
 
+// validationFailureBlockers turns the latest failed validation run into QA
+// blocking issues so remediation can run instead of spinning on the finalizer gate.
+func validationFailureBlockers(ws *state.WorkflowState) []string {
+	blocked, run := lastValidationFailed(ws)
+	if !blocked {
+		return nil
+	}
+	issues := []string{"toolchain validation has not passed"}
+	if run != nil {
+		if s := strings.TrimSpace(run.Summary); s != "" {
+			issues = append(issues, s)
+		}
+		for _, step := range run.Steps {
+			if !step.Passed {
+				issues = append(issues, fmt.Sprintf("%s: %s", step.Capability, firstNonEmpty(step.Error, step.Output)))
+			}
+		}
+	}
+	return issues
+}
+
 func workspaceBranch(ws *state.WorkflowState) string {
 	if ws.Execution.Workspace == nil {
 		return ""
@@ -2541,10 +2575,13 @@ func (e *Engine) applyOutput(ws *state.WorkflowState, out *state.PersonaOutput) 
 	if out.Persona == state.PersonaQA {
 		if len(out.BlockingIssues) > 0 {
 			ws.BlockingIssues = append(ws.BlockingIssues, out.BlockingIssues...)
+		} else if blocked, _ := lastValidationFailed(ws); blocked {
+			// QA passed visually but toolchain validation is still failing — keep
+			// engine blockers so remediation runs instead of exiting the QA loop.
+			ws.BlockingIssues = validationFailureBlockers(ws)
+			ws.AllSuggestions = append(ws.AllSuggestions,
+				"[qa] persona reported pass but toolchain validation still failing — retaining blockers for remediation")
 		} else {
-			// QA passed this cycle: clear engine-populated validation failures
-			// so the loop can exit. Finalizer still enforces ValidationRuns when
-			// EnforceValidationGate is enabled.
 			ws.BlockingIssues = nil
 		}
 	} else if len(out.BlockingIssues) > 0 {

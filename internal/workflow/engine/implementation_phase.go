@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -68,6 +69,12 @@ func (e *Engine) runImplementationValidationLoop(
 		maxRetries = e.maxImplementationRetries()
 	}
 
+	var (
+		lastIssueFingerprint string
+		stagnationCycles     int
+	)
+	const implementationStagnationLimit = 3
+
 	for cycle := 1; ; cycle++ {
 		ws.Execution.ImplementationCycle = cycle
 		phase := opts.phasePrefix
@@ -100,6 +107,22 @@ func (e *Engine) runImplementationValidationLoop(
 		if err := e.store.SaveWorkflow(ctx, ws); err != nil {
 			return err
 		}
+
+		fp := implementationIssuesFingerprint(allIssues)
+		if fp != "" && fp == lastIssueFingerprint {
+			stagnationCycles++
+		} else {
+			stagnationCycles = 0
+			lastIssueFingerprint = fp
+		}
+		if maxRetries < 0 && stagnationCycles >= implementationStagnationLimit {
+			note := fmt.Sprintf("[%s] stagnated: same %d issue(s) for %d consecutive validation cycle(s)",
+				opts.remediationSource, len(allIssues), stagnationCycles+1)
+			ws.AllSuggestions = append(ws.AllSuggestions, note)
+			return fmt.Errorf("%s stagnated after %d cycle(s) with unchanged blockers: %v",
+				opts.remediationSource, cycle, allIssues)
+		}
+
 		if maxRetries >= 0 && cycle > maxRetries {
 			exhaustedEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
 				events.EventImplementationExhausted, state.PersonaPod,
@@ -333,6 +356,7 @@ func (e *Engine) enforceFinalizerValidationGate(ctx context.Context, ws *state.W
 			Issues:      issues,
 		})
 	_ = e.store.AppendEvents(ctx, evt)
+	ws.BlockingIssues = validationFailureBlockers(ws)
 	ws.Status = state.WorkflowStatusFailed
 	ws.AllSuggestions = append(ws.AllSuggestions,
 		"[validation-gate] finalizer blocked: most recent toolchain validation failed")
@@ -373,4 +397,13 @@ func formatImplementationGateForQA(ws *state.WorkflowState) string {
 	b.WriteString("\nYour QA pass must confirm **design/charter conformance** and delivery readiness. ")
 	b.WriteString("Do not re-open raw compile/test failures unless new evidence contradicts the implementation gate.\n")
 	return b.String()
+}
+
+func implementationIssuesFingerprint(issues []string) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	cp := append([]string(nil), issues...)
+	sort.Strings(cp)
+	return strings.Join(cp, "\x00")
 }
