@@ -1008,6 +1008,72 @@ func (p *qaBlocksOnceThenPasses) Execute(_ context.Context, _ state.HandoffPacke
 	return &state.PersonaOutput{Persona: state.PersonaQA, Summary: "passed"}, nil
 }
 
+// optimisticQAPersona reports no blockers even when validation failed (simulates
+// a visual-only QA pass).
+type optimisticQAPersona struct{ calls int }
+
+func (p *optimisticQAPersona) Kind() state.PersonaKind { return state.PersonaQA }
+func (p *optimisticQAPersona) Name() string            { return "optimistic-qa" }
+func (p *optimisticQAPersona) Description() string     { return "always passes without blockers" }
+func (p *optimisticQAPersona) Execute(_ context.Context, _ state.HandoffPacket) (*state.PersonaOutput, error) {
+	p.calls++
+	return &state.PersonaOutput{
+		Persona:     state.PersonaQA,
+		Summary:     "qa passed visually",
+		CompletedAt: time.Now().UTC(),
+	}, nil
+}
+
+// TestQAReopensWhenValidationFailedDespitePriorSummary verifies scheduler-style
+// retries do not skip QA when toolchain validation still failed.
+func TestQAReopensWhenValidationFailedDespitePriorSummary(t *testing.T) {
+	qa := &optimisticQAPersona{}
+	persona.Register(qa)
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&forbiddenPersona{t: t, kind: state.PersonaFinalizer})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a simple app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector: "(completed)",
+		state.PersonaQA:       "prior qa pass",
+	}
+	ws.Execution.ValidationRuns = []state.ValidationRun{{
+		ID:          "validation-1",
+		Phase:       "implementation",
+		ToolchainID: "node",
+		Passed:      false,
+		Summary:     "pnpm test failed",
+	}}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{
+		DefaultProvider:       "mock",
+		DefaultModel:          "mock-model",
+		EnforceValidationGate: true,
+		MaxQARetries:          0, // single QA attempt then exhaustion
+	})
+
+	err := eng.Run(context.Background(), ws.ID)
+	if err == nil {
+		t.Fatal("expected qa exhaustion or validation failure, got nil")
+	}
+	if qa.calls == 0 {
+		t.Fatal("expected QA to run when validation still failing despite prior summary")
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if len(stored.BlockingIssues) == 0 {
+		t.Fatal("expected validation-derived blocking issues to be retained")
+	}
+	if strings.Contains(stored.ErrorMessage, "validation gate") && qa.calls < 1 {
+		t.Fatalf("unexpected finalizer-only failure without QA: %q", stored.ErrorMessage)
+	}
+}
+
 // TestEnforceValidationGate_BlocksFinalizerOnFailedValidation verifies the
 // finalizer gate when the latest validation run failed.
 func TestEnforceValidationGate_BlocksFinalizerOnFailedValidation(t *testing.T) {
