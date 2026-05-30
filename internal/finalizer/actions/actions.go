@@ -867,14 +867,27 @@ func (a *CreateRepoAction) Execute(ctx context.Context, in Input) (*Output, erro
 	if err != nil {
 		return nil, fmt.Errorf("actions: create-repo POST: %w", err)
 	}
-	if repoStatus != http.StatusCreated {
-		return nil, fmt.Errorf("actions: create-repo POST %d: %s", repoStatus, string(repoData))
-	}
 	var repoResp struct {
 		FullName string `json:"full_name"`
 		HTMLURL  string `json:"html_url"`
 	}
-	_ = json.Unmarshal(repoData, &repoResp)
+	switch repoStatus {
+	case http.StatusCreated:
+		_ = json.Unmarshal(repoData, &repoResp)
+	case http.StatusUnprocessableEntity, http.StatusConflict:
+		// Repo was already created (e.g. ensureRequestedRepository during checkpoints).
+		fullName, htmlURL, resolveErr := resolveCreateRepoTarget(cfg, in.Workflow, ghDo)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("actions: create-repo POST %d: %s", repoStatus, string(repoData))
+		}
+		repoResp.FullName = fullName
+		repoResp.HTMLURL = htmlURL
+	default:
+		return nil, fmt.Errorf("actions: create-repo POST %d: %s", repoStatus, string(repoData))
+	}
+	if repoResp.FullName == "" {
+		return nil, fmt.Errorf("actions: create-repo could not resolve repository target")
+	}
 
 	// 2. Seed artifacts into the repo via the Contents API.
 	apiBase := "https://api.github.com/repos/" + repoResp.FullName
@@ -927,6 +940,48 @@ func (a *CreateRepoAction) Execute(ctx context.Context, in Input) (*Output, erro
 			"full_name": repoResp.FullName,
 		},
 	}, nil
+}
+
+func resolveCreateRepoTarget(cfg struct {
+	Name        string `json:"name"`
+	Org         string `json:"org"`
+	Description string `json:"description"`
+	Private     bool   `json:"private"`
+	Token       string `json:"token"`
+}, ws *state.WorkflowState, ghDo func(method, url string, reqBody interface{}) ([]byte, int, error)) (fullName, htmlURL string, err error) {
+	if ws != nil && ws.Execution.Workspace != nil {
+		if u := strings.TrimSpace(ws.Execution.Workspace.RepoURL); u != "" {
+			u = strings.TrimSuffix(u, "/")
+			u = strings.TrimSuffix(u, ".git")
+			const host = "github.com/"
+			if idx := strings.Index(strings.ToLower(u), host); idx >= 0 {
+				slug := u[idx+len(host):]
+				if parts := strings.Split(slug, "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+					return slug, "https://github.com/" + slug, nil
+				}
+			}
+		}
+	}
+	owner := strings.TrimSpace(cfg.Org)
+	if owner == "" {
+		userData, userStatus, userErr := ghDo(http.MethodGet, "https://api.github.com/user", nil)
+		if userErr != nil || userStatus != http.StatusOK {
+			return "", "", fmt.Errorf("resolve github user for existing repo")
+		}
+		var user struct {
+			Login string `json:"login"`
+		}
+		if json.Unmarshal(userData, &user) != nil || strings.TrimSpace(user.Login) == "" {
+			return "", "", fmt.Errorf("parse github user for existing repo")
+		}
+		owner = user.Login
+	}
+	name := strings.TrimSpace(cfg.Name)
+	if owner == "" || name == "" {
+		return "", "", fmt.Errorf("missing owner or repo name")
+	}
+	fullName = owner + "/" + name
+	return fullName, "https://github.com/" + fullName, nil
 }
 
 // Global is the process-wide action registry, pre-loaded with built-in actions.

@@ -11,7 +11,7 @@ import (
 	"github.com/go-orca/go-orca/internal/workflow/engine"
 )
 
-func TestFinalizerActionFailure_EmitsFailedAndClearsFinalization(t *testing.T) {
+func TestFinalizerActionFailure_EmitsFailedAndRetainsFinalization(t *testing.T) {
 	ms := newMockStore()
 	ctx := context.Background()
 
@@ -48,14 +48,14 @@ func TestFinalizerActionFailure_EmitsFailedAndClearsFinalization(t *testing.T) {
 	if stored.Status != state.WorkflowStatusFailed {
 		t.Fatalf("workflow status = %q, want %q", stored.Status, state.WorkflowStatusFailed)
 	}
-	if stored.Finalization != nil {
-		t.Fatalf("expected finalization to be cleared on delivery failure, got %+v", stored.Finalization)
+	if stored.Finalization == nil {
+		t.Fatalf("expected finalization to be retained for delivery retry, got nil")
+	}
+	if stored.Summaries[state.PersonaFinalizer] == "" {
+		t.Fatal("expected finalizer summary to be retained for delivery retry")
 	}
 	if stored.ErrorMessage == "" {
 		t.Fatal("expected workflow error_message to be populated")
-	}
-	if stored.Summaries[state.PersonaFinalizer] != "" {
-		t.Fatalf("finalizer summary = %q, want empty after failure", stored.Summaries[state.PersonaFinalizer])
 	}
 
 	var sawCompleted bool

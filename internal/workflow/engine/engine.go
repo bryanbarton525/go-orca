@@ -550,7 +550,7 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 
 	// Phase 4: Pod — execute tasks, then iterate on toolchain validation failures
 	// (build/test/tidy) via Architect→Pod remediation before QA verification.
-	if personaRequired(state.PersonaPod) {
+	if personaRequired(state.PersonaPod) && !implementationPhaseComplete(ws) {
 		if err := e.runImplementationPhase(ctx, ws, snap); err != nil {
 			return fmt.Errorf("implementation phase: %w", err)
 		}
@@ -720,9 +720,15 @@ func (e *Engine) runPhases(ctx context.Context, ws *state.WorkflowState) error {
 		return err
 	}
 
-	if personaRequired(state.PersonaFinalizer) && !phaseComplete(state.PersonaFinalizer) {
-		if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
-			return fmt.Errorf("finalizer phase: %w", err)
+	if personaRequired(state.PersonaFinalizer) {
+		if !phaseComplete(state.PersonaFinalizer) {
+			if err := e.runPersona(ctx, ws, state.PersonaFinalizer, snap); err != nil {
+				return fmt.Errorf("finalizer phase: %w", err)
+			}
+		} else if deliveryRetryNeeded(ws) {
+			if err := e.postProcessFinalizer(ctx, ws); err != nil {
+				return fmt.Errorf("finalizer delivery retry: %w", err)
+			}
 		}
 	}
 
@@ -843,6 +849,15 @@ func (e *Engine) runPersona(ctx context.Context, ws *state.WorkflowState, kind s
 	// ── Finalizer post-processing ─────────────────────────────────────────────
 	if kind == state.PersonaFinalizer {
 		if err := e.postProcessFinalizer(ctx, ws); err != nil {
+			if isDeliveryActionError(err) {
+				// Keep Finalization and the finalizer summary so scheduler retries
+				// can re-run delivery only instead of replaying Pod/QA/refiner.
+				failEvt, _ := events.NewEvent(ws.ID, ws.TenantID, ws.ScopeID,
+					events.EventPersonaFailed, kind,
+					events.PersonaFailedPayload{Persona: kind, Error: err.Error()})
+				_ = e.store.AppendEvents(ctx, failEvt)
+				return err
+			}
 			ws.Finalization = nil
 			delete(ws.Summaries, state.PersonaFinalizer)
 
@@ -2182,7 +2197,7 @@ func (e *Engine) runToolchainCheckpoint(ctx context.Context, ws *state.WorkflowS
 		Pushed:      pushed,
 		CreatedAt:   time.Now().UTC(),
 	}
-	if shouldPersistExecutionCheckpoint(phase) {
+	if shouldAppendExecutionCheckpoint(ws, checkpoint) {
 		checkpoint.ID = fmt.Sprintf("checkpoint-%d", len(ws.Execution.Checkpoints)+1)
 		ws.Execution.Checkpoints = append(ws.Execution.Checkpoints, checkpoint)
 	}
@@ -2200,6 +2215,31 @@ func shouldPersistExecutionCheckpoint(phase string) bool {
 		return true
 	}
 	return strings.HasPrefix(phase, "remediation-")
+}
+
+func shouldAppendExecutionCheckpoint(ws *state.WorkflowState, cp state.Checkpoint) bool {
+	if !shouldPersistExecutionCheckpoint(cp.Phase) {
+		return false
+	}
+	if ws == nil || len(ws.Execution.Checkpoints) == 0 {
+		return true
+	}
+	last := ws.Execution.Checkpoints[len(ws.Execution.Checkpoints)-1]
+	if cp.Phase == last.Phase && cp.CommitSHA != "" && cp.CommitSHA == last.CommitSHA {
+		return false
+	}
+	return true
+}
+
+func isDeliveryActionError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "delivery action")
+}
+
+func deliveryRetryNeeded(ws *state.WorkflowState) bool {
+	if ws == nil || ws.DeliveryAction == "" || ws.Finalization == nil {
+		return false
+	}
+	return strings.Contains(ws.ErrorMessage, "delivery action")
 }
 
 func (e *Engine) toolchainByID(id string) (ToolchainConfig, bool) {
