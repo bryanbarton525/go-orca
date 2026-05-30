@@ -22,6 +22,16 @@ type implementationLoopOpts struct {
 	maxRetries        int
 }
 
+// implementationPhaseComplete reports whether Pod work already passed the
+// implementation gate (validation, docs, checkpoint). Scheduler retries with
+// run_until_success must not replay the full implementation phase.
+func implementationPhaseComplete(ws *state.WorkflowState) bool {
+	if ws == nil || ws.Execution.ImplementationGate == nil {
+		return false
+	}
+	return ws.Execution.ImplementationGate.Ready
+}
+
 // runImplementationPhase runs Pod work and iterates on validation, documentation,
 // and git checkpoint requirements before QA verification.
 func (e *Engine) runImplementationPhase(ctx context.Context, ws *state.WorkflowState, snap *customization.Snapshot) error {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-orca/go-orca/internal/events"
+	"github.com/go-orca/go-orca/internal/finalizer/actions"
 	"github.com/go-orca/go-orca/internal/persona"
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/tools"
@@ -1071,6 +1072,53 @@ func TestQAReopensWhenValidationFailedDespitePriorSummary(t *testing.T) {
 	}
 	if strings.Contains(stored.ErrorMessage, "validation gate") && qa.calls < 1 {
 		t.Fatalf("unexpected finalizer-only failure without QA: %q", stored.ErrorMessage)
+	}
+}
+
+func TestImplementationSkippedWhenGateReady(t *testing.T) {
+	persona.Register(&forbiddenPersona{t: t, kind: state.PersonaPod})
+	t.Cleanup(func() { persona.Unregister(state.PersonaPod) })
+	persona.Register(&noopPersona{kind: state.PersonaQA})
+	t.Cleanup(func() { persona.Unregister(state.PersonaQA) })
+	persona.Register(&fixedPersona{
+		kind: state.PersonaFinalizer,
+		out: &state.PersonaOutput{
+			Persona: state.PersonaFinalizer,
+			Summary: "done",
+			Finalization: &state.FinalizationResult{
+				Action:  string(actions.ActionAPIResponse),
+				Summary: "inline",
+			},
+		},
+	})
+	t.Cleanup(func() { persona.Unregister(state.PersonaFinalizer) })
+
+	ms := newMockStore()
+	ws := state.NewWorkflowState("t1", "s1", "build a todo app")
+	ws.Mode = state.WorkflowModeSoftware
+	ws.Summaries = map[state.PersonaKind]string{
+		state.PersonaDirector: "(completed)",
+		state.PersonaQA:       "passed",
+	}
+	ws.Execution.ImplementationGate = &state.ImplementationGate{
+		Ready:            true,
+		ValidationPassed: true,
+		DocumentationOK:  true,
+	}
+	ws.Execution.ValidationRuns = []state.ValidationRun{{
+		ID: "validation-1", Phase: "implementation", ToolchainID: "node", Passed: true,
+	}}
+	ws.RequiredPersonas = []state.PersonaKind{state.PersonaPod, state.PersonaQA, state.PersonaFinalizer}
+	ws.PersonaPromptSnapshot = map[string]string{"_test": "skip"}
+	ms.workflows[ws.ID] = ws
+
+	eng := engine.New(ms, engine.Options{DefaultProvider: "mock", DefaultModel: "mock-model"})
+	if err := eng.Run(context.Background(), ws.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	stored, _ := ms.GetWorkflow(context.Background(), ws.ID)
+	if stored.Status != state.WorkflowStatusCompleted {
+		t.Fatalf("status = %q, want completed", stored.Status)
 	}
 }
 
