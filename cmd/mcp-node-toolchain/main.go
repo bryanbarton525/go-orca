@@ -68,7 +68,7 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 	server.AddCapability(srv, "npm_test", "Run `npm test`.",
 		run(capabilities.RunTests, []string{"npm", "test"}, 15*time.Minute))
 	server.AddCapability(srv, "npm_build", "Run `npm run build`.",
-		run(capabilities.RunBuild, []string{"npm", "run", "build"}, 10*time.Minute))
+		buildGuard(root, run(capabilities.RunBuild, []string{"npm", "run", "build"}, 10*time.Minute)))
 	server.AddCapability(srv, "npm_lint", "Run `npm run lint`.",
 		run(capabilities.RunLint, []string{"npm", "run", "lint"}, 5*time.Minute))
 	server.AddCapability(srv, "npm_typecheck", "Run `npm run typecheck` (defers to project script).",
@@ -112,6 +112,25 @@ func installGuard(root string, argvFn func(string) []string, allow policy.Allowl
 			Auditor:    auditor,
 			Env:        baseEnv(),
 		})
+	}
+}
+
+func buildGuard(root string, next server.CapabilityHandler) server.CapabilityHandler {
+	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
+		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
+		if err != nil {
+			return capabilities.Result{Error: err.Error()}
+		}
+		if ok, issue := toolchaindeps.CheckFakeBuildScript(workdir); !ok {
+			return capabilities.Result{
+				Success: false,
+				Passed:  false,
+				Error:   issue,
+				Stderr:  issue,
+				Output:  issue,
+			}
+		}
+		return next(ctx, args)
 	}
 }
 

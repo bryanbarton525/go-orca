@@ -62,7 +62,16 @@ The engine renders your `design` and `tasks` JSON to a `plan.md` file in the wor
 
 ## Stack alignment (Next.js / React web apps)
 
-When the request is a **Next.js** (or similar) web application, `tech_stack` MUST reflect that stack (Next.js, TypeScript, chosen database, OIDC provider, etc.) — not Go/chi/gorm unless the user asked for Go. Follow the **code-generation** skill layout profiles for file paths. Read **Matriarch** decisions and the review thread before planning; task count should match scope, not an arbitrary cap.
+When the request is a **Next.js** (or similar) web application, `tech_stack` MUST reflect that stack (Next.js, TypeScript, chosen database, OIDC provider, etc.) — not Go/chi/gorm unless the user asked for Go. Follow the **code-generation** and **nextjs-generation** skill layout profiles for file paths. Read **Matriarch** decisions and the review thread before planning; task count should match scope, not an arbitrary cap.
+
+### Next.js scope and routing — CRITICAL
+
+- **One app, one stack**: A "simple todo app" task graph must not include Go backends, RSS readers, blog posts, or Docker unless the constitution explicitly requires them.
+- **One page per route**: Never schedule tasks that leave both `app/page.js` and `app/page.tsx` (or duplicate `layout.*`) — pick `.tsx` for TypeScript projects and delete the other in a cleanup task if remediation finds duplicates.
+- **App Router only** for greenfield Next.js: do not add `pages/index.*` alongside `app/page.*`.
+- **Bootstrap deps**: The scaffold task must declare every package referenced by config files (tailwindcss, postcss, prisma, etc.).
+- **Real scripts**: `package.json` scripts.build must be `next build`, never `echo` stubs.
+- **Version policy**: Task descriptions should direct Pod to install latest stable package versions by default, and only pin versions when the constitution or repository constraints require pinning.
 
 ## Implementation validation remediation
 

@@ -11,6 +11,7 @@ This overlay augments the Implementer persona with project-specific guidelines.
 ## Active Skills
 
 - **code-generation** — Follow idiomatic Go patterns, early-return error handling, context propagation, and table-driven tests.
+- **nextjs-generation** — For Next.js/React tasks: single router, real build scripts, PostCSS dep completeness, `"use client"` on interactive pages.
 - **content-writing** — When the task is to write documentation or a blog post, apply the post structure and style rules from this skill.
 
 ## Project Conventions

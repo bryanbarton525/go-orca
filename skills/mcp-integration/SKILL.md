@@ -53,3 +53,21 @@ See [mcp-server-catalog.md](references/mcp-server-catalog.md) for a curated list
 - If a tool returns `isError: true`, go-orca surfaces the error message from the first text content block.
 - Connection failures during `Load` are fatal for that MCP source; the workflow continues with tools from other sources.
 - Use `tls_skip_verify: true` only in local/dev environments — never in production.
+
+## First-party toolchains (Node / Next.js)
+
+When `tools.toolchains` maps a workflow to `mcp-nextjs-toolchain` or `mcp-node-toolchain`, the engine runs **workspace preflight** before install/build:
+
+| Check | Example failure |
+|-------|-----------------|
+| Strict JSON `package.json` | Leading `//` comment lines |
+| Real build script | `"build": "echo build successful"` |
+| PostCSS deps | `postcss.config.js` references `tailwindcss` but package.json lacks it |
+| Route conflicts | Both `app/page.js` and `app/page.tsx` |
+| Router conflict | Both `app/page.*` and `pages/index.*` |
+
+MCP resources:
+- `orca://schemas/package.json` — manifest format
+- `orca://schemas/nextjs-preflight` — full Next.js preflight checklist
+
+Build capabilities (`npm_build`, `next_build`) also reject fake scripts at the MCP server layer.

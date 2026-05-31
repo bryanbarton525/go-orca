@@ -49,3 +49,17 @@ When creating or editing `package.json`, write **RFC 8259 JSON only**:
 - The file must start with `{` — no leading `//` or `/*` comments, no lines like `// Contents of updated package.json`.
 - Use double-quoted keys; no trailing commas.
 - Invalid manifests break `pnpm install` and cause endless Architect↔Pod remediation loops.
+
+### package.json scripts — no fake builds
+
+- `scripts.build` must invoke the real compiler (`next build` for Next.js, `tsc && ...` for Node libraries).
+- **Never** set `"build": "echo build successful"` or similar no-ops — the engine preflight rejects them and QA will block delivery.
+- If `postcss.config.js` or `tailwind.config.*` exists, add `tailwindcss`, `postcss`, and `autoprefixer` to devDependencies in the same edit.
+- Prefer latest stable dependency versions for newly added packages (`@latest`) unless the constitution or repo policy explicitly pins a version.
+
+### App Router hygiene
+
+- Emit exactly **one** `page.tsx` (or `page.js`) per route — never both at `app/`.
+- Do not create `pages/` when using App Router.
+- Interactive UI (hooks, `localStorage`, click handlers) requires `"use client"` as the first line of the file.
+- For simple MVPs, prefer plain CSS in `app/globals.css` over Tailwind unless Tailwind is in scope — if you add Tailwind config, install all PostCSS deps immediately.

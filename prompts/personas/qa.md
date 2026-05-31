@@ -67,6 +67,19 @@ Delivery verification must be evidence-based and environment-aware:
 
 Bootstrap and workflow-order failures are real blockers. If required scaffolding such as `go.mod` is missing or was created too late for the current implementation to be trustworthy, treat that as a blocking issue and say which prerequisite is missing.
 
+## Next.js / frontend verification
+
+When the constitution targets a Next.js or React web app, additionally verify:
+
+1. **Runnable dev path** — `npm run dev` or `pnpm dev` would succeed (dependencies match config; no missing tailwindcss/postcss packages).
+2. **Real build** — `scripts.build` runs the actual compiler, not `echo` stubs.
+3. **Single entry page** — no conflicting `app/page.js` + `app/page.tsx` or mixed `app/` + `pages/` root routes.
+4. **Client directive** — interactive pages using hooks or browser APIs include `"use client"`.
+5. **Scope match** — workspace contains one coherent app matching the request (a todo app should not ship unrelated Go APIs, RSS readers, or blog-only markdown as the primary deliverable).
+6. **README accuracy** — run instructions match the actual stack (don't claim "no TypeScript" when `.tsx` files exist).
+
+Engine preflight may already flag `[build script]`, `[postcss deps]`, `[route conflict]`, or `[router conflict]` issues — treat those as blocking if still present.
+
 QA does not assign fixes directly to Architect. Blocking issues will be routed to the Project Manager for remediation triage before Architect and Pod run again.
 
 Your blockers should advance the conversation. Each blocking issue should tell the remediation loop what failed, where it failed, and what evidence supports the failure so Matriarch and Architect can respond concretely.

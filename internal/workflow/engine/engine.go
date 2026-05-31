@@ -1417,6 +1417,9 @@ func (e *Engine) runRemediationPlanning(ctx context.Context, ws *state.WorkflowS
 	if inject := packageJSONRemediationTask(ws, remediationSource, cycle); inject != nil {
 		validTasks = append([]state.Task{*inject}, validTasks...)
 	}
+	if inject := nodePreflightRemediationTask(ws, remediationSource, cycle); inject != nil {
+		validTasks = append([]state.Task{*inject}, validTasks...)
+	}
 
 	if len(validTasks) == 0 {
 		return fmt.Errorf("architect produced no valid pod tasks for remediation cycle %d (blocking issues: %v)", cycle, ws.BlockingIssues)
@@ -2048,7 +2051,7 @@ func validationPreflightIssue(ws *state.WorkflowState, tc ToolchainConfig) strin
 		return ""
 	}
 	if toolchainTargetsNodeManifest(tc) {
-		if issue := packageJSONPreflight(ws.Execution.Workspace.Path); issue != "" {
+		if issue := nodeWorkspacePreflight(ws.Execution.Workspace.Path); issue != "" {
 			return issue
 		}
 	}
@@ -2076,6 +2079,10 @@ func toolchainTargetsNodeManifest(tc ToolchainConfig) bool {
 
 func packageJSONPreflight(workspacePath string) string {
 	return toolchaindeps.PackageJSONPreflightIssue(workspacePath)
+}
+
+func nodeWorkspacePreflight(workspacePath string) string {
+	return toolchaindeps.NodeWorkspacePreflightIssue(workspacePath)
 }
 
 func toolchainTargetsLanguage(tc ToolchainConfig, language string) bool {
