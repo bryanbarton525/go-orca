@@ -83,6 +83,37 @@ See [qa-checklist.md](references/qa-checklist.md) for the full Kubernetes / GitO
 
 ## Common Failure Patterns to Catch
 
+### Pattern 5: Next.js fake build script
+
+```json
+// BAD: passes npm run build without compiling
+"scripts": { "build": "echo build successful" }
+
+// GOOD
+"scripts": { "build": "next build" }
+```
+
+### Pattern 6: Conflicting App Router pages
+
+```
+app/page.js   ← todo implementation
+app/page.tsx  ← stale stub from another task
+```
+
+Only one `page.*` per route segment. Block until duplicates are removed.
+
+### Pattern 7: PostCSS config without dependencies
+
+`postcss.config.js` references `tailwindcss` but `package.json` lacks it → `next dev` returns 500 with `Cannot find module 'tailwindcss'`.
+
+### Pattern 8: Missing "use client" on interactive pages
+
+Pages using `useState`, `useEffect`, or `localStorage` without `"use client"` fail at runtime or build with hook errors.
+
+### Pattern 9: Scope creep / artifact accumulation
+
+ORCA workflows that re-run or over-plan may leave Go backends, RSS readers, and blog markdown alongside a simple todo app. Block when deliverables don't match the constitution's stated scope.
+
 ### Pattern 1: Context Cancellation Not Checked
 
 ```go

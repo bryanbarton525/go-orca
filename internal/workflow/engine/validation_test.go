@@ -107,3 +107,40 @@ func TestRunToolchainValidation_FailsFastOnInvalidPackageJSON(t *testing.T) {
 		t.Fatalf("issues = %v", issues)
 	}
 }
+
+func TestRunToolchainValidation_FailsFastOnFakeBuildScript(t *testing.T) {
+	reg := tools.NewRegistry()
+	build := &countingTool{name: "next_build"}
+	reg.Register(build)
+
+	eng := New(noopStore{}, Options{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock",
+		ToolRegistry:    reg,
+		Toolchains: []ToolchainConfig{{
+			ID:                 "nextjs",
+			Languages:          []string{"javascript", "typescript"},
+			Capabilities:       []string{"run_build"},
+			CapabilityTools:    map[string]string{"run_build": "next_build"},
+			ValidationProfiles: map[string][]string{"default": {"run_build"}},
+		}},
+	})
+
+	ws, _ := newWSWithWorkspace(t)
+	if err := os.WriteFile(filepath.Join(ws.Execution.Workspace.Path, "package.json"),
+		[]byte(`{"name":"x","scripts":{"build":"echo build successful"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws.Execution.Toolchain = &state.ToolchainSelection{ID: "nextjs", Language: "next.js", Profile: "default"}
+
+	issues, err := eng.runToolchainValidation(context.Background(), ws, "implementation")
+	if err != nil {
+		t.Fatalf("runToolchainValidation() error = %v", err)
+	}
+	if build.calls != 0 {
+		t.Fatalf("next_build calls = %d, want 0", build.calls)
+	}
+	if len(issues) != 1 || !strings.Contains(issues[0], "[build script]") {
+		t.Fatalf("issues = %v", issues)
+	}
+}

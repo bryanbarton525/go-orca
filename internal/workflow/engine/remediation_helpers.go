@@ -117,3 +117,61 @@ func blockersMentionInvalidPackageJSON(blockers []string) bool {
 	}
 	return false
 }
+
+func blockersMentionNodePreflight(blockers []string) bool {
+	for _, b := range blockers {
+		if strings.Contains(b, "[build script]") ||
+			strings.Contains(b, "[postcss deps]") ||
+			strings.Contains(b, "[route conflict]") ||
+			strings.Contains(b, "[router conflict]") {
+			return true
+		}
+	}
+	return false
+}
+
+// nodePreflightRemediationTask returns a deterministic pod task for common
+// Node/Next.js workspace preflight failures (fake build scripts, missing
+// postcss deps, conflicting page files).
+func nodePreflightRemediationTask(ws *state.WorkflowState, source string, cycle int) *state.Task {
+	if ws == nil || ws.Execution.Workspace == nil {
+		return nil
+	}
+	if !blockersMentionNodePreflight(ws.BlockingIssues) {
+		return nil
+	}
+	path := ws.Execution.Workspace.Path
+	var title, desc string
+
+	if ok, issue := toolchaindeps.CheckFakeBuildScript(path); !ok {
+		title = "Fix package.json build script"
+		desc = issue + " Set scripts.build to the real compiler command for this stack (Next.js: \"next build\"). Do not use echo/no-op stubs."
+	} else if ok, issue := toolchaindeps.CheckPostCSSDeps(path); !ok {
+		title = "Add missing PostCSS/Tailwind dependencies"
+		desc = issue + " Add the listed packages to devDependencies in package.json, then ensure postcss.config.js only references installed plugins."
+	} else if ok, issue := toolchaindeps.CheckConflictingNextPages(path); !ok {
+		title = "Resolve conflicting App Router page files"
+		desc = issue + " Delete the duplicate page.* file(s) so each route segment has exactly one page module. Prefer .tsx for TypeScript projects."
+	} else if ok, issue := toolchaindeps.CheckAppPagesRouterConflict(path); !ok {
+		title = "Resolve App Router vs Pages Router conflict"
+		desc = issue + " Remove pages/index.* if using App Router, or remove app/page.* if staying on Pages Router — never ship both for /."
+	} else {
+		return nil
+	}
+
+	if remediationTitleIndex(ws, source, cycle)[normalizeRemediationTitle(title)] {
+		return nil
+	}
+	return &state.Task{
+		ID:                uuid.New().String(),
+		WorkflowID:        ws.ID,
+		Title:             title,
+		Description:       desc,
+		Status:            state.TaskStatusPending,
+		AssignedTo:        state.PersonaPod,
+		Specialty:         "frontend",
+		RemediationSource: source,
+		Attempt:           cycle,
+		CreatedAt:         time.Now().UTC(),
+	}
+}

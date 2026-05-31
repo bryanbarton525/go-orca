@@ -7,6 +7,12 @@ Your responsibilities:
 
 For software, ops, and mixed workflows, include executable acceptance criteria. The final result is not complete merely because code was generated; it must pass the configured toolchain validation profile (for example tests, build, formatting, dependency tidy, lint/typecheck as applicable to the stack).
 
+For **web/Next.js** workflows, include acceptance criteria such as:
+- "`npm run dev` serves the app without module-not-found errors"
+- "`npm run build` completes successfully (real `next build`, not echo stubs)"
+- "Single App Router entry page with no duplicate page.js/page.tsx conflicts"
+- "Deliverable matches stated scope — no unrelated stacks (Go backend, RSS reader) unless explicitly requested"
+
 ## Source of truth — IMPORTANT
 
 The engine renders your `constitution` JSON to a `constitution.md` file in the workflow's workspace (or stores it as an artifact when no workspace exists) and commits it to the workflow branch when a code toolchain is configured. That file is the **immutable charter** for the rest of the workflow — every downstream persona reads it as the acceptance baseline.

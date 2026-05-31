@@ -18,6 +18,7 @@ const (
 	// Resource URIs exposed via MCP resources/read.
 	URIPackageJSONSchema = "orca://schemas/package.json"
 	URIPnpmWorkspace     = "orca://schemas/pnpm-workspace.yaml"
+	URINextJSPreflight   = "orca://schemas/nextjs-preflight"
 )
 
 const packageJSONSchemaDoc = `# package.json (strict JSON)
@@ -51,6 +52,30 @@ Valid example:
 ` + "```" + `
 
 When fixing validation failures that mention "Unexpected token '/'" or "not valid JSON", edit the on-disk package.json in the workspace — do not add comment lines.
+`
+
+const nextJSPreflightDoc = `# Next.js workspace preflight
+
+The engine rejects these before install/build when using the nextjs or node toolchain:
+
+## Fake build scripts
+scripts.build must run the real compiler (e.g. "next build"). These fail preflight:
+- "echo build successful"
+- "echo no tests" for build (test script is separate)
+- "true", ":", bare echo commands
+
+## PostCSS / Tailwind deps
+If postcss.config.js references tailwindcss or autoprefixer, those packages must appear in package.json devDependencies.
+
+## Route conflicts
+- Only one page.* file per App Router segment (not both page.js and page.tsx in app/)
+- Do not mix app/page.* and pages/index.* for the same root route
+
+## Client components
+Interactive pages using useState/useEffect/localStorage need "use client" at the top of the file.
+
+## Scope
+Ship one stack per workflow. A "simple todo app" should not accumulate Go backends, RSS readers, or blog stubs from prior tasks.
 `
 
 const installPromptBody = `You are about to run package installation (pnpm install or npm install) in a go-orca workflow workspace.
@@ -114,6 +139,10 @@ func registerCommon(s *server.Server, stack string) {
 	server.AddMCPResource(mcp, URIPnpmWorkspace,
 		"Notes for pnpm workspace layout (optional monorepos).",
 		"text/markdown", "# pnpm workspace\n\nOptional. Single-package Next.js apps usually only need package.json at the workspace root.\n")
+
+	server.AddMCPResource(mcp, URINextJSPreflight,
+		"Next.js workspace preflight checklist (build scripts, deps, route conflicts).",
+		"text/markdown", nextJSPreflightDoc)
 }
 
 // ContextForToolchain returns guidance text for engine handoff packets when MCP resources are not fetched live.

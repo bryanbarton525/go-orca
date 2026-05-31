@@ -72,7 +72,7 @@ func register(srv *server.Server, root string, allow policy.Allowlist, auditor p
 	// 15 min ceiling: large Next.js apps with many static pages can be slow.
 	server.AddCapability(srv, "next_build",
 		"Run `pnpm run build` (executes `next build` via project script).",
-		run(capabilities.RunBuild, []string{"pnpm", "run", "build"}, 15*time.Minute))
+		buildGuard(root, run(capabilities.RunBuild, []string{"pnpm", "run", "build"}, 15*time.Minute)))
 
 	// Lint — invokes the project's lint script which calls `next lint`.
 	// next lint wraps ESLint with Next.js-specific rules and config discovery.
@@ -123,6 +123,25 @@ func installHandler(root string, allow policy.Allowlist, auditor policy.Auditor)
 			Auditor:    auditor,
 			Env:        baseEnv(),
 		})
+	}
+}
+
+func buildGuard(root string, next server.CapabilityHandler) server.CapabilityHandler {
+	return func(ctx context.Context, args capabilities.Args) capabilities.Result {
+		workdir, err := policy.ResolveWorkspacePath(root, args.WorkspacePath)
+		if err != nil {
+			return capabilities.Result{Error: err.Error()}
+		}
+		if ok, issue := toolchaindeps.CheckFakeBuildScript(workdir); !ok {
+			return capabilities.Result{
+				Success: false,
+				Passed:  false,
+				Error:   issue,
+				Stderr:  issue,
+				Output:  issue,
+			}
+		}
+		return next(ctx, args)
 	}
 }
 

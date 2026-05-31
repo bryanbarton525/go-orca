@@ -103,7 +103,7 @@ Rules:
 
 ### Next.js (App Router web app)
 
-Use when the workflow request targets Next.js, React Server Components, or a full-stack TypeScript web UI.
+Use when the workflow request targets Next.js, React Server Components, or a full-stack TypeScript web UI. See also the **`nextjs-generation`** skill for scope discipline, client components, and preflight rules.
 
 ```
 .
@@ -122,10 +122,16 @@ Use when the workflow request targets Next.js, React Server Components, or a ful
 
 Rules:
 - Prefer App Router (`app/`) over `pages/` unless the repo already uses Pages Router.
+- **One page module per route** — never emit both `page.js` and `page.tsx` at the same segment.
+- **Real build scripts** — `scripts.build` must be `next build`, not `echo` stubs; the engine preflight rejects no-op builds.
+- **Dependency completeness** — every package referenced in config (postcss, tailwind, prisma) or imports must appear in `package.json`.
+- **Latest stable dependencies by default** — when adding packages, use package-manager latest (`@latest`) unless the constitution or repository policy explicitly pins versions.
+- Client-interactive UI (`useState`, `localStorage`) requires `"use client"` at the top of the file.
 - API routes and server actions live under `app/api/` or colocated with routes as appropriate.
-- Do not emit Go files or `go.mod` for a Next.js-only stack.
+- Do not emit Go files or `go.mod` for a Next.js-only stack unless the constitution explicitly requires a polyglot repo.
 - Scaffold (`package.json`, base `app/layout.tsx`) must be an early task with no code-task dependencies on it.
 - Cap MVP task graphs to roughly a dozen tasks; batch related files per task instead of one file per task.
+- **Single-app scope** — do not accumulate unrelated features (RSS readers, blog posts, alternate backends) from prior workflow artifacts.
 
 ### Rust (service/CLI)
 
