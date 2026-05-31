@@ -15,6 +15,10 @@ const (
 	PromptInstallDependencies       = "install_dependencies"
 	PromptImplementationRemediation = "implementation_validation_remediation"
 
+	PromptOffloadWorkflow  = "offload-workflow"
+	PromptOffloadPersona   = "offload-persona"
+	PromptOrcaCapabilities = "orca-capabilities"
+
 	// Resource URIs exposed via MCP resources/read.
 	URIPackageJSONSchema = "orca://schemas/package.json"
 	URIPnpmWorkspace     = "orca://schemas/pnpm-workspace.yaml"
@@ -168,6 +172,36 @@ func staticPrompt(body string) sdkmcp.PromptHandler {
 	return func(_ context.Context, _ *sdkmcp.GetPromptRequest) (*sdkmcp.GetPromptResult, error) {
 		return promptResult(body), nil
 	}
+}
+
+// OffloadWorkflowPrompt guides when to create a full workflow on the cluster.
+const OffloadWorkflowPrompt = `Use orca_workflow_create when the task needs the full go-orca pipeline (PM → Architect → Pod → QA → Finalizer).
+
+Prefer local work for small edits. Offload when multiple files, toolchain validation, or QA loops are needed.
+Pass template_id (e.g. software-default) to pin persona models.`
+
+// OffloadPersonaPrompt guides ad-hoc persona offload.
+const OffloadPersonaPrompt = `Use orca_persona_run or orca_task_run for one-shot cluster work.
+
+| Persona | Use for |
+|---------|---------|
+| pod | Single implementation task |
+| qa | Review / blocking issues |
+| architect | Narrow design scope |
+
+Set tools_scope=mcp_agent for toolchain/git work on the auxiliary provider.`
+
+// OrcaCapabilitiesPrompt summarizes bridge tools.
+const OrcaCapabilitiesPrompt = `Tools: orca_workflow_create, orca_workflow_status, orca_workflow_events, orca_workflow_cancel, orca_workflow_resume, orca_persona_run, orca_task_run.
+
+Requires X-Tenant-ID, X-Scope-ID, and Bearer API key when configured.`
+
+// RegisterBridge registers offload prompts on mcp-orca.
+func RegisterBridge(s *server.Server) {
+	mcp := s.MCPServer()
+	server.AddMCPPrompt(mcp, PromptOffloadWorkflow, "When to run a full workflow", nil, staticPrompt(OffloadWorkflowPrompt))
+	server.AddMCPPrompt(mcp, PromptOffloadPersona, "When to run one persona", nil, staticPrompt(OffloadPersonaPrompt))
+	server.AddMCPPrompt(mcp, PromptOrcaCapabilities, "Bridge capabilities", nil, staticPrompt(OrcaCapabilitiesPrompt))
 }
 
 func promptResult(body string) *sdkmcp.GetPromptResult {

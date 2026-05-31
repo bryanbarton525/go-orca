@@ -1,5 +1,20 @@
 # Tools
 
+## MCP bridge (mcp-orca)
+
+The **mcp-orca** server (`cmd/mcp-orca`) exposes go-orca to external MCP clients (Cursor, VS Code, Claude Desktop). It proxies to `go-orca-api` over REST.
+
+| MCP tool | API |
+|----------|-----|
+| `orca_workflow_create` | `POST /api/v1/workflows` |
+| `orca_workflow_status` | `GET /api/v1/workflows/{id}` |
+| `orca_workflow_events` | `GET /api/v1/workflows/{id}/events` |
+| `orca_persona_run` | `POST /api/v1/persona-runs` |
+
+Configure the bridge with `ORCA_API_BASE_URL`, `GOORCA_MCP_API_KEY` (OIDC Bearer token when API auth is enabled), `GOORCA_TENANT_ID`, and `GOORCA_SCOPE_ID`. See [skills/go-orca-offload](../skills/go-orca-offload/SKILL.md).
+
+---
+
 go-orca personas can call tools during their execution. Tools are registered in a global `tools.Registry` and invoked by name with JSON arguments. go-orca ships three built-in tools and supports loading additional tools from any MCP-compatible server.
 
 ## Tool Interface

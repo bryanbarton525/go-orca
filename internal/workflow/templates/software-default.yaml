@@ -1,0 +1,24 @@
+id: software-default
+mode: software
+required_personas:
+  - project_manager
+  - architect
+  - pod
+  - qa
+  - finalizer
+persona_models:
+  project_manager: qwen3.5:9b
+  architect: qwen3.5:14b
+  pod: qwen3-coder:14b
+  qa: qwen3.5:9b
+persona_providers:
+  pod: ollama
+  qa: ollama
+  project_manager: ollama
+toolchain_id: go
+pod_specialties:
+  - backend
+mcp_agents: true
+workflow_hints:
+  - validation-first
+  - qa-remediation

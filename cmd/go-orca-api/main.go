@@ -277,9 +277,12 @@ func main() {
 	improvementDispatcher := improvements.NewConcreteDispatcher(improvementsRoot, store, sched)
 	eng.SetImprovementDispatcher(improvementDispatcher)
 
+	oidcURL, oidcRequired, oidcUserHeader, oidcTimeout := cfg.EffectiveOIDCUserinfo()
+
 	// ── Build HTTP server ─────────────────────────────────────────────────────
 	router := routes.New(routes.Config{
 		Store:                 store,
+		Engine:                eng,
 		Scheduler:             sched,
 		Logger:                log,
 		DefaultTenantID:       defaultTenant.ID,
@@ -296,9 +299,20 @@ func main() {
 		StreamingHub:          streamHub,
 		StreamingTopic:        cfg.Streaming.Topic,
 		StreamingUserinfoURL:  cfg.Streaming.UserinfoURL,
+		OIDCUserinfoURL:       oidcURL,
+		OIDCRequired:          oidcRequired,
+		OIDCUserIDHeader:      oidcUserHeader,
+		OIDCTimeout:           oidcTimeout,
 		MetricsHandler:        promhttp.Handler(),
 		GinMode:               cfg.Server.Mode,
 	})
+	if oidcURL != "" {
+		log.Info("api oidc auth enabled",
+			zap.String("userinfo_url", oidcURL),
+			zap.Bool("required", oidcRequired),
+			zap.String("user_id_header", oidcUserHeader),
+		)
+	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

@@ -12,6 +12,12 @@ server:
   write_timeout: "60s"
   shutdown_timeout: "15s"
   trusted_proxies: []
+  # OIDC Bearer auth for /api/v1 (Zitadel, Authentik, etc.)
+  oidc:
+    userinfo_url: ""       # e.g. https://auth.example.com/oidc/v1/userinfo
+    required: false        # when true, all protected routes need Authorization: Bearer
+    user_id_header: "X-User-Id"
+    timeout: "5s"
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 database:
@@ -54,6 +60,8 @@ streaming:
   readiness_probe_interval: "10s"
   readiness_ping_timeout: "2s"
   consumer_group: "go-orca-workflow-stream"
+  # Legacy fallback for event ingest when server.oidc.userinfo_url is unset
+  userinfo_url: ""
 
 # ─── Providers ────────────────────────────────────────────────────────────────
 providers:

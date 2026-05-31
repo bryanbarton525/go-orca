@@ -20,6 +20,7 @@ import (
 	"github.com/go-orca/go-orca/internal/state"
 	"github.com/go-orca/go-orca/internal/storage"
 	"github.com/go-orca/go-orca/internal/workflow/scheduler"
+	"github.com/go-orca/go-orca/internal/workflow/templates"
 )
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -141,6 +142,7 @@ type CreateWorkflowRequest struct {
 	UploadSessionID string          `json:"upload_session_id"` // optional; links staged uploads to this workflow
 	Planning        PlanningRequest `json:"planning"`          // optional builder plan seed
 	AutoMode        bool            `json:"auto_mode"`         // enable dynamic auto-mode orchestration
+	TemplateID      string          `json:"template_id"`       // optional workflow template
 }
 
 func normalizeWorkflowMode(raw string) state.WorkflowMode {
@@ -193,6 +195,14 @@ func CreateWorkflow(store storage.Store, sched *scheduler.Scheduler, log *zap.Lo
 		if req.AutoMode || ws.Mode == state.WorkflowModeAuto {
 			ws.Mode = state.WorkflowModeAuto
 			ws.Execution.AutoMode = &state.AutoModeState{Enabled: true}
+		}
+		if tid := strings.TrimSpace(req.TemplateID); tid != "" {
+			if t, ok := templates.Get(tid); ok {
+				templates.Apply(ws, t)
+			} else {
+				respondError(c, http.StatusBadRequest, "unknown template_id: "+tid)
+				return
+			}
 		}
 		if strings.TrimSpace(req.Planning.Mode) != "" ||
 			strings.TrimSpace(req.Planning.Prompt) != "" ||

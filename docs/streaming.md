@@ -119,7 +119,11 @@ sequenceDiagram
 - **400** — missing user header or empty body.
 - **503** — producer unavailable or enqueue failed.
 
-Homelab enables an Istio sidecar on `go-orca-api` for gateway routing consistency. **Ingest auth is enforced in the API**: `StreamingBearerUserinfo` calls ZITADEL OIDC userinfo to map a Bearer token (JWT access token or PAT) to `X-User-Id` before `POST /api/v1/events` accepts the payload. Optional mesh JWT policies are not required when userinfo is configured.
+Homelab enables an Istio sidecar on `go-orca-api` for gateway routing consistency.
+
+**API auth (recommended):** Configure `server.oidc.userinfo_url` and `server.oidc.required: true` so all protected `/api/v1` routes (including ingest when routed through the same middleware) validate `Authorization: Bearer` via Zitadel or Authentik userinfo.
+
+**Ingest-only (legacy):** When global OIDC is not required, `StreamingBearerUserinfo` uses `streaming.userinfo_url` on `POST /api/v1/events` only. Optional mesh JWT policies are not required when userinfo is configured.
 
 Validate end-to-end after deploy:
 

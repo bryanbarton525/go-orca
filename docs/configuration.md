@@ -44,6 +44,41 @@ HTTP server settings.
 | `server.shutdown_timeout` | duration | `"15s"` | Grace period for in-flight requests on shutdown |
 | `server.trusted_proxies` | []string | `[]` | CIDR ranges or IPs of trusted reverse proxies |
 
+### server.oidc
+
+Optional OIDC Bearer validation for all protected `/api/v1` routes (everything except `/healthz`, `/readyz`, and `/metrics`). Tokens are validated by calling the IdP **userinfo** endpoint and reading the `sub` claim.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `server.oidc.userinfo_url` | string | `""` | OIDC userinfo URL (Zitadel, Authentik, etc.) |
+| `server.oidc.required` | bool | `false` | Reject requests without a valid Bearer token |
+| `server.oidc.user_id_header` | string | `"X-User-Id"` | Header set to `sub` after validation |
+| `server.oidc.timeout` | duration | `"5s"` | HTTP timeout for userinfo calls |
+
+Environment variables: `GOORCA_SERVER_OIDC_USERINFO_URL`, `GOORCA_SERVER_OIDC_REQUIRED`, `GOORCA_SERVER_OIDC_USER_ID_HEADER`, `GOORCA_SERVER_OIDC_TIMEOUT`.
+
+When `server.oidc.userinfo_url` is unset, `streaming.userinfo_url` is used as a **legacy fallback** for event ingest only (not global API auth).
+
+**Zitadel** (in-cluster or public):
+
+```yaml
+server:
+  oidc:
+    userinfo_url: "https://auth.example.com/oidc/v1/userinfo"
+    required: true
+```
+
+**Authentik**:
+
+```yaml
+server:
+  oidc:
+    userinfo_url: "https://authentik.example.com/application/o/go-orca/userinfo/"
+    required: true
+```
+
+Use a JWT access token or PAT as `Authorization: Bearer <token>`. The same token can be passed from Cursor → `mcp-orca` → `go-orca-api` via `GOORCA_MCP_API_KEY` or MCP client headers.
+
 Duration values accept Go duration strings: `"30s"`, `"5m"`, `"1h"`.
 
 ---
@@ -210,6 +245,7 @@ Optional Redpanda/Kafka integration for workflow journal fan-out and edge event 
 | `streaming.produce_timeout` | duration | `"5s"` | Record delivery timeout |
 | `streaming.required_acks` | string | `"all"` | Producer acks: `all` \| `leader` \| `none` |
 | `streaming.user_id_header` | string | `"X-User-Id"` | Header read by ingest middleware (Gin is case-insensitive) |
+| `streaming.userinfo_url` | string | `""` | Legacy ingest-only OIDC userinfo URL when `server.oidc` is not used |
 | `streaming.readiness_probe_interval` | duration | `"10s"` | Interval for background broker ping |
 | `streaming.readiness_ping_timeout` | duration | `"2s"` | Timeout for a single ping |
 | `streaming.consumer_group` | string | `"go-orca-workflow-stream"` | Consumer group for SSE hub fan-out |

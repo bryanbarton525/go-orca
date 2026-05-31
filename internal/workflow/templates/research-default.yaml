@@ -1,0 +1,11 @@
+id: research-default
+mode: research
+required_personas:
+  - project_manager
+  - architect
+  - finalizer
+persona_models:
+  project_manager: qwen3.5:9b
+  architect: qwen3.5:14b
+workflow_hints:
+  - research-analysis
