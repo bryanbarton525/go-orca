@@ -41,6 +41,7 @@ import (
 	copilotProvider "github.com/go-orca/go-orca/internal/provider/copilot"
 	ollamaProvider "github.com/go-orca/go-orca/internal/provider/ollama"
 	openaiProvider "github.com/go-orca/go-orca/internal/provider/openai"
+	sglangProvider "github.com/go-orca/go-orca/internal/provider/sglang"
 	"github.com/go-orca/go-orca/internal/storage"
 	pgStore "github.com/go-orca/go-orca/internal/storage/postgres"
 	sqStore "github.com/go-orca/go-orca/internal/storage/sqlite"
@@ -412,6 +413,17 @@ func registerProviders(cfg *config.Config, log *zap.Logger) {
 		}
 	}
 
+	if cfg.Providers.SGLang.Enabled {
+		p, err := sglangProvider.New(cfg.Providers.SGLang)
+		if err != nil {
+			log.Warn("sglang provider init failed", zap.Error(err))
+		} else {
+			common.Register(p)
+			log.Info("provider registered", zap.String("name", "sglang"))
+			checkProviderReachability(p, log)
+		}
+	}
+
 	if cfg.Providers.Ollama.Enabled {
 		p, err := ollamaProvider.New(cfg.Providers.Ollama)
 		if err != nil {
@@ -505,6 +517,9 @@ func resolveDefaultProvider(cfg *config.Config) string {
 	if cfg.Providers.Anthropic.Enabled {
 		return "anthropic"
 	}
+	if cfg.Providers.SGLang.Enabled {
+		return "sglang"
+	}
 	if cfg.Providers.OpenAI.Enabled {
 		return "openai"
 	}
@@ -521,6 +536,9 @@ func resolveDefaultModel(cfg *config.Config) string {
 	if cfg.Providers.Anthropic.Enabled && cfg.Providers.Anthropic.DefaultModel != "" {
 		return cfg.Providers.Anthropic.DefaultModel
 	}
+	if cfg.Providers.SGLang.Enabled && cfg.Providers.SGLang.DefaultModel != "" {
+		return cfg.Providers.SGLang.DefaultModel
+	}
 	if cfg.Providers.OpenAI.Enabled && cfg.Providers.OpenAI.DefaultModel != "" {
 		return cfg.Providers.OpenAI.DefaultModel
 	}
@@ -534,6 +552,9 @@ func buildProviderDefaults(cfg *config.Config) map[string]string {
 	defaults := make(map[string]string)
 	if cfg.Providers.OpenAI.Enabled && strings.TrimSpace(cfg.Providers.OpenAI.DefaultModel) != "" {
 		defaults["openai"] = strings.TrimSpace(cfg.Providers.OpenAI.DefaultModel)
+	}
+	if cfg.Providers.SGLang.Enabled && strings.TrimSpace(cfg.Providers.SGLang.DefaultModel) != "" {
+		defaults["sglang"] = strings.TrimSpace(cfg.Providers.SGLang.DefaultModel)
 	}
 	if cfg.Providers.Ollama.Enabled && strings.TrimSpace(cfg.Providers.Ollama.DefaultModel) != "" {
 		defaults["ollama"] = strings.TrimSpace(cfg.Providers.Ollama.DefaultModel)
@@ -564,6 +585,7 @@ func buildExcludedModels(cfg *config.Config) map[string]map[string]struct{} {
 	}
 
 	add("openai", cfg.Providers.OpenAI.ExcludedModels)
+	add("sglang", cfg.Providers.SGLang.ExcludedModels)
 	add("ollama", cfg.Providers.Ollama.ExcludedModels)
 	add("copilot", cfg.Providers.Copilot.ExcludedModels)
 	add("anthropic", cfg.Providers.Anthropic.ExcludedModels)

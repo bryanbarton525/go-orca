@@ -72,6 +72,13 @@ providers:
     default_model: "gpt-4o"
     timeout: "120s"
 
+  sglang:
+    enabled: false
+    api_key: "sglang"      # bearer token for secured clusters; dummy value is OK locally
+    base_url: "http://localhost:30000/v1"
+    default_model: ""
+    timeout: "120s"
+
   ollama:
     enabled: false
     host: "http://localhost:11434"

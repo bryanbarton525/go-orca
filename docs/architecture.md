@@ -23,8 +23,9 @@ go-orca is a **multi-tenant AI orchestration engine** — a single Go binary tha
                           │                            ▼                      │
                           │                  ┌──────────────────┐            │
                           │                  │ Provider Registry │            │
-                          │                  │  OpenAI / Ollama  │            │
-                          │                  │  Copilot          │            │
+                          │                  │ OpenAI / SGLang   │            │
+                          │                  │ Anthropic / Ollama│            │
+                          │                  │ Copilot           │            │
                           │                  └──────────────────┘            │
                           └─────────────────────────────────────────────────┘
 ```

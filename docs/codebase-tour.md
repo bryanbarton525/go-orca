@@ -15,7 +15,7 @@ This document is a **step-by-step walkthrough** of how the repository is organiz
 | **Core orchestration** | `internal/workflow/engine` | State machine: phases, QA loop, toolchain hooks, finalizer post-processing |
 | **Concurrency** | `internal/workflow/scheduler` | Bounded queue + worker pool calling `Engine.Run` |
 | **HTTP surface** | `internal/api/routes`, `internal/api/handlers`, `internal/api/middleware` | Gin router, handlers, tenant/scope middleware |
-| **LLM adapters** | `internal/provider/*` | OpenAI, Anthropic, Ollama, Copilot — registered in `internal/provider/common` |
+| **LLM adapters** | `internal/provider/*` | OpenAI, SGLang, Anthropic, Ollama, Copilot — registered in `internal/provider/common` |
 | **Personas** | `internal/persona/*` | Each role: `Execute(ctx, HandoffPacket) → PersonaOutput` |
 | **Shared LLM runner** | `internal/persona/base` | Tool loop + structured JSON phase (`Executor.Run`) |
 | **Persistence** | `internal/storage`, `internal/storage/sqlite`, `internal/storage/postgres` | `Store` interface |

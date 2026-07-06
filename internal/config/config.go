@@ -129,6 +129,7 @@ type StreamingConfig struct {
 // ProvidersConfig holds per-provider settings.
 type ProvidersConfig struct {
 	OpenAI    OpenAIConfig    `mapstructure:"openai"`
+	SGLang    SGLangConfig    `mapstructure:"sglang"`
 	Ollama    OllamaConfig    `mapstructure:"ollama"`
 	Copilot   CopilotConfig   `mapstructure:"copilot"`
 	Anthropic AnthropicConfig `mapstructure:"anthropic"`
@@ -147,6 +148,16 @@ type AnthropicConfig struct {
 
 // OpenAIConfig holds OpenAI / Codex settings.
 type OpenAIConfig struct {
+	Enabled        bool          `mapstructure:"enabled"`
+	APIKey         string        `mapstructure:"api_key"`
+	BaseURL        string        `mapstructure:"base_url"`
+	DefaultModel   string        `mapstructure:"default_model"`
+	ExcludedModels []string      `mapstructure:"excluded_models"`
+	Timeout        time.Duration `mapstructure:"timeout"`
+}
+
+// SGLangConfig holds SGLang OpenAI-compatible API settings.
+type SGLangConfig struct {
 	Enabled        bool          `mapstructure:"enabled"`
 	APIKey         string        `mapstructure:"api_key"`
 	BaseURL        string        `mapstructure:"base_url"`
@@ -435,6 +446,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("providers.openai.enabled", false)
 	v.SetDefault("providers.openai.default_model", "gpt-4o")
 	v.SetDefault("providers.openai.timeout", 120*time.Second)
+	v.SetDefault("providers.sglang.enabled", false)
+	v.SetDefault("providers.sglang.api_key", "sglang")
+	v.SetDefault("providers.sglang.base_url", "http://localhost:30000/v1")
+	v.SetDefault("providers.sglang.timeout", 120*time.Second)
 	v.SetDefault("providers.ollama.enabled", false)
 	v.SetDefault("providers.ollama.host", "http://localhost:11434")
 	v.SetDefault("providers.ollama.default_model", "llama3")

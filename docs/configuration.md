@@ -165,6 +165,16 @@ All providers default to `enabled: false`. Enable at least one before submitting
 | `providers.openai.default_model` | string | `"gpt-4o"` | Default model for this provider |
 | `providers.openai.timeout` | duration | `"120s"` | Per-request timeout |
 
+### providers.sglang
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `providers.sglang.enabled` | bool | `false` | Enable this provider |
+| `providers.sglang.api_key` | string | `"sglang"` | Bearer token for secured deployments; dummy value works for unauthenticated clusters |
+| `providers.sglang.base_url` | string | `"http://localhost:30000/v1"` | SGLang OpenAI-compatible server URL |
+| `providers.sglang.default_model` | string | `""` | Default model |
+| `providers.sglang.timeout` | duration | `"120s"` | Per-request timeout |
+
 ### providers.ollama
 
 | Key | Type | Default | Description |
