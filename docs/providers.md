@@ -80,6 +80,7 @@ providers:
     api_key: "sglang"                  # optional for most local clusters
     base_url: "http://localhost:30000/v1"
     default_model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+    excluded_models: []
     timeout: "120s"
 ```
 
