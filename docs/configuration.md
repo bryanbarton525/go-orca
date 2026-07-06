@@ -173,6 +173,7 @@ All providers default to `enabled: false`. Enable at least one before submitting
 | `providers.sglang.api_key` | string | `"sglang"` | Bearer token for secured deployments; dummy value works for unauthenticated clusters |
 | `providers.sglang.base_url` | string | `"http://localhost:30000/v1"` | SGLang OpenAI-compatible server URL |
 | `providers.sglang.default_model` | string | `""` | Default model |
+| `providers.sglang.excluded_models` | string[] | `[]` | Models that must never be selected for this provider |
 | `providers.sglang.timeout` | duration | `"120s"` | Per-request timeout |
 
 ### providers.ollama
