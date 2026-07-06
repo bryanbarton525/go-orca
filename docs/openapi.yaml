@@ -826,6 +826,8 @@ components:
           type: string
           enum:
             - openai
+            - sglang
+            - anthropic
             - ollama
             - copilot
         default_model:

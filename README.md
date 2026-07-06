@@ -33,7 +33,7 @@ After every workflow the Finalizer runs an inline **Refiner** retrospective — 
 - **Live execution progress** — `GET /workflows/:id` exposes `execution.current_persona`, `active_task_id`, `qa_cycle`, and `remediation_attempt` for in-flight visibility without SSE; repeated `current_persona` values across polls are normal while a persona call is still running
 - **SSE streaming** — real-time `text/event-stream` feed with dotted event type names (`persona.started`, `state.transition`, `refiner.suggestion`, etc.); optional [Redpanda-backed live transport](docs/streaming.md) for the Workflow Studio
 - **Pause and resume** — workflows can be paused mid-pipeline and resumed via the API
-- **Four LLM backends** — OpenAI, Anthropic Claude, Ollama (local), GitHub Copilot
+- **Five LLM backends** — OpenAI, SGLang, Anthropic Claude, Ollama (local), GitHub Copilot
 - **Per-persona model routing** — the Director selects both a workflow-level model and an optional per-persona override for every downstream phase; the engine validates all selections against a live catalog snapshot, normalizes either `model` or `provider/model` override forms, and silently falls back to the configured default for excluded or unavailable models; override `model` on `POST /workflows` to pin a specific model
 - **Built-in tools + MCP** — `http_get`, `read_file`, `write_file`, plus remote tools via Model Context Protocol
 - **SQLite or PostgreSQL** — swap backends with a single config line; auto-migration included

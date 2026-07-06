@@ -1,6 +1,6 @@
 # Providers
 
-go-orca supports four wired LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
+go-orca supports five wired LLM backends. All are disabled by default — enable at least one before submitting workflows. The Director persona selects the active provider and model for each workflow run.
 
 ## Provider Registry
 
@@ -12,8 +12,9 @@ At startup, the first enabled provider in this priority order becomes the defaul
 
 1. Ollama
 2. Anthropic
-3. OpenAI
-4. Copilot
+3. SGLang
+4. OpenAI
+5. Copilot
 
 The default is used when the Director does not select a provider, or as a fallback.
 
@@ -61,6 +62,36 @@ providers:
     base_url: "http://localhost:11434/v1"  # Ollama OpenAI-compat endpoint
     default_model: "llama3"
 ```
+
+---
+
+## SGLang
+
+Package: `internal/provider/sglang`
+
+Talks to an [SGLang](https://docs.sglang.ai) OpenAI-compatible API server. The provider is registered as `sglang` so workflows can route to it independently from OpenAI.
+
+### Configuration
+
+```yaml
+providers:
+  sglang:
+    enabled: true
+    api_key: "sglang"                  # optional for most local clusters
+    base_url: "http://localhost:30000/v1"
+    default_model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+    excluded_models: []
+    timeout: "120s"
+```
+
+| Key | Required | Description |
+|---|---|---|
+| `enabled` | Yes | Must be `true` to activate |
+| `api_key` | No | Bearer token for secured deployments. Defaults to `sglang` for unauthenticated local clusters |
+| `base_url` | Yes | SGLang OpenAI-compatible endpoint. Default: `http://localhost:30000/v1` |
+| `default_model` | No | Model used when the Director does not specify one |
+| `excluded_models` | No | Models that must never be selected for this provider |
+| `timeout` | No | Per-request timeout. Default: `120s` |
 
 ---
 
