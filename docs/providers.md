@@ -90,6 +90,7 @@ providers:
 | `api_key` | No | Bearer token for secured deployments. Defaults to `sglang` for unauthenticated local clusters |
 | `base_url` | Yes | SGLang OpenAI-compatible endpoint. Default: `http://localhost:30000/v1` |
 | `default_model` | No | Model used when the Director does not specify one |
+| `excluded_models` | No | Models that must never be selected for this provider |
 | `timeout` | No | Per-request timeout. Default: `120s` |
 
 ---
