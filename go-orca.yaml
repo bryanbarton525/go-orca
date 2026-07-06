@@ -77,6 +77,7 @@ providers:
     api_key: "sglang"      # bearer token for secured clusters; dummy value is OK locally
     base_url: "http://localhost:30000/v1"
     default_model: ""
+    excluded_models: []    # optional list of models to block for this provider
     timeout: "120s"
 
   ollama:
