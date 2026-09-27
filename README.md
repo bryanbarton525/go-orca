@@ -125,6 +125,7 @@ curl -N http://localhost:8080/workflows/<id>/stream \
 | [Finalizer Actions](docs/finalizer-actions.md) | Delivery actions: GitHub PR, commit, bundle, export, blog draft, doc draft, webhook |
 | [Tools](docs/tools.md) | Built-in tools and the MCP remote tool protocol |
 | [Storage](docs/storage.md) | SQLite vs PostgreSQL, Store interface, migrations |
+| [k3s sandbox smoke](deploy/k3s-smoke/README.md) | Isolated credential-free API/scheduler terminal-state check |
 | [Deployment](docs/deployment.md) | Binary setup, Docker, reverse proxy, shutdown behaviour |
 
 ## License
