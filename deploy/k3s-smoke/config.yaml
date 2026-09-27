@@ -1,0 +1,15 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: release
+database:
+  driver: sqlite
+  dsn: /data/smoke.db
+  auto_migrate: true
+providers: {}
+streaming:
+  enabled: false
+workflow:
+  artifact_storage_path: /data/artifacts
+  workspace_root: /data/workspaces
+  scheduler_max_retries: 0
