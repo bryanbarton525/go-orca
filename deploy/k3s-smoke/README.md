@@ -11,16 +11,16 @@ execution, artifact generation, durability across pod replacement, or production
 ## Check access first
 
 Use only the existing authorized sandbox context. Do not use production.
-The proposed namespace is `orca-smoke-orc4`; the platform owner must confirm it
-is dedicated to this test and provision it if absent. This overlay deliberately
+The homelab validation namespace is `paperclip-sandbox`; confirm it is dedicated
+to this test before each run. This overlay deliberately
 creates no Namespace, RBAC, Service, Ingress, PVC, or shared resource.
 
 ```bash
 kubectl version -o yaml
 kubectl config current-context
-kubectl get namespace orca-smoke-orc4
-kubectl -n orca-smoke-orc4 get deployments,configmaps,pods
-kubectl auth can-i --list --namespace orca-smoke-orc4
+kubectl get namespace paperclip-sandbox
+kubectl -n paperclip-sandbox get deployments,configmaps,pods
+kubectl auth can-i --list --namespace paperclip-sandbox
 ```
 
 Stop on missing access, unexpected context, or a namespace/resource collision.
@@ -53,6 +53,13 @@ node containerd image store (`k3s ctr images import go-orca-smoke.tar`) on every
 eligible node, or provide a sandbox registry digest. Node image import requires
 separate platform access; do not request cluster-admin for the API pod.
 
+For the 2026-09-27 homelab run, the repository's Build & Push workflow published
+`ghcr.io/bryanbarton525/go-orca-api:sha-9fbb118` from commit
+`9fbb118c864c224321bdfde76994694f9e637104`. Its immutable image index is
+`sha256:c6a696180d43036de8314d4f0964c1f7db3b7b7da63d134cf524346c2b3afe8e`;
+use the full digest reference as `IMAGE`. Check [EVIDENCE.md](EVIDENCE.md) for
+the observed runtime image ID, workflow result, and cleanup.
+
 ## Run
 
 Use a disposable copy of the overlay so the source stays unchanged. `RUN_DIR`
@@ -73,19 +80,19 @@ s += '        value: ' + json.dumps(sys.argv[2]) + '\n'
 p.write_text(s)
 PY
 kubectl kustomize "$RUN_DIR/overlay" > "$RUN_DIR/rendered.yaml"
-kubectl -n orca-smoke-orc4 apply --dry-run=server -f "$RUN_DIR/rendered.yaml"
-kubectl -n orca-smoke-orc4 apply -f "$RUN_DIR/rendered.yaml"
-kubectl -n orca-smoke-orc4 rollout status deployment/go-orca-smoke --timeout=120s
-kubectl -n orca-smoke-orc4 get pods -l app=go-orca-smoke \
+kubectl -n paperclip-sandbox apply --dry-run=server -f "$RUN_DIR/rendered.yaml"
+kubectl -n paperclip-sandbox apply -f "$RUN_DIR/rendered.yaml"
+kubectl -n paperclip-sandbox rollout status deployment/go-orca-smoke --timeout=120s
+kubectl -n paperclip-sandbox get pods -l app=go-orca-smoke \
   -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
-kubectl -n orca-smoke-orc4 port-forward deployment/go-orca-smoke 18080:8080
+kubectl -n paperclip-sandbox port-forward deployment/go-orca-smoke 18080:8080
 ```
 
 Run the last command in a separate terminal; it binds localhost only. Then:
 
 ```bash
 python3 hack/smoke_workflow.py --base-url http://127.0.0.1:18080 --timeout 60
-kubectl -n orca-smoke-orc4 logs deployment/go-orca-smoke --tail=100
+kubectl -n paperclip-sandbox logs deployment/go-orca-smoke --tail=100
 ```
 
 The exact prompt is `Return the text ORCA_SMOKE_OK. Do not use tools or access
@@ -105,8 +112,8 @@ Stop port-forward with Ctrl-C. Save output before deleting only this run's
 resources, using the same rendered file:
 
 ```bash
-kubectl -n orca-smoke-orc4 delete -f "$RUN_DIR/rendered.yaml" --wait=true --timeout=120s
-kubectl -n orca-smoke-orc4 get deployments,configmaps,pods
+kubectl -n paperclip-sandbox delete -f "$RUN_DIR/rendered.yaml" --wait=true --timeout=120s
+kubectl -n paperclip-sandbox get deployments,configmaps,pods
 ```
 
 The SQLite database/artifacts use emptyDir and are removed with the pod. Do not
