@@ -14,9 +14,10 @@ EXPECTED_ERROR = 'director phase: engine: no provider resolved for persona "dire
 
 def request(base, path, payload=None, timeout=10):
     data = None if payload is None else json.dumps(payload).encode()
+    # The API middleware resolves the default tenant and global scope to their
+    # persisted UUIDs. The slugs "default" and "global" are not database IDs.
     req = Request(base.rstrip("/") + path, data=data, headers={
         "Content-Type": "application/json",
-        "X-Tenant-ID": "default", "X-Scope-ID": "global",
     })
     with urlopen(req, timeout=timeout) as response:
         expected = 200 if payload is None else 201

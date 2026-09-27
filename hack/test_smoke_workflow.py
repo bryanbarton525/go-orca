@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +8,15 @@ import smoke_workflow as smoke
 
 
 class SmokeTests(unittest.TestCase):
+    def test_request_uses_server_default_tenant_and_scope(self):
+        response = io.BytesIO(json.dumps({"status": "ready"}).encode())
+        response.status = 200
+        with patch.object(smoke, "urlopen", return_value=response) as urlopen:
+            self.assertEqual(smoke.request("http://localhost", "/readyz"), {"status": "ready"})
+        headers = urlopen.call_args.args[0].headers
+        self.assertNotIn("X-tenant-id", headers)
+        self.assertNotIn("X-scope-id", headers)
+
     def run_smoke(self, states, timeout=1):
         responses = [{"status": "ready"}, {"id": "smoke-1"}] + states
         with patch.object(smoke, "request", side_effect=responses) as request:

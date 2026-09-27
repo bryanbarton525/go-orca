@@ -93,7 +93,10 @@ external data.` The checker prints the created workflow ID and verifies a GET
 of the same ID reaches `failed` with exactly `director phase: engine: no provider
 resolved for persona "director"`. An unrelated failure, cancellation, unexpected
 completion, HTTP error, or timeout is nonzero. Use this only with the supplied
-provider-free configuration. The API has no authentication in this fixture;
+provider-free configuration. The checker omits tenant and scope headers so the
+API selects the persisted default tenant and global scope IDs. Sending the
+`default` and `global` slugs as IDs causes a SQLite foreign-key failure. The API
+has no authentication in this fixture;
 keep it inside the dedicated sandbox namespace and use localhost port-forward.
 
 ## Cleanup and evidence
